@@ -199,7 +199,7 @@ class Q(nn.Module):
     #    3. Add option to let r and R prediction be in same net, but have their own hidden layer
     def __init__(self, state_len, num_actions, outputs_per_action, use_separate_nets=False,
                  additional_individual_hidden_layer=False, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2,
-                 activation_function=F.relu, normalizer=None, offset=-1):
+                 activation_function=F.relu, normalizer=None, offset=0):
         super(Q, self).__init__()
         self.use_separate_nets = use_separate_nets
         self.additional_individual_hidden_layer = additional_individual_hidden_layer
@@ -267,31 +267,49 @@ class Q(nn.Module):
 
 
 class V(nn.Module):
-    def __init__(self, state_len, output_len, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2, activation_function=F.relu, normalizer=None,offset=-1):
+    def __init__(self, state_len, output_len, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2, activation_function=F.relu, normalizer=None, offset=0):
+        super(V, self).__init__()
+        self.HIDDEN_LAYERS = HIDDEN_LAYERS
+        self.activation_function = activation_function
+        self.normalizer = normalizer
+        self.offset = offset
+        
+        self.layers = nn.ModuleList()
+        layers.append(nn.Linear(state_len, HIDDEN_NEURONS))
+        for i in range(HIDDEN_LAYERS - 1):
+            layers.append(nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS))
+            
+        self.head = nn.Linear(HIDDEN_NEURONS, output_len)
+
+    def forward(self, x):
+        if self.normalizer is not None:
+            x = self.normalizer.normalize(x)
+            
+        for layer in self.layers:
+            x = self.activation_function(layer(x))
+        return self.head(x) + self.offset
+        
+class Actor(nn.Module):
+    def __init__(self, state_len, output_len, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2, activation_function=F.relu, normalizer=None, offset=0):
         super(V, self).__init__()
         self.HIDDEN_LAYERS = HIDDEN_LAYERS
         self.activation_function = activation_function
         self.normalizer = normalizer
         self.offset = offset
 
-        self.hidden1 = nn.Linear(state_len, HIDDEN_NEURONS)
-        if self.HIDDEN_LAYERS > 1:
-            self.hidden2 = nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS)
-        if self.HIDDEN_LAYERS > 2:
-            self.hidden3 = nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS)
-        if self.HIDDEN_LAYERS > 3:
-            print("ERROR in creating V network: Only 3 hidden layers supported. Network was created with 2 layers")
+       self.layers = nn.ModuleList()
+        layers.append(nn.Linear(state_len, HIDDEN_NEURONS))
+        for i in range(HIDDEN_LAYERS - 1):
+            layers.append(nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS))
+            
         self.head = nn.Linear(HIDDEN_NEURONS, output_len)
 
     def forward(self, x):
         if self.normalizer is not None:
             x = self.normalizer.normalize(x)
-
-        x = self.activation_function(self.hidden1(x))
-        if self.HIDDEN_LAYERS > 1:
-            x = self.activation_function(self.hidden2(x))
-        if self.HIDDEN_LAYERS > 2:
-            x = self.activation_function(self.hidden3(x))
+            
+        for layer in self.layers:
+            x = self.activation_function(layer(x))
         return self.head(x) + self.offset
 
 
@@ -319,7 +337,7 @@ class Trainer(object):
                  QV_NO_TARGET_Q=False, QV_SPLIT_Q=False, QV_SPLIT_V=False, QVC_TRAIN_ABS_TDE=False,
                  TDEC_ENABLED=False, TDEC_TRAIN_FUNC="normal", TDEC_ACT_FUNC="abs", TDEC_SCALE=0.5, TDEC_MID=0,
                  TDEC_USE_TARGET_NET=True, TDEC_GAMMA=0.99, TDEC_episodic=True,
-                 normalize_observations=True, critic_output_offset=0, reward_added_noise_std=0):
+                 normalize_observations=True, critic_output_offset=0, reward_added_noise_std=0, action_gaussian_noise_std=0.1):
                  
         self.steps_done = 0
         self.rewards = []
@@ -342,6 +360,8 @@ class Trainer(object):
             self.normalizer = Normalizer(self.state_len)
         else:
             self.normalizer = None
+            
+
 
         self.reward_added_noise_std = reward_added_noise_std
         self.critic_output_offset = critic_output_offset
@@ -365,6 +385,15 @@ class Trainer(object):
         self.replay_buffer_size = replay_buffer_size
         self.USE_EXP_REP = USE_EXP_REP
 
+        # Actor-Critic:
+        self.action_gaussian_noise_std = action_gaussian_noise_std
+        self.discrete_env = True if "Discrete" in str(self.env.action_space[:8]) else False
+        if not self.discrete_env:
+            self.action_low = self.env.action_space.high
+            self.action_high = self.env.action_space.low
+        self.actor = None
+        
+        # Bellman Split:
         self.SPLIT_BELLMAN = SPLIT_BELLMAN
         self.SPLIT_BELL_use_separate_nets = SPLIT_BELL_use_separate_nets
         self.SPLIT_BELL_additional_individual_hidden_layer = SPLIT_BELL_additional_individual_hidden_layer
@@ -373,11 +402,13 @@ class Trainer(object):
         self.SPLIT_BELL_NO_TARGET_AT_ALL = SPLIT_BELL_NO_TARGET_AT_ALL
         self.lr_r = lr_r
 
+        # QV-Learning:
         self.USE_QV = USE_QV
         self.QV_SPLIT_Q = QV_SPLIT_Q
         self.QV_SPLIT_V = QV_SPLIT_V
         self.QV_NO_TARGET_Q = QV_NO_TARGET_Q
 
+        # TDEC:
         self.TDEC_USE_TARGET_NET = TDEC_USE_TARGET_NET
         self.TDEC_ENABLED = TDEC_ENABLED
         self.TDEC_SCALE = TDEC_SCALE
@@ -410,6 +441,19 @@ class Trainer(object):
     def reset(self):
         self.steps_done = 0
         self.episode_durations = []
+        
+        # Initialize actor:
+        if not self.discrete_env:
+            self.actor = Actor(self.state_len, self.num_action, HIDDEN_NEURONS=self.hidden_neurons,
+                                HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                                normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+            self.target_actor = Actor(self.state_len, self.num_action, HIDDEN_NEURONS=self.hidden_neurons,
+                                    HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                                    normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+            self.target_actor.load_state_dict(self.actor.state_dict())
+            self.target_actor.eval()
+            
+        # Initialize Q and V networks:
         self.Q_net = Q(self.num_Q_inputs, self.num_actions, self.num_Q_output_slots,
                        use_separate_nets=self.SPLIT_BELL_use_separate_nets,
                        additional_individual_hidden_layer=self.SPLIT_BELL_additional_individual_hidden_layer,
@@ -500,57 +544,71 @@ class Trainer(object):
 
         sample = random.random()
         if sample > eps:
-            with torch.no_grad():
-                predictions = self.Q_net(state).view(self.num_actions, self.num_Q_output_slots)
+            if self.actor is not None:
+                if self.discrete_env:
+                    predictions = self.actor(state)
+                    return np.argmax(predictions)
+                else:
+                    action = self.actor(state)
+                    action += np.random.normal(0, self.action_gaussian_noise_std, len(action))
+                    action = np.clip(action, self.action_low, self.action_high)
+                    return action
+                   
+            else:
+                with torch.no_grad():
+                    predictions = self.Q_net(state).view(self.num_actions, self.num_Q_output_slots)
 
-                if self.TDEC_ENABLED:
-                    predicted_state_action_values = predictions[:, [0]]
-                    predicted_TDEs = predictions[:, [1]]
-                    if self.TDEC_ACT_FUNC == "absolute":
-                        predicted_TDEs = abs(predicted_TDEs)
-                    elif self.TDEC_ACT_FUNC == "positive":
-                        predicted_TDEs = (predicted_TDEs + abs(predicted_TDEs)) / 2
-                    elif self.TDEC_ACT_FUNC == "mse":
-                        predicted_TDEs = predicted_TDEs ** 2
-                    predictions = self.TDEC_FACTOR * predicted_TDEs + (
-                                1 - self.TDEC_FACTOR) * predicted_state_action_values
+                    if self.TDEC_ENABLED:
+                        predicted_state_action_values = predictions[:, [0]]
+                        predicted_TDEs = predictions[:, [1]]
+                        if self.TDEC_ACT_FUNC == "absolute":
+                            predicted_TDEs = abs(predicted_TDEs)
+                        elif self.TDEC_ACT_FUNC == "positive":
+                            predicted_TDEs = (predicted_TDEs + abs(predicted_TDEs)) / 2
+                        elif self.TDEC_ACT_FUNC == "mse":
+                            predicted_TDEs = predicted_TDEs ** 2
+                        predictions = self.TDEC_FACTOR * predicted_TDEs + (
+                                    1 - self.TDEC_FACTOR) * predicted_state_action_values
 
-                if self.SPLIT_BELLMAN:
-                    if __debug__:
-                        predicted_rewards = predictions[:, [0]]
-                        predicted_values = predictions[:, [1]]
-                        print("Predicted rewards: ", predicted_rewards)
-                        print("Predicted values: ", predicted_values)
-                    predictions = predictions.sum(dim=1)
+                    if self.SPLIT_BELLMAN:
+                        if __debug__:
+                            predicted_rewards = predictions[:, [0]]
+                            predicted_values = predictions[:, [1]]
+                            print("Predicted rewards: ", predicted_rewards)
+                            print("Predicted values: ", predicted_values)
+                        predictions = predictions.sum(dim=1)
+                        predictions = predictions.view(1, self.num_actions)
+
+                        # predictions = predicted_rewards + predicted_values
+                    if self.USE_QV:
+                        if self.QV_SPLIT_Q:
+                            if self.QV_SPLIT_V:
+                                predicted_r = predictions[:, [0]]
+                                predicted_r_V = predictions[:, [1]]
+                                predicted_R_V = predictions[:, [2]]
+                                predictions = predicted_r + predicted_r_V + predicted_R_V
+                            else:
+                                predicted_r = predictions[:, [0]]
+                                predicted_V_s_prime = predictions[:, [1]]
+                                predictions = predicted_r + predicted_V_s_prime
+
+                        if self.QV_CURIOSITY_ENABLED:
+                            if self.QV_CURIOSITY_TWO_HEADS:
+                                predicted_state_action_values = predictions[:, [0]]
+                                predicted_TD_errors = predictions[:, [1]]
+
+                                if self.QVC_USE_ABS_FOR_ACTION == "absolute":
+                                    predicted_TD_errors = predicted_TD_errors.abs()
+                                predictions = predicted_state_action_values * (
+                                            1 - self.QVC_scale) + predicted_TD_errors * self.QVC_scale
+
                     predictions = predictions.view(1, self.num_actions)
-
-                    # predictions = predicted_rewards + predicted_values
-                if self.USE_QV:
-                    if self.QV_SPLIT_Q:
-                        if self.QV_SPLIT_V:
-                            predicted_r = predictions[:, [0]]
-                            predicted_r_V = predictions[:, [1]]
-                            predicted_R_V = predictions[:, [2]]
-                            predictions = predicted_r + predicted_r_V + predicted_R_V
-                        else:
-                            predicted_r = predictions[:, [0]]
-                            predicted_V_s_prime = predictions[:, [1]]
-                            predictions = predicted_r + predicted_V_s_prime
-
-                    if self.QV_CURIOSITY_ENABLED:
-                        if self.QV_CURIOSITY_TWO_HEADS:
-                            predicted_state_action_values = predictions[:, [0]]
-                            predicted_TD_errors = predictions[:, [1]]
-
-                            if self.QVC_USE_ABS_FOR_ACTION == "absolute":
-                                predicted_TD_errors = predicted_TD_errors.abs()
-                            predictions = predicted_state_action_values * (
-                                        1 - self.QVC_scale) + predicted_TD_errors * self.QVC_scale
-
-                predictions = predictions.view(1, self.num_actions)
-                return predictions.max(1)[1].view(1, 1)
+                    return predictions.max(1)[1].view(1, 1)
         else:
-            return torch.tensor([[random.randrange(self.num_actions)]], device=self.device, dtype=torch.long)
+            if self.discrete_env:
+                return torch.tensor([[random.randrange(self.num_actions)]], device=self.device, dtype=torch.long)
+            else:
+                return (self.action_high - self.action_low) * torch.rand(self.num_action, device=self.device, dtype=torch.float) + self.action_low
 
     # Only for QV learning:
     def expectedVals(self, net, non_final_next_states, non_final_mask, reward_batch):
@@ -892,6 +950,13 @@ class Trainer(object):
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
+            
+        if self.USE_CACLA:
+            pass
+            # check for positive TDES in V network training (or Q network training for offline CACLA)
+            # for transitions with positive TDES, reinforce taking the action of the transition
+            # log stuff
+            # try to do this for both discrete and continuous action spaces.
 
         #### TODO: AHHH do this somehow
         if self.TDEC_ENABLED and 1 == 0:
