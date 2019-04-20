@@ -613,7 +613,7 @@ def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samp
 def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=None, randomizeParams=False,
            path="", on_server=False, max_points=2000, optimize="no", number_of_best_runs_to_check=5,
            number_of_checks_best_runs=5, final_evaluation_runs=20, number_of_hyperparam_optimizations=2,
-           evals_per_optimization_step=2, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
+           evals_per_optimization_step=2, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=0.5):
     experiment_start_time = time.time()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Experiment on ", env)
