@@ -976,6 +976,20 @@ params_split_ind_hidden = {"name": "Q+Split+Ind.Hidden", "SPLIT_BELLMAN": True,
                                "SPLIT_BELL_additional_individual_hidden_layer": True}
 params_split_use_sep = {"name": "Q+Split+Sep.Nets", "SPLIT_BELLMAN": True,
                             "SPLIT_BELL_use_separate_nets": True}
+params_Q_2_hidden = {"name": "Q-2Hidden", "hidden_layers": 2}
+params_split_2_hidden = {"name": "Q+Split-2Hidden", "hidden_layers": 2}
+paramsNoTarget_r_2_hidden = {"name": "Q+Split-NoTarget_r-2Hidden", "hidden_layers": 2}    
+
+params_Q_reward_noise_0_1 = {"name": "Q-RewardNoise0.1", "reward_added_noise_std": 0.1}
+params_Q_reward_noise_1 = {"name": "Q-RewardNoise1", "reward_added_noise_std": 1.0}
+params_Q_reward_noise_10 = {"name": "Q-RewardNoise10", "reward_added_noise_std": 10.0}
+params_split_reward_noise_0_1 = {"name": "Q+Split-RewardNoise0.1", "SPLIT_BELLMAN": True, "reward_added_noise_std": 0.1}
+params_split_reward_noise_1 = {"name": "Q+Split-RewardNoise1", "SPLIT_BELLMAN": True, "reward_added_noise_std": 1.0}
+params_split_reward_noise_10 = {"name": "Q+Split-RewardNoise10", "SPLIT_BELLMAN": True, "reward_added_noise_std": 10.0}  
+paramsNoTarget_r_split_reward_noise_0_1 = {"name": "Q+Split-NoTarget_r-RewardNoise0.1", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 0.1}
+paramsNoTarget_r_split_reward_noise_1 = {"name": "Q+Split-NoTarget_r-RewardNoise1", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 1.0}
+paramsNoTarget_r_split_reward_noise_10 = {"name": "Q+Split-NoTarget_r-RewardNoise10", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 10.0}                         
+
                             
 paramsNoTargetAtAll = {"name": "No Target at all", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_AT_ALL": True}
 paramsNoTargetAtAll_ind_hidden = {"name": "No Target at all+Ind. Hidden", "SPLIT_BELLMAN": True,
@@ -1073,7 +1087,11 @@ reliabilityTest = [paramsQ, paramsQ1, paramsQ2, paramsQ3]
 reliabilityTest_long = [paramsQ, paramsQ1, paramsQ2, paramsQ3, paramsQ4, paramsQ5, paramsQ6, paramsQ7, paramsQ8, paramsQ9, paramsQ10, paramsQ11, paramsQ12, paramsQ13, paramsQ14, paramsQ15, paramsQ16, paramsQ17, paramsQ18, paramsQ19, paramsQ20, paramsQ21, paramsQ22, paramsQ23, paramsQ24, paramsQ25, paramsQ26, paramsQ27, paramsQ28, paramsQ29, paramsQ30]
 
 epsilonList = [paramsEps_2, paramsEps_1, paramsEps_05, paramsEps_01, paramsEps_005, paramsEps_001, paramsEps_0001]
-splitBellList = [paramsQ, paramsSplit, paramsNoTarget_r, paramsNoTarget_r_ind_hidden, params_split_use_sep, params_split_ind_hidden, paramsNoTarget_r_use_sep, paramsNoTarget_r_ind_hidden]                
+splitBellList = [paramsQ, paramsSplit, paramsNoTarget_r, paramsNoTarget_r_ind_hidden, params_split_use_sep, params_split_ind_hidden, paramsNoTarget_r_use_sep]       
+
+checkAddedParamsInfluenceList = [paramsQ, paramsSplit, paramsNoTarget_r, paramsNoTarget_r_ind_hidden, params_split_use_sep, params_split_ind_hidden, paramsNoTarget_r_use_sep, params_Q_2_hidden, params_split_2_hidden, paramsNoTarget_r_2_hidden]              
+
+noisyRewardList = [params_Q_reward_noise_0_1, params_Q_reward_noise_1, params_Q_reward_noise_10, params_split_reward_noise_0_1, params_split_reward_noise_1, params_split_reward_noise_10, paramsNoTarget_r_split_reward_noise_0_1, paramsNoTarget_r_split_reward_noise_1, paramsNoTarget_r_split_reward_noise_10]
 
 splitShortList = [paramsQ, paramsSplit, paramsNoTarget_r]
 QV_split = [paramsQ, paramsQV, paramsQV_split_V, paramsQV_split_Q, paramsQV_split_V_and_Q]
@@ -1105,7 +1123,7 @@ TDEC_offset_list = [TDEC_pure, TDEC_pure_offset_01, TDEC_pure_offset_1, TDEC_pur
 tracemalloc.start()
 
 # Test:
-runExp(cart, Q_list, number_of_tests=5, length_of_tests=100, path="test/", on_server=True, optimize="comet_best", run_metric_percentage=1, run_metric_final_percentage_weight=0)
+#runExp(cart, Q_list, number_of_tests=5, length_of_tests=100, path="test/", on_server=True, optimize="comet_best", run_metric_percentage=1, run_metric_final_percentage_weight=0)
 
 ############ Exps:
 #runExp(cart, reliabilityTest_long, number_of_tests=50, length_of_tests=50000, path="long_rel_test_opt", on_server=True, optimize="comet_best")
@@ -1126,6 +1144,12 @@ runExp(cart, Q_list, number_of_tests=5, length_of_tests=100, path="test/", on_se
 # Optimize for separate nets and for individual hidden layers
 #runExp(cart, splitBellList, number_of_tests=50, length_of_tests=50000, path="split_netArch_cart/", on_server=True, optimize="comet_best")
 #runExp(lunar, splitBellList, number_of_tests=50, length_of_tests=50000, path="split_netArch_lunar/", on_server=True, optimize="comet_best")
+# Check if added params for different architecture is the cause behind performance boost:
+runExp(cart, checkAddedParamsInfluenceList, number_of_tests=50, length_of_tests=50000, path="split_AddedParamsEffect_cart/", on_server=True, optimize="comet_best")
+#runExp(lunar, checkAddedParamsInfluenceList, number_of_tests=50, length_of_tests=50000, path="split_AddedParamsEffect_lunar/", on_server=True, optimize="comet_best")
+# Check if spit approaches are more robuts to Gaussian noise (they should be in theory):
+#runExp(cart, noisyRewardList, number_of_tests=50, length_of_tests=50000, path="split_GaussianNoise_cart/", on_server=True, optimize="comet_best")
+#runExp(lunar, noisyRewardList, number_of_tests=50, length_of_tests=50000, path="split_GaussianNoise_lunar/", on_server=True, optimize="comet_best")
 # Optimize only lr for split
 #runExp(cart, splitShortList, number_of_tests=50, length_of_tests=50000, path="split_optOnlyLr_cart/", on_server=True, optimize="comet_best", optimize_only_lr=True)
 #runExp(lunar, splitShortList, number_of_tests=50, length_of_tests=50000, path="split_optOnlyLr_lunar/", on_server=True, optimize="comet_best", optimize_only_lr=True)

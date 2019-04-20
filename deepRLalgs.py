@@ -319,7 +319,7 @@ class Trainer(object):
                  QV_NO_TARGET_Q=False, QV_SPLIT_Q=False, QV_SPLIT_V=False, QVC_TRAIN_ABS_TDE=False,
                  TDEC_ENABLED=False, TDEC_TRAIN_FUNC="normal", TDEC_ACT_FUNC="abs", TDEC_SCALE=0.5, TDEC_MID=0,
                  TDEC_USE_TARGET_NET=True, TDEC_GAMMA=0.99, TDEC_episodic=True,
-                 normalize_observations=True, critic_output_offset=0):
+                 normalize_observations=True, critic_output_offset=0, reward_added_noise_std=0):
                  
         self.steps_done = 0
         self.rewards = []
@@ -343,6 +343,7 @@ class Trainer(object):
         else:
             self.normalizer = None
 
+        self.reward_added_noise_std = reward_added_noise_std
         self.critic_output_offset = critic_output_offset
         if activation_function == "relu" or activation_function == 1:
             self.activation_function = F.relu
@@ -992,6 +993,9 @@ class Trainer(object):
             reward = torch.tensor([reward], device=self.device, dtype=torch.float)
 
             TDE = self.calculateTDE(state, action, next_state, reward, store_log=False)
+            
+            if self.reward_added_noise_std:
+                reward += np.random.normal(0, self.reward_added_noise_std)
 
             if self.USE_EXP_REP:
                 self.memory.push(state, action, next_state, reward, TDE)
