@@ -144,7 +144,7 @@ class ProcessStateAction(OptimizableNet):
 
 
 class TempDiffNet(OptimizableNet):
-    def __init__(self, tau, use_polyak, target_network_hard_steps, split, split_layers, input_size, use_target_net):
+    def __init__(self, tau, use_polyak, target_network_hard_steps, split, split_layers, input_size, use_target_net, F_s):
         self.tau = tau
         self.target_network_polyak = use_polyak
         self.target_network_hard_steps = target_network_hard_steps
@@ -152,6 +152,8 @@ class TempDiffNet(OptimizableNet):
         self.use_target_net = use_target_net
 
         self.current_reward_prediction = None
+
+        
 
         self.reward_layers = self.create_reward_net()
 
@@ -240,48 +242,31 @@ class TempDiffNet(OptimizableNet):
             if steps % self.target_network_hard_steps == 0:
                 self.target_net.load_state_dict(self.state_dict())
 
-    def calculate_next_state_values(self, non_final_next_state_features, non_final_mask):
-        if self.USE_QV and self.name[-1] == "Q":
-            next_state_values = self.V_net.expected_value_next_state
-        else:
-            next_state_values = torch.zeros(self.batch_size, device=self.device)
-            next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features,
-                                                                         actor=self.actor).detach()
-            # next_state_expectation = next_state_predictions[self.name[-1]] # name[-1] to get "Q" or "V"
-
-            next_state_values[non_final_mask] = next_state_predictions  # [0] #TODO: why [0]?
-        return next_state_values
-
     def predict_current_state(self, state_features, state_action_features, actions):
-        if self.name[-1] == "Q":
-            if self.discrete:
-                if self.split:
-                    reward_prediction = self.forward_r(state_features).gather(1, actions)
-                return self.forward_R(state_features).gather(1, actions), reward_prediction  # .gather action that is taken
-            else:
-                if self.split:
-                    reward_prediction = self.forward_r(state_action_features)
-                return self.forward_R(state_action_features), reward_prediction  # self.F_s_A(state_features, actions))
-        elif self.name[-1] == "V":
-            if self.split:
-                reward_prediction = self.forward_r(state_features)
-            return self.forward_R(state_features), reward_prediction
+        raise NotImplementedError
+
+    def calculate_next_state_values(self, non_final_next_state_features, non_final_mask):
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features,
+                                                                     actor=self.actor).detach()
+        next_state_values[non_final_mask] = next_state_predictions  # [0] #TODO: why [0]?
+        return next_state_values
 
     def optimize(self, state_features, state_action_features, action_batch, reward_batch,
                         non_final_next_state_features, non_final_mask):
         # Compute V(s_t) or Q(s_t, a_t)
-        self.predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
+        predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
                                                                                  action_batch)
         # Train reward net if it exists:
         if self.split:
             self.optimize_net(reward_prediction, reward_batch, self.optimizer_reward, "r")
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        self.predictions_next_state = self.calculate_next_state_values(non_final_next_state_features, non_final_mask)
+        predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask)
 
         # Compute the expected values. Do not add the reward, if the critic is split
-        self.expected_value_next_state = (self.predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
+        self.expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
 
-        self.TDE = self.optimize_net(self.predictions_current, self.expected_value_next_state, self.optimizer_TD)
+        self.TDE = self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD)
 
 
 class Q(TempDiffNet):
@@ -311,6 +296,26 @@ class Q(TempDiffNet):
 
         super(Q, self).__init__()
 
+    def predict_next_state(self, non_final_next_state_features, non_final_mask):
+        if self.use_QVMAX:
+            return self.V.calculate_next_state_values(non_final_next_state_features, non_final_mask)
+        elif self.use_QV:
+            # This assumes that V is always trained directly before Q
+            return self.V_net.expected_value_next_state
+        else:
+            return self.calculate_next_state_values(non_final_next_state_features, non_final_mask)
+
+    def predict_current_state(self, state_features, state_action_features, actions):
+        reward_prediction = None
+        if self.discrete:
+            if self.split:
+                reward_prediction = self.forward_r(state_features).gather(1, actions)
+            return self.forward_R(state_features).gather(1, actions), reward_prediction  # .gather action that is taken
+        else:
+            if self.split:
+                reward_prediction = self.forward_r(state_action_features)
+            return self.forward_R(state_action_features), reward_prediction  # self.F_s_A(state_features, actions))
+
     def predict_state_value(self, state_features):
         if self.discrete:
             return self.forward(state_features).max(1)[0]
@@ -328,12 +333,14 @@ class Q(TempDiffNet):
 
 
 class V(TempDiffNet):
-    def __init__(self, input_size, layers, activation_function, lr, F_s):
+    def __init__(self, input_size, layers, activation_function, lr, F_s, hyperparameters):
         super(V, self).__init__()
 
         self.act_func = activation_function
         self.lr = lr
         self.output_neurons = 1
+
+        self.use_QVMAX = hyperparameters["use_QVMAX"]
 
         # Create layers
         self.layers, output_layer_input_neurons = create_ff_layers(input_size, layers)
@@ -345,14 +352,21 @@ class V(TempDiffNet):
         updateable_parameters = [self.parameters()] + [(self.F_s.parameters() if self.F_s is not None else [])]
         self.optimizer = optim.Adam(itertools.chain.from_iterable(updateable_parameters), lr=self.lr)
 
-    def forward(self, x):
-        for layer in self.layers:
-            x = self.act_func(layer(x))
-        return x
+    def predict_next_state(self, non_final_next_state_features, non_final_mask):
+        if self.use_QVMAX:
+            return self.Q.calculate_next_state_values(non_final_next_state_features, non_final_mask)
+        else:
+            return self.calculate_next_state_values(non_final_next_state_features, non_final_mask)
 
     def predict_state_value(self, state_features):
         with torch.no_grad():
-            return self.forward(state_features)
+            return self(state_features)
+
+    def predict_current_state(self, state_features, state_action_features, actions):
+        reward_prediction = None
+        if self.split:
+            reward_prediction = self.forward_r(state_features)
+        return self.forward_R(state_features), reward_prediction
 
 
 class Actor(OptimizableNet):
@@ -493,133 +507,3 @@ class Actor(OptimizableNet):
 
         self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer)
         # Train actor towards better actions (loss = better - current)
-
-
-class Q(nn.Module):
-    #  Also: (needs to be added to the networks)
-    #    1. Add option to add one hidden layer in general
-    #    2. Add option to make r and R prediction use separate nets
-    #    3. Add option to let r and R prediction be in same net, but have their own hidden layer
-    def __init__(self, state_len, num_actions, outputs_per_action, use_separate_nets=False,
-                 additional_individual_hidden_layer=False, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2,
-                 activation_function=F.relu, normalizer=None, offset=0):
-        super(Q, self).__init__()
-        self.use_separate_nets = use_separate_nets
-        self.additional_individual_hidden_layer = additional_individual_hidden_layer
-        self.num_actions = num_actions
-        self.HIDDEN_LAYERS = HIDDEN_LAYERS - additional_individual_hidden_layer
-        self.activation_function = activation_function
-        self.normalizer = normalizer
-        self.offset = offset
-
-        if self.use_separate_nets:
-            self.nets = nn.ModuleList()
-            for i in range(outputs_per_action):
-                layers = nn.ModuleList()
-                layers.append(nn.Linear(state_len, HIDDEN_NEURONS))
-                layers.append(nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS))
-                layers.append(nn.Linear(HIDDEN_NEURONS, num_actions))
-                self.nets.append(layers)
-        else:
-            self.hidden1 = nn.Linear(state_len, HIDDEN_NEURONS)
-            if self.HIDDEN_LAYERS > 1:
-                self.hidden2 = nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS)
-            if self.HIDDEN_LAYERS > 2:
-                self.hidden3 = nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS)
-            if self.HIDDEN_LAYERS > 3:
-                print("ERROR in creating Q network: Only 3 hidden layers supported. Network was created with 2 layers")
-            if self.additional_individual_hidden_layer:
-                self.separate_parts = nn.ModuleList()
-                for i in range(outputs_per_action):
-                    layers = nn.ModuleList()
-                    layers.append(nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS))
-                    layers.append(nn.Linear(HIDDEN_NEURONS, num_actions))
-                    self.separate_parts.append(layers)
-            else:
-                self.head = nn.Linear(HIDDEN_NEURONS, num_actions * outputs_per_action)
-
-    def forward(self, x):
-        if self.normalizer is not None:
-            x = self.normalizer.normalize(x)
-
-        if self.use_separate_nets:
-            outputs = []
-            for net in self.nets:
-                y = x
-                for layer in net:
-                    y = self.activation_function(layer(y)) if layer is not net[-1] else layer(y)
-                outputs.append(y)
-            output = torch.cat(outputs, dim=1)
-        else:
-            x = self.activation_function(self.hidden1(x))
-            if self.HIDDEN_LAYERS > 1:
-                x = self.activation_function(self.hidden2(x))
-            if self.HIDDEN_LAYERS > 2:
-                x = self.activation_function(self.hidden3(x))
-            if self.additional_individual_hidden_layer:
-                outputs = []
-                for part in self.separate_parts:
-                    y = self.activation_function(part[0](x))
-                    y = part[1](y)
-                    outputs.append(y)
-                output = torch.cat(outputs, dim=1)
-            else:
-                output = self.head(x)
-        final_output = output + self.offset
-        return self.create_output_dict(final_output)
-
-    # Q function can be default either output:
-    # 1. N Q-values for all N discrete action in a state. Input is (state_batch)
-    # 2. One Q-value for a state-action pair. Input is (state_batch, action_batch)
-    # Q function needs to either output:
-    # 1. Q-values for every state-action pair. Input is (state_batch, action_batch)
-    # 2. Approximation of state value by argmax_a Q(s,a) or by Q(s, mu(s))
-
-    def estimate_state_action(self, state_batch, action_batch):
-        # next_state: predict (s_t) or (s_t+1)
-        next_state = action_batch is None
-
-        predictions = net(state_batch)
-        if not next_state:
-            correct_indices = self.getActionIdxs(action_batch)
-            predictions = predictions.gather(1, correct_indices)
-        else:
-            predictions = predictions.view(-1, self.num_actions, self.num_Q_output_slots)
-
-    def estimate_state_value(self, state_batch):
-        # actor stored in self.actor
-        pass
-
-
-        # TODO what if Q_netoutputs single action value as in actor-critic? modify predict_Q func
-        # TODO for Q and V nets, if BS also add entry in dict that sums r and R. Should have unique name
-
-        # TODO: for Q and V prediction: always return a "Q" and "V", which calculates the value already directly based on its outputs
-        # Embed this into Q critic network. Add option
-        # current state: .gather(1, correct_indices), predictions[:, [0]]
-        # next_state : .view(-1, self.num_actions, 2), next_state_predictions[:, :, 0], take max later
-
-
-class V(nn.Module):
-    def __init__(self, state_len, output_len, HIDDEN_NEURONS=64, HIDDEN_LAYERS=2, activation_function=F.relu,
-                 normalizer=None, offset=0):
-        super(V, self).__init__()
-        self.HIDDEN_LAYERS = HIDDEN_LAYERS
-        self.activation_function = activation_function
-        self.normalizer = normalizer
-        self.offset = offset
-
-        self.layers = nn.ModuleList()
-        self.layers.append(nn.Linear(state_len, HIDDEN_NEURONS))
-        for i in range(HIDDEN_LAYERS - 1):
-            self.layers.append(nn.Linear(HIDDEN_NEURONS, HIDDEN_NEURONS))
-
-        self.head = nn.Linear(HIDDEN_NEURONS, output_len)
-
-    def forward(self, x):
-        if self.normalizer is not None:
-            x = self.normalizer.normalize(x)
-
-        for layer in self.layers:
-            x = self.activation_function(layer(x))
-        return self.head(x) + self.offset
