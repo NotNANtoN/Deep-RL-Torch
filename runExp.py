@@ -1,5 +1,5 @@
 from comet_ml import Optimizer, Experiment, OfflineExperiment
-from deepRLalgs import *
+from train import *
 import csv
 from cycler import cycler
 import os
