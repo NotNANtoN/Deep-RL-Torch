@@ -13,21 +13,46 @@ import numpy as np
 def conv2d_size_out(size, kernel_size=5, stride=2):
     return (size - (kernel_size - 1) - 1) // stride + 1
 
+def act_funct_string2function(name):
+    name = name.lower()
+    if name == "relu":
+        return F.relu
+    elif name == "sigmoid":
+        return torch.sigmoid
+    elif name == "tanh":
+        return torch.tanh
+
+def query_act_funct(layer_dict):
+    try:
+        activation_function = act_funct_string2function(layer_dict["act_func"])
+    except KeyError:
+        def activation_function(x):
+            return x
+    return activation_function
+
+def string2layer(name, input_size, neurons, device):
+    name = name.lower()
+    if name == "linear":
+        return nn.Linear(input_size, neurons, device=device)
+    elif name == "lstm":
+        return nn.LSTM(input_size, neurons, device=device)
+    elif name == "gru":
+        return nn.GRU(input_size, neurons, device=device)
+
 
 # TODO: possibly put activation functions per layer into some other list...
-def create_ff_layers(first_layer_input, layer_dict):
-    input_size = first_layer_input
+def create_ff_layers(input_size, layer_dict, device, output_size):
     layers = nn.ModuleList()
+    act_functs = []
     for layer in layer_dict:
         this_layer_neurons = layer["neurons"]
-        if layer["name"] == "linear":
-            layers.append(nn.Linear(input_size, this_layer_neurons))
-        elif layer["name"] == "LSTM":
-            layers.append(nn.LSTM(input_size, this_layer_neurons))
-        elif layer["name"] == "GRU":
-            layers.append(nn.GRU(input_size, this_layer_neurons))
+        layers.append(string2layer(layer["name"], input_size, this_layer_neurons, device))
+        act_functs.append(query_act_funct(layer))
         input_size = this_layer_neurons
-    return layers, input_size
+    if output_size is not None:
+        layers.append(nn.Linear(input_size, output_size))
+        act_functs.append(lambda x: x)
+    return layers, act_functs
 
 
 # Create a module list of conv layers specified in layer_dict
@@ -38,8 +63,10 @@ def create_conv_layers(input_matrix_shape, layer_dict):
     matrix_height = input_matrix_shape[1]
     channel_last_layer = input_matrix_shape[2]
 
+    act_functs = []
     layers = nn.ModuleList()
     for layer in layer_dict:
+        # Layer:
         if layer["name"] == "batchnorm":
             layers.append(nn.BatchNorm2d(channel_last_layer))
         elif layer["name"] == "conv":
@@ -50,9 +77,16 @@ def create_conv_layers(input_matrix_shape, layer_dict):
             matrix_height = conv2d_size_out(matrix_height, layer["kernel_size"], layer["stride"])
             channel_last_layer = this_layer_channels
 
+        act_functs.append(query_act_funct(layer))
+
     conv_output_size = matrix_width * matrix_height * channel_last_layer
 
-    return layers, conv_output_size
+    return layers, conv_output_size, act_functs
+
+def apply_layers(x, layers, act_functs):
+    for idx in range(len(layers)):
+        x = act_functs[idx](layers[idx](x))
+    return x
 
 
 class OptimizableNet(nn.Module):
@@ -60,18 +94,20 @@ class OptimizableNet(nn.Module):
         # TODO: return summary using pytorch
         return self.type
 
-    def __init__(self, log, optimizer):
+    def __init__(self, log):
         self.log = log
-        self.optimizer = optimizer
-        # TODO: initialize customizable loss function here (especially for actor!)
+
+    def compute_loss(self, output, target):
+        return F.smooth_l1_loss(output, target)
 
     def optimize_net(self, output, target, optimizer, name=""):
-        loss = F.smooth_l1_loss(output, target.unsqueeze(1))
+        loss = self.compute_loss(output, target.unsqueeze(1))
 
-        self.optimizer.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
-        self.optimizer.step()
+        optimizer.step()
 
+        #TODO: log gradients and weight sizes/stds! Have one log per NN (whether V, Q, or actor)
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         self.log.add(name, loss.detach())
 
@@ -82,26 +118,27 @@ class OptimizableNet(nn.Module):
 
 
 class ProcessState(OptimizableNet):
-    def __init__(self, vector_len, matrix_shape, vector_layers, matrix_layers,
-                 merge_layers, activation_function, matrix_max_val=255):
+    def __init__(self, vector_len, matrix_shape, device, hyperparameters, matrix_max_val=255):
         super(ProcessState, self).__init__()
-        self.act_func = activation_function
         self.vector_normalizer = Normalizer(vector_len)
         self.matrix_normalizer = Normalizer(matrix_shape, matrix_max_val)
 
         vector_output_size = 0
-        matrix_output_size = 0
-
         if vector_len is not None:
-            self.vector_layers, vector_output_size = create_ff_layers(vector_len, vector_layers)
+            vector_layers = hyperparameters["layers_feature_vector"]
+            self.layers_vector, self.act_functs_vector = create_ff_layers(vector_len, vector_layers, device, None)
+            vector_output_size = self.layers_vector[-1].out_features
 
         # matrix size has format (x_len, y_len, n_channels)
+        matrix_output_size = 0
         if matrix_shape is not None:
-            self.matrix_layers, matrix_output_size = create_conv_layers(matrix_shape, matrix_layers)
+            matrix_layers = hyperparameters["layers_feature_matrix"]
+            self.layers_matrix, matrix_output_size, self.act_functs_matrix = create_conv_layers(matrix_shape, matrix_layers)
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
+        merge_layers = hyperparameters["layers_feature_merge"]
         merge_input_size = vector_output_size + matrix_output_size
-        self.merge_layers = create_ff_layers(merge_input_size, merge_layers)
+        self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, device, None)
 
     def forward(self, vector, matrix):
         # TODO: instead of having two inputs, only have one state to make the function more general.
@@ -109,72 +146,58 @@ class ProcessState(OptimizableNet):
         merged = torch.tensor([])
         if matrix is not None:
             batch_size = matrix.size(0)
-            for layer in self.matrix_layers:
-                matrix = self.act_func(layer(matrix))
+            matrix = apply_layers(matrix, self.layers_matrix, self.act_functs_matrix)
             matrix = matrix.view(batch_size, -1)
             merged = torch.cat((merged, matrix), 0)
 
         if vector is not None:
-            for layer in self.vector_layers:
-                vector = self.act_func(layer(vector))
+            vector = apply_layers(vector, self.layers_vector, self.act_functs_vector)
             merged = torch.cat((merged, vector), 0)
 
-        for layer in self.merge_layers:
-            merged = self.act_func(layer(merged))
+        merged = apply_layers(merged, self.layers_merge, self.act_functs_merge)
+
         return merged
 
 
 class ProcessStateAction(OptimizableNet):
-    def __init__(self, state_features_len, action_len, layers, activation_function):
+    def __init__(self, state_features_len, action_len, layers, device):
         super(ProcessStateAction, self).__init__()
-
-        self.act_func = activation_function
-
-        # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
 
         input_size = state_features_len + action_len
 
-        self.layers, output_vector_size = create_ff_layers(input_size, layers)
+        self.layers, self.act_functs = create_ff_layers(input_size, layers, device, None)
 
     def forward(self, state_features, actions):
         x = torch.cat((state_features, actions), 0)
-        for layer in self.layers:
-            x = self.act_func(layer(x))
+        x = apply_layers(x, self.layers, self.act_functs)
         return x
 
-
 class TempDiffNet(OptimizableNet):
-    def __init__(self, tau, use_polyak, target_network_hard_steps, split, split_layers, input_size, use_target_net, F_s):
-        self.tau = tau
-        self.target_network_polyak = use_polyak
-        self.target_network_hard_steps = target_network_hard_steps
-        self.split = split
-        self.use_target_net = use_target_net
+    def __init__(self, input_size, hyperparameters, device, use_target_net):
+        self.tau = hyperparameters["polyak_averaging_tau"]
+        self.target_network_polyak = hyperparameters["use_polyak_averaging"]
+        self.target_network_hard_steps = hyperparameters["target_network_hard_steps"]
+        self.split = hyperparameters["split_Bellman"]
 
         self.current_reward_prediction = None
 
-        
-
-        self.reward_layers = self.create_reward_net()
+        # Initiate reward prediction network:
+        self.lr_r = hyperparameters["lr_r"]
+        reward_layers = hyperparameters["layers_r"]
+        if self.split:
+            self.layers_r, self.act_functs_r = create_ff_layers(input_size, reward_layers)
+        self.optimizer_r = optim.Adam(itertools.chain.from_iterable(self.layers_r + self.updateable_parameters),
+                                      lr=self.lr_r)
 
         self.target_net = self.create_target_net()
 
         super(TempDiffNet, self).__init__(parameters, self.updateable_parameters)
 
-    def create_reward_net(self):
-        r_layers = None
-        if self.split:
-            r_layers, output_layer_input_neurons = create_ff_layers(input_size, split_layers)
-            output_layer = nn.Linear(output_layer_input_neurons, self.output_neurons)
-            r_layers.append(output_layer)
-            # TODO: create optimizer for r network with different lr than Q net
-        return r_layers
-
     def create_target_net(self):
         target_net = None
         if self.use_target_net:
             target_net = copy.deepcopy(self)
-            # TODO: check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
+            # TODO(small): check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
             #target_net.apply(self.weights_init)
             target_net.use_target_net = False
             target_net.eval()
@@ -182,27 +205,18 @@ class TempDiffNet(OptimizableNet):
 
     def forward(self, x):
         predicted_reward = 0
-        #TODO: what if reward and state_value should share a layer? ... I think the answer is that we share it via the F_s... but double check if that is enough!
         if self.r_layers:
-            predicted_reward = x.copy()
-            for layer in self.r_layers:
-                predicted_reward = self.act_func(layer(y))
-            self.last_r_prediction = predicted_reward
-
-        for layer in self.layers:
-            predicted_state_value = self.act_func(layer(x))
-
+            predicted_reward = apply_layers(x, self.layers_r, self.act_functs_r)
+            #self.last_r_prediction = predicted_reward
+            # TODO: What was the upper line used for?
+        predicted_state_value = apply_layers(x, self.layers_TD, self.act_functs_TD)
         return predicted_state_value + predicted_reward
 
     def forward_r(self, x):
-        for layer in self.r_layers:
-            x = self.act_func(layer(x))
-        return x
+        return apply_layers(x, self.layers_r, self.act_functs_r)
 
     def forward_R(self, x):
-        for layer in self.layers:
-            x = self.act_func(layer(x))
-        return x
+        return apply_layers(x, self.layers_TD, self.act_functs_TD)
 
     def weights_init(self, m):
         # if isinstance(m, nn.Conv2d):
@@ -259,40 +273,40 @@ class TempDiffNet(OptimizableNet):
                                                                                  action_batch)
         # Train reward net if it exists:
         if self.split:
-            self.optimize_net(reward_prediction, reward_batch, self.optimizer_reward, "r")
+            self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r")
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
         predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask)
 
         # Compute the expected values. Do not add the reward, if the critic is split
         self.expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
 
-        self.TDE = self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD)
+        self.TDE = self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD, "R")
 
 
 class Q(TempDiffNet):
-    def __init__(self, input_size, layers, num_actions, activation_function, F_s,
-                 F_s_a, lr, hyperparameters):
+    def __init__(self, input_size, num_actions, F_s, F_s_a, hyperparameters):
 
         # can either have many outputs or one
         self.num_actions = num_actions
-        self.multi_output = not hyperparameters["use_actor_critic"]
+        self.multi_output = num_actions > 1
         self.output_neurons = num_actions if self.multi_output else 1
         # Network properties
         self.act_func = hyperparameters["activation_function"]
-        self.lr = hyperparameters["lr_Q"]
 
         # Create layers
-        self.layers, output_layer_input_neurons = create_ff_layers(input_size, layers)
-        output_layer = nn.Linear(output_layer_input_neurons, self.output_neurons)
-        self.layers.append(output_layer)
+        layers = hyperparameters["layers_Q"]
+        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers)
 
         # Define optimizer and previous networks
         # TODO: only optimize F_sa depedning on self.multi_output
+        self.lr_TD = hyperparameters["lr_Q"]
         self.F_s = F_s
         self.F_s_a = F_s_a
-        updateable_parameters = [self.parameters()] + (F_s.parameters() if F_s is not None else []) + \
-                                (F_s_a.parameters() if F_s_a is not None else [])
-        self.optimizer = optim.Adam(itertools.chain.from_iterable(updateable_parameters), lr=self.lr)
+        self.updateable_parameters = F_s.parameters() + \
+                                (F_s_a.parameters() if not self.multi_output else [])
+
+        self.optimizer_TD = optim.Adam(itertools.chain.from_iterable(self.layers_TD + self.updateable_parameters),
+                                       lr=self.lr_TD)
 
         super(Q, self).__init__()
 
@@ -333,7 +347,7 @@ class Q(TempDiffNet):
 
 
 class V(TempDiffNet):
-    def __init__(self, input_size, layers, activation_function, lr, F_s, hyperparameters):
+    def __init__(self, input_size, activation_function, lr, F_s, hyperparameters):
         super(V, self).__init__()
 
         self.act_func = activation_function
@@ -343,14 +357,15 @@ class V(TempDiffNet):
         self.use_QVMAX = hyperparameters["use_QVMAX"]
 
         # Create layers
-        self.layers, output_layer_input_neurons = create_ff_layers(input_size, layers)
-        output_layer = nn.Linear(output_layer_input_neurons, self.output_neurons)
-        self.layers.append(output_layer)
+        layers = hyperparameters["layers_V"]
+        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers)
 
         # Define optimizer and previous networks
+        self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        updateable_parameters = [self.parameters()] + [(self.F_s.parameters() if self.F_s is not None else [])]
-        self.optimizer = optim.Adam(itertools.chain.from_iterable(updateable_parameters), lr=self.lr)
+        updateable_parameters = [self.F_s.parameters()]
+        self.optimizer_TD = optim.Adam(itertools.chain.from_iterable(self.layers + updateable_parameters), lr=self.lr_TD)
+
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask):
         if self.use_QVMAX:
@@ -370,33 +385,38 @@ class V(TempDiffNet):
 
 
 class Actor(OptimizableNet):
-    def __init__(self, input_size, num_actions, discrete_actions, action_lows, action_highs, layers,
-                 activation_function):
+    def __init__(self, input_size, num_actions, action_lows, action_highs,
+                 hyperparameters, device):
         super(Actor, self).__init__()
-        self.activation_function = activation_function
-        self.act_funcs_output_layer = []
-        self.output_layers = nn.ModuleList()
+
+        self.discrete_action_space = num_actions > 1
+        output_size = num_actions if self.discrete_action_space else len(action_lows)
 
         # Create layers
-        self.layers, output_layer_input_neurons = create_ff_layers(input_size, layers)
-        # Create output layers with different activation functions, depending on the range of action outputs:
-        self.output_layers, self.act_funcs_output_layer = self.create_output_layers(discrete_actions, num_actions,
+        layers = hyperparameters["layers_actor"]
+        self.layers, self.act_functs = create_ff_layers(input_size, layers, device, output_size)
+        self.act_funtcs_output_layer = self.create_output_layers(discrete_actions, num_actions,
                                                                                     output_layer_input_neurons,
                                                                                     action_lows, action_highs)
         # Define optimizer and previous networks
+        self.lr = hyperparameters["lr_actor"]
         self.F_s = F_s
-        updateable_parameters = [self.parameters()] + [(self.F_s.parameters() if self.F_s is not None else [])]
-        self.optimizer = optim.Adam(itertools.chain.from_iterable(updateable_parameters), lr=self.lr)
+        updateable_parameters = [self.F_s.parameters()]
+        self.optimizer = optim.Adam(itertools.chain.from_iterable(self.layers + updateable_parameters), lr=self.lr)
 
     def forward(self, x):
-        for layer in self.layers:
-            x = self.activation_function(layer(x))
+        for idx in range(len(self.layers)):
+            x = self.act_functs[idx](self.layers[idx](x))
 
         outputs = []
         for i in range(len(self.output_layers)):
             outputs.append(self.act_funcs_output_layer[i](self.output_layers[i](x)))
 
         return torch.cat(outputs, dim=1)
+
+    # TODO: this function needs to be defined such that it takes into account where sigmoid is used and where other values are used
+    def compute_loss(self, output, target):
+        return F.smooth_l1_loss(output, target)
 
     # TODO: the following function is too inefficient, as it creates a layer for every kind of activation function
     # TODO instead it should apply one weight matrix and apply different activation functions to the respective parts of it
@@ -505,5 +525,5 @@ class Actor(OptimizableNet):
             #
             pass
 
-        self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer)
+        self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer, "actor")
         # Train actor towards better actions (loss = better - current)
