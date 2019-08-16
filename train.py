@@ -511,8 +511,6 @@ class TrainerOld(object):
 
                 self.epsilon *= eps_decay
                 self.log.add("Epsilon", self.epsilon)
-                elif self.TDEC_ENABLED and self.TDEC_MID:
-                self.TDEC_FACTOR = self.TDEC_FACTOR * TDEC_DECAY
 
             # Optimize the policy
             self.policy.optimize()
@@ -541,12 +539,12 @@ class TrainerOld(object):
         #    else:
         #        self.target_net.load_state_dict(self.Q_net.state_dict())
 
-    if verbose:
-        plot_rewards(self.rewards)
-        plot_rewards(self.log.storage["Total Reward"], "Total Reward")
-        print('Complete')
-    self.env.close()
-    return i_episode, self.rewards, self.log.storage
+        if verbose:
+            plot_rewards(self.rewards)
+            plot_rewards(self.log.storage["Total Reward"], "Total Reward")
+            print('Complete')
+        self.env.close()
+        return i_episode, self.rewards, self.log.storage
 
 
 def calculate_reduced_idxs(len_of_point_list, max_points):

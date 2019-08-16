@@ -280,6 +280,7 @@ class TempDiffNet(OptimizableNet):
         # Compute the expected values. Do not add the reward, if the critic is split
         self.expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
 
+        # TD stored for actor-critic updates:
         self.TDE = self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD, "R")
 
 
@@ -392,17 +393,25 @@ class Actor(OptimizableNet):
         self.discrete_action_space = num_actions > 1
         output_size = num_actions if self.discrete_action_space else len(action_lows)
 
+        # Initiate arrays for output function:
+        self.relu_idxs = []
+        self.sigmoid_idxs = []
+        self.tanh_idxs = []
+        self.scaling = np.ones(len(action_lows))
+        self.offset = np.ones(len(action_lows))
+
         # Create layers
         layers = hyperparameters["layers_actor"]
         self.layers, self.act_functs = create_ff_layers(input_size, layers, device, output_size)
-        self.act_funtcs_output_layer = self.create_output_layers(discrete_actions, num_actions,
-                                                                                    output_layer_input_neurons,
-                                                                                    action_lows, action_highs)
+        self.act_func_output_layer = self.create_output_act_func(self.discrete_action_space, action_lows,
+                                                                 action_highs)
+
         # Define optimizer and previous networks
         self.lr = hyperparameters["lr_actor"]
         self.F_s = F_s
         updateable_parameters = [self.F_s.parameters()]
         self.optimizer = optim.Adam(itertools.chain.from_iterable(self.layers + updateable_parameters), lr=self.lr)
+
 
     def forward(self, x):
         for idx in range(len(self.layers)):
@@ -414,75 +423,56 @@ class Actor(OptimizableNet):
 
         return torch.cat(outputs, dim=1)
 
-    # TODO: this function needs to be defined such that it takes into account where sigmoid is used and where other values are used
     def compute_loss(self, output, target):
-        return F.smooth_l1_loss(output, target)
-
-    # TODO: the following function is too inefficient, as it creates a layer for every kind of activation function
-    # TODO instead it should apply one weight matrix and apply different activation functions to the respective parts of it
-    def create_output_layers(self, discrete_actions, num_actions, output_layer_input_neurons, action_lows,
-                             action_highs):
-        output_layers = []
-        act_funcs_output_layer = []
-        if discrete_actions:
-            output_layer = nn.Linear(output_layer_input_neurons, num_actions)
-            output_layers.append(output_layer)
-            act_funcs_output_layer.append(F.sigmoid)
-            output_layers.append(nn.Softmax(num_actions))
-            act_funcs_output_layer.append(lambda x: x)
+        if self.discrete_action_space:
+            loss_func =  torch.nn.CrossEntropyLoss()
+            return loss_func(output, target)
         else:
-            # action bounds can be between (0, X), (-X, X), (-inf, inf)
-            last_act_func = 0
-            layer_size = 0
-            for i in range(num_actions):
+            # TODO: this loss does not help combat the vanishing gradient problem that we have because of the use of sigmoid activations to squash our actions into the correct range
+            return F.smooth_l1_loss(output, target)
+
+    def output_function_continuous(self, x):
+        if self.relu_idxs:
+            x[self.relu_idxs] = F.relu(x[self.relu_idxs])
+        if self.sigmoid_idxs:
+            x[self.sigmoid_idxs] = F.sigmoid(x[self.sigmoid_idxs])
+        if self.tanh_idxs:
+            x[self.tanh_idxs] = F.tanh(x[self.tanh_idxs])
+        return (x * self.scaling) + self.offset
+
+    def create_output_act_func(self, discrete_action_space, action_lows, action_highs):
+        if discrete_action_space:
+            return F.sigmoid
+        else:
+            for i in range(len(action_lows)):
                 low = action_lows[i]
                 high = action_highs[i]
-                # if one is zero
                 if not (low and high):
-                    multiplier = 1
                     if low == -math.inf or high == math.inf:
-                        func = F.relu
+                        self.relu_idxs.append(i)
                     else:
-                        func = F.sigmoid
-                        multiplier *= high + low
-                    act_func = lambda x: func(x) * multiplier
-                elif low == -1 * high:
-                    if low == 1:
-                        act_func = F.tanh
-                    elif low == -math.inf:
-                        act_func = lambda x: x
-                    else:
-                        act_func = lambda x: F.tanh(x) * high
+                        self.sigmoid_idxs.append(i)
+                        self.scaling[i] = high + low
+                elif low == high * -1:
+                    if low != -math.inf:
+                        self.tanh_idxs.append(i)
+                        self.scaling[i] = high
                 else:
-                    act_func = lambda x: x.clamp(low, high)
+                    self.offset[i] = (high - low) / 2
+                    self.scaling[i] = high - offset[i]
+                    self.tanh_idxs.append(i)
+        return self.output_function_continuous
 
-                if act_func == last_act_func:
-                    layer_size += 1
-                else:
-                    # finish last layer, create new one
-                    if layer_size != 0:
-                        output_layers.append(nn.Linear(output_layer_input_neurons, layer_size))
-                        act_funcs_output_layer.append(last_act_func)
-
-                    layer_size = 1
-                    last_act_func = act_func
-            if layer_size != 0:
-                output_layers.append(nn.Linear(output_layer_input_neurons, layer_size))
-                act_funcs_output_layer.append(last_act_func)
-
-            return output_layers, act_funcs_output_layer
-
-    def optimize(self, state_features, reward_batch, action_batch, non_final_next_states, non_final_mask, TDE_V,
-                 Q_expectations_next_state):
+    def optimize(self, state_features, reward_batch, action_batch, non_final_next_states, non_final_mask):
         # Calculate current actions for state_batch:
         actions_current_state = self.actor(state_features)
         better_actions_current_state = actions_current_state.detach().copy()
-        if self.USE_V_CACLA:
+        if self.use_CACLA_V:
             # Requires TDE_V
             # Check which actions have a pos TDE
             pos_TDE_mask = self.V_net.TDE > 0
             better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
-        if self.USE_Q_CACLA:
+        if self.use_CACLA_Q:
             # Calculate mask of pos expected Q minus Q(s, mu(s))
             action_TDE = self.Q_net.expectations_next_state - self.Q_net(state_features, actions_current_state).detach()
             pos_TDE_mask = action_TDE > 0
@@ -490,9 +480,8 @@ class Actor(OptimizableNet):
         # TODO: implement CACLA+Var
 
         # TODO - Idea: When using QV, possibly reinforce actions only if Q and V net agree (first check how often they disagree and in which cases)
-        if self.USE_DDPG:
+        if self.use_DDPG:
             # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
-
             q_vals = self.Q_net(state_features, actions_current_state)
             q_vals.backward()  # retain necessary?
             gradients = actions_current_state.grad
@@ -503,7 +492,7 @@ class Actor(OptimizableNet):
             # TODO Normalize over batch, then scale by inverse TDE (risky thing:what about very small TDEs?
             better_actions_current_state = actions_current_state + gradients
 
-        if self.USE_SPG:
+        if self.use_SPG:
             # Calculate mask of Q(s,a) minus Q(s, mu(s))
             action_TDE = Q_pred_batch_state_action.detach()["Q"] - self.Q_net(state_batch, actions_current_state)
             pos_TDE_mask = action_TDE > 0
@@ -513,7 +502,7 @@ class Actor(OptimizableNet):
             # 3. Compare batch_action and batch_best_actions to evals of current actions
             # 4. Sample around best action with Gaussian noise until better action is found, then sample around this
             # 5. Reinforce towards best actions
-        if self.USE_GISPG:
+        if self.use_GISPG:
             # Gradient Informed SPG
             # Option one:
             # Do SPG, but for every action apply DDPG to get the DDPG action and check if it is better than the non-
