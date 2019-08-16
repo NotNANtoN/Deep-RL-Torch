@@ -135,26 +135,26 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
-    def reset_old(self):
-        if self.USE_EXP_REP:
-            # TODO: extend replayMemory class with prioritized exp rep
-            self.memory = ReplayMemory(self.replay_buffer_size)
-        else:
-            self.initialize_workers()
-
-        # INIT networks:
-
-        # TODO: networks need to set up their own optimizers
-
-        # TODO: if QV_MAX, set USE_QV to True
-        if self.USE_QV or self.USE_CACLA:
-        # init V net
-        if self.USE_CACLA:
-        # init V net
-        else:
-        # init Q net
-        if self.USE_AC:
-        # if we use Actor critic (any sort) set this variable to True and initialize Actor
+    # def reset_old(self):
+    #     if self.USE_EXP_REP:
+    #         # TODO: extend replayMemory class with prioritized exp rep
+    #         self.memory = ReplayMemory(self.replay_buffer_size)
+    #     else:
+    #         self.initialize_workers()
+    #
+    #     # INIT networks:
+    #
+    #     # TODO: networks need to set up their own optimizers
+    #
+    #     # TODO: if QV_MAX, set USE_QV to True
+    #     if self.USE_QV or self.USE_CACLA:
+    #         # init V net
+    #         if self.USE_CACLA:
+    #         # init V net
+    #     else:
+    #         # init Q net
+    #         if self.USE_AC:
+    #         # if we use Actor critic (any sort) set this variable to True and initialize Actor
 
         if self.USE_TDEC:
             pass

@@ -147,7 +147,6 @@ class Trainer:
             self.policy.remember(state, action, next_state, reward, done, TDE)
 
             state = next_state
-
             if done:
                 state = self.env.reset()
                 state = torch.tensor([state], device=self.device).float()
@@ -511,8 +510,7 @@ class TrainerOld(object):
 
                 self.epsilon *= eps_decay
                 self.log.add("Epsilon", self.epsilon)
-                elif self.TDEC_ENABLED and self.TDEC_MID:
-                self.TDEC_FACTOR = self.TDEC_FACTOR * TDEC_DECAY
+
 
             # Optimize the policy
             self.policy.optimize()
@@ -541,12 +539,11 @@ class TrainerOld(object):
         #    else:
         #        self.target_net.load_state_dict(self.Q_net.state_dict())
 
-    if verbose:
-        plot_rewards(self.rewards)
-        plot_rewards(self.log.storage["Total Reward"], "Total Reward")
-        print('Complete')
-    self.env.close()
-    return i_episode, self.rewards, self.log.storage
+    # if verbose:
+    #     plot_rewards(self.rewards)
+    #     plot_rewards(self.log.storage["Total Reward"], "Total Reward")
+    #     print('Complete')
+    #     self.env.close()
 
 
 def calculate_reduced_idxs(len_of_point_list, max_points):
@@ -614,7 +611,8 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, random
 
 
 if __name__ == "__main__":
-    parameters = {"USE_QV": False, "SPLIT_BELLMAN": False, "gamma_Q": 0.99, "batch_size": 64, "UPDATES_PER_STEP": 1,
+    parameters = {"use_QV": False, "SPLIT_BELLMAN": False, "gamma_Q": 0.99, "batch_size": 64, "UPDATES_PER_STEP": 1,
+                  "use_QVMAX": False,
                   "target_network_steps": 500, "lr_Q": 0.001, "lr_r": 0.001, "replay_buffer_size": 10000,
                   "USE_EXP_REP": True,
                   "epsilon_mid": 0.1, "activation_function": "elu",
@@ -626,7 +624,8 @@ if __name__ == "__main__":
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   "TDEC_episodic": True,
                   "normalize_observations": True, "critic_output_offset": 0, "reward_added_noise_std": 0,
-                  "reward_std": 0.0, "USE_CACLA": False, "USE_OFFLINE_CACLA": False, "actor_lr": 0.001}
+                  "reward_std": 0.0, "USE_CACLA": False, "USE_OFFLINE_CACLA": False, "actor_lr": 0.001,
+                  "max_episode_steps": 0}
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
