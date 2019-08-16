@@ -135,6 +135,82 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
+<<<<<<< HEAD
+    # def reset_old(self):
+    #     if self.USE_EXP_REP:
+    #         # TODO: extend replayMemory class with prioritized exp rep
+    #         self.memory = ReplayMemory(self.replay_buffer_size)
+    #     else:
+    #         self.initialize_workers()
+    #
+    #     # INIT networks:
+    #
+    #     # TODO: networks need to set up their own optimizers
+    #
+    #     # TODO: if QV_MAX, set USE_QV to True
+    #     if self.USE_QV or self.USE_CACLA:
+    #         # init V net
+    #         if self.USE_CACLA:
+    #         # init V net
+    #     else:
+    #         # init Q net
+    #         if self.USE_AC:
+    #         # if we use Actor critic (any sort) set this variable to True and initialize Actor
+
+        if self.USE_TDEC:
+            pass
+            # at some point: initalize TDEC, which uses same structure as above (QV etc)
+
+        # Initialize actor:
+        if not self.discrete_env:
+            self.actor = Actor(self.state_len, self.num_actions, HIDDEN_NEURONS=self.hidden_neurons,
+                               HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                               normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+            self.target_actor = Actor(self.state_len, self.num_actions, HIDDEN_NEURONS=self.hidden_neurons,
+                                      HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                                      normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+            self.target_actor.load_state_dict(self.actor.state_dict())
+            self.target_actor.eval()
+
+            self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=self.actor_lr)
+
+        # Initialize Q and V networks:
+        self.Q_net = Q(self.num_Q_inputs, self.num_actions, self.num_Q_output_slots,
+                       use_separate_nets=self.SPLIT_BELL_use_separate_nets,
+                       additional_individual_hidden_layer=self.SPLIT_BELL_additional_individual_hidden_layer,
+                       HIDDEN_NEURONS=self.hidden_neurons,
+                       HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                       normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+        if self.USE_QV:
+            self.V_net = V(self.state_len, self.num_V_outputs,
+                           HIDDEN_NEURONS=self.hidden_neurons,
+                           HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                           normalizer=self.normalizer, offset=self.critic_output_offset).to(
+                self.device)
+            self.target_value_net = V(self.state_len, self.num_V_outputs,
+                                      HIDDEN_NEURONS=self.hidden_neurons,
+                                      HIDDEN_LAYERS=self.hidden_layers,
+                                      activation_function=self.activation_function,
+                                      normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
+            self.target_value_net.load_state_dict(self.V_net.state_dict())
+            self.target_value_net.eval()
+            self.value_optimizer = optim.Adam(self.V_net.parameters(), lr=self.lr_Q)
+
+        self.target_net = Q(self.num_Q_inputs, self.num_actions, self.num_Q_output_slots,
+                            use_separate_nets=self.SPLIT_BELL_use_separate_nets,
+                            additional_individual_hidden_layer=self.SPLIT_BELL_additional_individual_hidden_layer,
+                            HIDDEN_NEURONS=self.hidden_neurons,
+                            HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
+                            normalizer=self.normalizer, offset=self.critic_output_offset).to(
+            self.device)
+        self.target_net.load_state_dict(self.Q_net.state_dict())
+        self.target_net.eval()
+
+        self.optimizer = optim.Adam(self.Q_net.parameters(), lr=self.lr_Q)
+        self.optimizer_r = optim.Adam(self.Q_net.parameters(), lr=self.lr_r)
+
+=======
+>>>>>>> 8fb5e298cad2a52b5e5cf186dfc054f7be8fe48f
     def calculate_TDE(self, batch, store_log=True):
         TDE = self.policy.calculate_TDE(batch)
 
