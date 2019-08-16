@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 from util import *
-from networks import Q, V, Actor
+from networks import Q, V, Actor, ProcessState, ProcessStateAction
 
 
 # This is the interface for the agent being trained by a Trainer instance
@@ -29,7 +29,7 @@ class AgentInterface:
     def calculate_TDE(self, state, action, reward, next_state):
         raise NotImplementedError
 
-    def remember(self, state, action, next_state, reward):
+    def remember(self, state, action, next_state, reward, done):
         raise NotImplementedError
 
     def display_debug_info(self):
@@ -39,6 +39,8 @@ class AgentInterface:
 class Agent(AgentInterface):
     def __init__(self, env, device, normalizer, log, hyperparameters):
         self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
+        print(env.action_space)
+        print("Env with discrete action space: ", self.discrete_env)
         self.env = env
         self.device = device
         self.normalizer = normalizer
@@ -55,7 +57,7 @@ class Agent(AgentInterface):
         if self.parameters["use_actor_critic"]:
             base_policy = ActorCritic
         elif self.discrete_env:
-            base_policy = Q
+            base_policy = Q_Policy
         else:
             raise NotImplementedError("The environment must be discrete to apply Q-Learning, no other"
                                       " framework than Actor-Critic available")
@@ -66,6 +68,8 @@ class Agent(AgentInterface):
             policy = base_policy(self.env, self.device, self.log, self.parameters)
         return policy
 
+    def remember(self, state, action, next_state, reward, done):
+        self.policy.remember(state, action, next_state, reward, done)
 
     def optimize(self):
         self.policy.optimize()
@@ -135,93 +139,33 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
-<<<<<<< HEAD
-    # def reset_old(self):
-    #     if self.USE_EXP_REP:
-    #         # TODO: extend replayMemory class with prioritized exp rep
-    #         self.memory = ReplayMemory(self.replay_buffer_size)
-    #     else:
-    #         self.initialize_workers()
-    #
-    #     # INIT networks:
-    #
-    #     # TODO: networks need to set up their own optimizers
-    #
-    #     # TODO: if QV_MAX, set USE_QV to True
-    #     if self.USE_QV or self.USE_CACLA:
-    #         # init V net
-    #         if self.USE_CACLA:
-    #         # init V net
-    #     else:
-    #         # init Q net
-    #         if self.USE_AC:
-    #         # if we use Actor critic (any sort) set this variable to True and initialize Actor
+    def calculate_TDE(self, state, action, next_state, reward):
+        return self.policy.calculate_TDE(state, action, next_state, reward)
 
-        if self.USE_TDEC:
-            pass
-            # at some point: initalize TDEC, which uses same structure as above (QV etc)
-
-        # Initialize actor:
-        if not self.discrete_env:
-            self.actor = Actor(self.state_len, self.num_actions, HIDDEN_NEURONS=self.hidden_neurons,
-                               HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
-                               normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
-            self.target_actor = Actor(self.state_len, self.num_actions, HIDDEN_NEURONS=self.hidden_neurons,
-                                      HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
-                                      normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
-            self.target_actor.load_state_dict(self.actor.state_dict())
-            self.target_actor.eval()
-
-            self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=self.actor_lr)
-
-        # Initialize Q and V networks:
-        self.Q_net = Q(self.num_Q_inputs, self.num_actions, self.num_Q_output_slots,
-                       use_separate_nets=self.SPLIT_BELL_use_separate_nets,
-                       additional_individual_hidden_layer=self.SPLIT_BELL_additional_individual_hidden_layer,
-                       HIDDEN_NEURONS=self.hidden_neurons,
-                       HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
-                       normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
-        if self.USE_QV:
-            self.V_net = V(self.state_len, self.num_V_outputs,
-                           HIDDEN_NEURONS=self.hidden_neurons,
-                           HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
-                           normalizer=self.normalizer, offset=self.critic_output_offset).to(
-                self.device)
-            self.target_value_net = V(self.state_len, self.num_V_outputs,
-                                      HIDDEN_NEURONS=self.hidden_neurons,
-                                      HIDDEN_LAYERS=self.hidden_layers,
-                                      activation_function=self.activation_function,
-                                      normalizer=self.normalizer, offset=self.critic_output_offset).to(self.device)
-            self.target_value_net.load_state_dict(self.V_net.state_dict())
-            self.target_value_net.eval()
-            self.value_optimizer = optim.Adam(self.V_net.parameters(), lr=self.lr_Q)
-
-        self.target_net = Q(self.num_Q_inputs, self.num_actions, self.num_Q_output_slots,
-                            use_separate_nets=self.SPLIT_BELL_use_separate_nets,
-                            additional_individual_hidden_layer=self.SPLIT_BELL_additional_individual_hidden_layer,
-                            HIDDEN_NEURONS=self.hidden_neurons,
-                            HIDDEN_LAYERS=self.hidden_layers, activation_function=self.activation_function,
-                            normalizer=self.normalizer, offset=self.critic_output_offset).to(
-            self.device)
-        self.target_net.load_state_dict(self.Q_net.state_dict())
-        self.target_net.eval()
-
-        self.optimizer = optim.Adam(self.Q_net.parameters(), lr=self.lr_Q)
-        self.optimizer_r = optim.Adam(self.Q_net.parameters(), lr=self.lr_r)
-
-=======
->>>>>>> 8fb5e298cad2a52b5e5cf186dfc054f7be8fe48f
-    def calculate_TDE(self, batch, store_log=True):
-        TDE = self.policy.calculate_TDE(batch)
-
-        if store_log:
-            self.log.add("TDE", TDE.item())
-
-        return TDE
 
 class BasePolicy:
-    def __init__(self, hyperparameters):
-        # TODO: move F_s F_sa creation possibly into Agent to share among all policies
+    def __init__(self, env, device, log, hyperparameters):
+        self.env = env
+        self.device = device
+        self.log = log
+        self.hyperparameters = hyperparameters
+
+        # Check env:
+        self.discrete_env = True if 'Discrete' in str(env.action_space) else False
+        if self.discrete_env:
+            self.num_actions = self.env.action_space.n
+        else:
+            self.num_actions = len(self.env.action_space.high)
+
+        # Set up parameters:
+        self.use_actor_critic = self.hyperparameters["use_actor_critic"]
+        self.use_QV = self.hyperparameters["use_QV"]
+        self.use_QVMAX = self.hyperparameters["use_QVMAX"]
+        self.gaussian_action_noise = self.hyperparameters["action_sigma"]
+        self.boltzmann_exploration_temp = self.hyperparameters["boltzmann_temp"]
+
+
+        # TODO: move F_s and F_sa creation possibly into Agent to share among all policies
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.actor, self.critic = self.init_actor_critic(self.F_s, self.F_sa)
         self.epsilon = hyperparameters["epsilon"]
@@ -241,7 +185,7 @@ class BasePolicy:
         if self.boltzmann_exploration_temp > 0:
             action = self.boltzmann_exploration(action)
         else:
-            action = torch.argmax(action, dim=-1)
+            action = torch.argmax(action, dim=-1)[0].item()
         return action
 
     def add_noise(self, action):
@@ -250,6 +194,10 @@ class BasePolicy:
             action = torch.tensor(np.clip(action, self.action_low, self.action_high))
         return action
 
+    def state2parts(self, state):
+        # TODO: adjust this function to be able to deal with vector envs, rgb envs, and mineRL
+        return state, None
+
     def explore(self, state):
         # Epsilon-Greedy:
         if self.epsilon:
@@ -257,7 +205,8 @@ class BasePolicy:
             if sample < self.epsilon:
                 return self.random_action()
         # Raw action:
-        state_features = self.F_s(state)
+        vectors, matrix = self.state2parts(state)
+        state_features = self.F_s(vectors, matrix)
         action = self.actor(state_features).detach()
         # Add Gaussian noise:
         if self.gaussian_action_noise:
@@ -277,23 +226,35 @@ class BasePolicy:
         return action
 
     def init_feature_extractors(self):
-        F_s = StateProcessor()
-        F_sa = StateActionProcessor()
+        # TODO: this currently only works for input vectors, NOT for matrices or multiple input vectors (not for MineRL)
+        input_vector_len = len(self.env.observation_space.high)
+        matrix_shape = None
+
+        F_s = ProcessState(input_vector_len, matrix_shape, self.log, self.device, self.hyperparameters)
+        self.state_feature_len = F_s.layers_merge[-1].out_features
+
+        F_sa = None
+        if self.use_actor_critic:
+            F_sa = ProcessStateAction(state_feature_len, self.num_actions, self.device, self.log, self.hyperparameters)
+            self.state_action_feature_len = F_sa.layers[-1].out_features
         return F_s, F_sa
 
-    def init_actor_critic(self, F_s, F_sa, hyperparameters):
-        # TODO: first create state_processor and state_action_processor and add them to the optimizers of the actor/critic
-        critic = self.init_critic(F_s, F_sa, hyperparameters)
-        actor = self.init_actor(critic, F_s, hyperparameters)
+    def init_actor_critic(self, F_s, F_sa):
+        critic = self.init_critic(F_s, F_sa)
+        actor = self.init_actor(critic, F_s)
         return actor, critic
 
-    def init_critic(self, F_s, F_sa, hyperparameters):
+    def init_critic(self, F_s, F_sa):
         # TODO: differentiate between DQN critic and AC critic by checking in Q __init__ for use_actor_critic
-        self.Q = Q(env, device, log, hyperparameters, F_s, F_sa)
+        if self.use_actor_critic:
+            input_len = self.state_action_feature_len
+        else:
+            input_len = self.state_feature_len
+        self.Q = Q(input_len, self.num_actions, self.discrete_env, F_s, F_sa, self.device, self.log, self.hyperparameters)
 
         if self.use_QV or self.use_QVMAX:
             # Init Networks:
-            self.V = V(env, device, log, hyperparameters, F_s)
+            self.V = V(input_len, F_s, self.device, self.log, self.hyperparameters)
             # Create links for training value calculations:
             self.Q.V = self.V
             self.V.Q = self.Q
@@ -323,8 +284,8 @@ class BasePolicy:
         self.log.add("Epsilon", self.epsilon)
         # TODO: decay temperature for Boltzmann if that exploration is used
 
-    def calculate_TDE(self, batch):
-        return self.critic.calculate_TDE(batch)
+    def calculate_TDE(self,  state, action, next_state, reward):
+        return self.critic.calculate_TDE(state, action, next_state, reward)
 
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
@@ -363,10 +324,7 @@ class ActorCritic(BasePolicy):
             self.num_actions = len(env.action_space.low)
             self.action_low = torch.tensor(env.action_space.high)
             self.action_high = torch.tensor(env.action_space.low)
-        self.log = log
-        self.parameters = hyperparameters
-        super(ActorCritic, self).__init__(hyperparameters)
-
+        super(ActorCritic, self).__init__(env, device, log, hyperparameters)
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
@@ -377,8 +335,8 @@ class ActorCritic(BasePolicy):
                           non_final_mask)
         self.train_actor(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
 
-    def init_actor(self, critic):
-        self.actor = Actor(env, device, log, hyperparameters)
+    def init_actor(self, critic, F_s):
+        self.actor = Actor(F_s, env, device, log, hyperparameters)
         self.actor.Q = critic
 
     def train_actor(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask):
@@ -386,15 +344,15 @@ class ActorCritic(BasePolicy):
 
 
 class Q_Policy(BasePolicy):
-    def __init__(self):
-        super(Q_Policy, self).__init__(hyperparameters)
+    def __init__(self, env, device, log, hyperparameters):
+        super(Q_Policy, self).__init__(env, device, log, hyperparameters)
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
         self.train_critic(state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                              non_final_mask)
 
-    def init_actor(self, critic):
+    def init_actor(self, critic, F_s):
         return critic
 
 

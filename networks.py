@@ -30,23 +30,23 @@ def query_act_funct(layer_dict):
             return x
     return activation_function
 
-def string2layer(name, input_size, neurons, device):
+def string2layer(name, input_size, neurons):
     name = name.lower()
     if name == "linear":
-        return nn.Linear(input_size, neurons, device=device)
+        return nn.Linear(input_size, neurons)
     elif name == "lstm":
-        return nn.LSTM(input_size, neurons, device=device)
+        return nn.LSTM(input_size, neurons)
     elif name == "gru":
-        return nn.GRU(input_size, neurons, device=device)
+        return nn.GRU(input_size, neurons)
 
 
 # TODO: possibly put activation functions per layer into some other list...
-def create_ff_layers(input_size, layer_dict, device, output_size):
+def create_ff_layers(input_size, layer_dict, output_size):
     layers = nn.ModuleList()
     act_functs = []
     for layer in layer_dict:
         this_layer_neurons = layer["neurons"]
-        layers.append(string2layer(layer["name"], input_size, this_layer_neurons, device))
+        layers.append(string2layer(layer["name"], input_size, this_layer_neurons))
         act_functs.append(query_act_funct(layer))
         input_size = this_layer_neurons
     if output_size is not None:
@@ -94,8 +94,11 @@ class OptimizableNet(nn.Module):
         # TODO: return summary using pytorch
         return self.type
 
-    def __init__(self, log):
+    def __init__(self, device, log, hyperparameters):
+        super(OptimizableNet, self).__init__()
         self.log = log
+        self.device = device
+        self.hyperparameters = hyperparameters
 
     def compute_loss(self, output, target):
         return F.smooth_l1_loss(output, target)
@@ -111,34 +114,32 @@ class OptimizableNet(nn.Module):
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         self.log.add(name, loss.detach())
 
-        # Compute Temporal-Difference Errors:
-        temporal_diff_errors = target - output
-
-        return temporal_diff_errors.detach()
-
 
 class ProcessState(OptimizableNet):
-    def __init__(self, vector_len, matrix_shape, device, hyperparameters, matrix_max_val=255):
-        super(ProcessState, self).__init__()
-        self.vector_normalizer = Normalizer(vector_len)
-        self.matrix_normalizer = Normalizer(matrix_shape, matrix_max_val)
+    def __init__(self, vector_len, matrix_shape, log, device, hyperparameters, matrix_max_val=255):
+        super(ProcessState, self).__init__(log, device, hyperparameters)
 
         vector_output_size = 0
         if vector_len is not None:
+            self.vector_normalizer = Normalizer(vector_len)
             vector_layers = hyperparameters["layers_feature_vector"]
-            self.layers_vector, self.act_functs_vector = create_ff_layers(vector_len, vector_layers, device, None)
+            self.layers_vector, self.act_functs_vector = create_ff_layers(vector_len, vector_layers, None)
             vector_output_size = self.layers_vector[-1].out_features
 
         # matrix size has format (x_len, y_len, n_channels)
         matrix_output_size = 0
         if matrix_shape is not None:
+            self.matrix_normalizer = Normalizer(matrix_shape, matrix_max_val)
             matrix_layers = hyperparameters["layers_feature_matrix"]
             self.layers_matrix, matrix_output_size, self.act_functs_matrix = create_conv_layers(matrix_shape, matrix_layers)
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
         merge_input_size = vector_output_size + matrix_output_size
-        self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, device, None)
+        self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
+
+        # Set feature extractor to GPU if possible:
+        self.to(device)
 
     def forward(self, vector, matrix):
         # TODO: instead of having two inputs, only have one state to make the function more general.
@@ -160,12 +161,16 @@ class ProcessState(OptimizableNet):
 
 
 class ProcessStateAction(OptimizableNet):
-    def __init__(self, state_features_len, action_len, layers, device):
-        super(ProcessStateAction, self).__init__()
+    def __init__(self, state_features_len, action_len, log, device, hyperparameters):
+        super(ProcessStateAction, self).__init__(device, log, hyperparameters)
 
         input_size = state_features_len + action_len
 
+        layers = hyperparameters["layers_state_action_features"]
         self.layers, self.act_functs = create_ff_layers(input_size, layers, device, None)
+
+        # Put feature extractor on GPU if possible:
+        self.to(device)
 
     def forward(self, state_features, actions):
         x = torch.cat((state_features, actions), 0)
@@ -173,25 +178,26 @@ class ProcessStateAction(OptimizableNet):
         return x
 
 class TempDiffNet(OptimizableNet):
-    def __init__(self, input_size, hyperparameters, device, use_target_net):
-        self.tau = hyperparameters["polyak_averaging_tau"]
+    def __init__(self, input_size, updateable_parameters, device, log, hyperparameters):
+        super(TempDiffNet, self).__init__(device, log, hyperparameters)
+
         self.target_network_polyak = hyperparameters["use_polyak_averaging"]
+        if self.target_network_polyak:
+            self.tau = hyperparameters["polyak_averaging_tau"]
         self.target_network_hard_steps = hyperparameters["target_network_hard_steps"]
         self.split = hyperparameters["split_Bellman"]
+        self.use_target_net = hyperparameters["use_target_net"]
 
         self.current_reward_prediction = None
 
         # Initiate reward prediction network:
-        self.lr_r = hyperparameters["lr_r"]
-        reward_layers = hyperparameters["layers_r"]
         if self.split:
-            self.layers_r, self.act_functs_r = create_ff_layers(input_size, reward_layers)
-        self.optimizer_r = optim.Adam(itertools.chain.from_iterable(self.layers_r + self.updateable_parameters),
-                                      lr=self.lr_r)
-
-        self.target_net = self.create_target_net()
-
-        super(TempDiffNet, self).__init__(parameters, self.updateable_parameters)
+            self.lr_r = hyperparameters["lr_r"]
+            reward_layers = hyperparameters["layers_r"]
+            self.layers_r, self.act_functs_r = create_ff_layers(input_size, reward_layers, self.output_neurons)
+            self.to(device)
+            self.optimizer_r = optim.Adam(itertools.chain.from_iterable(self.layers_r + updateable_parameters),
+                                        lr=self.lr_r)
 
     def create_target_net(self):
         target_net = None
@@ -205,7 +211,7 @@ class TempDiffNet(OptimizableNet):
 
     def forward(self, x):
         predicted_reward = 0
-        if self.r_layers:
+        if self.split:
             predicted_reward = apply_layers(x, self.layers_r, self.act_functs_r)
             #self.last_r_prediction = predicted_reward
             # TODO: What was the upper line used for?
@@ -280,36 +286,66 @@ class TempDiffNet(OptimizableNet):
         # Compute the expected values. Do not add the reward, if the critic is split
         self.expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
 
-        # TD stored for actor-critic updates:
+        # TD must be stored for actor-critic updates:
         self.TDE = self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD, "R")
+
+    def calculate_TDE(self, state, action_batch, next_state, reward_batch):
+        return torch.tensor([0])
+        # TODO fix
+
+
+        # TODO: replace the None for matrix as soon as we have the function in policies.py of state2parts
+        state_features = self.F_s(state, None)
+        if next_state is not None:
+            non_final_next_state_features = self.F_s(next_state, None)
+            non_final_mask = [0]
+        else:
+            non_final_mask = []
+        state_action_features = None
+        if not self.discrete:
+            state_action_features = self.F_sa(state_features, action_batch)
+        # Compute V(s_t) or Q(s_t, a_t)
+        predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
+                                                                            action_batch).detach()
+        # Compute current prediction for reward plus state value:
+        current_prediction = reward_prediction + self.gamma * predictions_current
+        # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
+        predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask)
+        # Compute the expected values. Do not add the reward, if the critic is split
+        expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
+        return expected_value_next_state - current_prediction
+
 
 
 class Q(TempDiffNet):
-    def __init__(self, input_size, num_actions, F_s, F_s_a, hyperparameters):
+    def __init__(self, input_size, num_actions, discrete_action_space, F_s, F_s_a, device, log, hyperparameters):
+        updateable_parameters = list(F_s.parameters()) +(list(F_s_a.parameters()) if not discrete_action_space else [])
+        super(Q, self).__init__(input_size, updateable_parameters, device, log, hyperparameters)
 
         # can either have many outputs or one
         self.num_actions = num_actions
-        self.multi_output = num_actions > 1
-        self.output_neurons = num_actions if self.multi_output else 1
-        # Network properties
-        self.act_func = hyperparameters["activation_function"]
+        self.discrete = discrete_action_space
+        self.output_neurons = num_actions if self.discrete else 1
+
+        # Set up params:
+        self.use_QV = hyperparameters["use_QV"]
+        self.use_QVMAX = hyperparameters["use_QVMAX"]
 
         # Create layers
         layers = hyperparameters["layers_Q"]
-        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers)
+        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers, self.output_neurons)
+        # Put feature extractor on GPU if possible:
+        self.to(device)
 
         # Define optimizer and previous networks
         # TODO: only optimize F_sa depedning on self.multi_output
         self.lr_TD = hyperparameters["lr_Q"]
         self.F_s = F_s
         self.F_s_a = F_s_a
-        self.updateable_parameters = F_s.parameters() + \
-                                (F_s_a.parameters() if not self.multi_output else [])
 
-        self.optimizer_TD = optim.Adam(itertools.chain.from_iterable(self.layers_TD + self.updateable_parameters),
-                                       lr=self.lr_TD)
-
-        super(Q, self).__init__()
+        self.optimizer_TD = optim.Adam(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
+        # Create target net
+        self.target_net = self.create_target_net()
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask):
         if self.use_QVMAX:
@@ -321,7 +357,7 @@ class Q(TempDiffNet):
             return self.calculate_next_state_values(non_final_next_state_features, non_final_mask)
 
     def predict_current_state(self, state_features, state_action_features, actions):
-        reward_prediction = None
+        reward_prediction = 0
         if self.discrete:
             if self.split:
                 reward_prediction = self.forward_r(state_features).gather(1, actions)
@@ -348,25 +384,26 @@ class Q(TempDiffNet):
 
 
 class V(TempDiffNet):
-    def __init__(self, input_size, activation_function, lr, F_s, hyperparameters):
-        super(V, self).__init__()
+    def __init__(self, input_size, F_s, log, device, hyperparameters):
+        updateable_parameters = F_s.parameters()
+        super(V, self).__init__(input_size, updateable_parameters, log, device, hyperparameters)
 
-        self.act_func = activation_function
-        self.lr = lr
         self.output_neurons = 1
 
         self.use_QVMAX = hyperparameters["use_QVMAX"]
 
         # Create layers
         layers = hyperparameters["layers_V"]
-        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers)
+        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers, self.output_neurons)
+        # Put feature extractor on GPU if possible:
+        self.to(device)
 
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        updateable_parameters = [self.F_s.parameters()]
-        self.optimizer_TD = optim.Adam(itertools.chain.from_iterable(self.layers + updateable_parameters), lr=self.lr_TD)
-
+        self.optimizer_TD = optim.Adam(itertools.chain(self.layers, updateable_parameters), lr=self.lr_TD)
+        # Create target net
+        self.target_net = self.create_target_net()
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask):
         if self.use_QVMAX:
@@ -379,7 +416,7 @@ class V(TempDiffNet):
             return self(state_features)
 
     def predict_current_state(self, state_features, state_action_features, actions):
-        reward_prediction = None
+        reward_prediction = 0
         if self.split:
             reward_prediction = self.forward_r(state_features)
         return self.forward_R(state_features), reward_prediction
@@ -402,9 +439,11 @@ class Actor(OptimizableNet):
 
         # Create layers
         layers = hyperparameters["layers_actor"]
-        self.layers, self.act_functs = create_ff_layers(input_size, layers, device, output_size)
+        self.layers, self.act_functs = create_ff_layers(input_size, layers, output_size)
         self.act_func_output_layer = self.create_output_act_func(self.discrete_action_space, action_lows,
                                                                  action_highs)
+        # Put feature extractor on GPU if possible:
+        self.to(device)
 
         # Define optimizer and previous networks
         self.lr = hyperparameters["lr_actor"]

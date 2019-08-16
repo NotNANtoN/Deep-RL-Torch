@@ -139,12 +139,10 @@ class Trainer:
         state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
-        for i in range(n_actions):
+        for _ in range(n_actions):
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=False)
 
-            TDE = self.policy.calculate_TDE(state, action, next_state, reward)
-
-            self.policy.remember(state, action, next_state, reward, done, TDE)
+            self.policy.remember(state, action, next_state, reward, done)
 
             state = next_state
             if done:
@@ -161,13 +159,17 @@ class Trainer:
         next_state, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
         reward = self.modify_env_reward(reward)
-        # Record state for normalization:
-        self.normalizer.observe(next_state)
         # Define next state in case it is terminal:
         if done:
             next_state = None
         else:
-            next_state = torch.tensor([next_state], device=self.device).float()
+            next_state = torch.from_numpy(next_state).float()
+            #next_state = torch.tensor([next_state], device=self.device).float()
+            # Record state for normalization:
+            self.normalizer.observe(next_state)
+        # Calculate TDE for debugging purposes:
+        TDE = self.policy.calculate_TDE(state, action, next_state, reward)
+        self.log.add("TDE", TDE.item())
         # Render:
         if render:
             self.env.render()
@@ -611,21 +613,31 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, random
 
 
 if __name__ == "__main__":
-    parameters = {"use_QV": False, "SPLIT_BELLMAN": False, "gamma_Q": 0.99, "batch_size": 64, "UPDATES_PER_STEP": 1,
-                  "use_QVMAX": False,
-                  "target_network_steps": 500, "lr_Q": 0.001, "lr_r": 0.001, "replay_buffer_size": 10000,
-                  "USE_EXP_REP": True,
-                  "epsilon_mid": 0.1, "activation_function": "elu",
-                  "SPLIT_BELL_additional_individual_hidden_layer": False,
-                  "SPLIT_BELL_NO_TARGET_r": True, "hidden_neurons": 64, "hidden_layers": 1, "MAX_EPISODE_STEPS": 0,
-                  "initial_random_actions": 1024, "QV_NO_TARGET_Q": False, "QV_SPLIT_Q": False, "QV_SPLIT_V": False,
-                  "QVC_TRAIN_ABS_TDE": False, "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
+    # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
+
+    standard_hidden_block =  [{"name":"linear", "neurons": 64, "act_func": "relu"},
+                             {"name":"linear", "neurons": 64, "act_func": "relu"}]
+    layers_feature_vector = standard_hidden_block
+    layers_feature_merge = standard_hidden_block
+    layers_r = standard_hidden_block
+    layers_Q = standard_hidden_block
+
+    parameters = {"use_QV": False, "split_Bellman": False, "gamma_Q": 0.99, "batch_size": 64, "UPDATES_PER_STEP": 1,
+                  "use_QVMAX": False, "use_target_net": True,
+                  "target_network_hard_steps": 500, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
+                  "lr_Q": 0.001, "lr_r": 0.001, "replay_buffer_size": 10000,
+                  "use_exp_rep": True, "epsilon": 0.1,"action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
+                  "SPLIT_BELL_NO_TARGET_r": True,
+                  "n_initial_random_actions": 1024, "QV_NO_TARGET_Q": False,
+                  "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
                   "TDEC_ACT_FUNC": "abs",
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   "TDEC_episodic": True,
-                  "normalize_observations": True, "critic_output_offset": 0, "reward_added_noise_std": 0,
-                  "reward_std": 0.0, "USE_CACLA": False, "USE_OFFLINE_CACLA": False, "actor_lr": 0.001,
-                  "max_episode_steps": 0}
+                  "normalize_obs": True,
+                  "reward_std": 0.0, "use_actor_critic":False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG":False,
+                  "use_SPG": False, "use_GISPG":False, "lr_actor": 0.001,
+                  "max_episode_steps": 0, "use_hrl": False, "layers_feature_vector": layers_feature_vector,
+                  "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q}
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -641,5 +653,5 @@ if __name__ == "__main__":
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(pendulum, parameters)
+    trainer = Trainer(cart, parameters)
     trainer.run(50000, render=True)
