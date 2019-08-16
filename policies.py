@@ -135,6 +135,7 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
+<<<<<<< HEAD
     # def reset_old(self):
     #     if self.USE_EXP_REP:
     #         # TODO: extend replayMemory class with prioritized exp rep
@@ -208,6 +209,8 @@ class Agent(AgentInterface):
         self.optimizer = optim.Adam(self.Q_net.parameters(), lr=self.lr_Q)
         self.optimizer_r = optim.Adam(self.Q_net.parameters(), lr=self.lr_r)
 
+=======
+>>>>>>> 8fb5e298cad2a52b5e5cf186dfc054f7be8fe48f
     def calculate_TDE(self, batch, store_log=True):
         TDE = self.policy.calculate_TDE(batch)
 
@@ -367,6 +370,8 @@ class ActorCritic(BasePolicy):
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
+        # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
+        # TODO: for HRL this might be nice
         state_action_features = self.F_sa(state_feature_batch, action_batch)
         self.train_critic(state_feature_batch, state_action_features, reward_batch, non_final_next_state_features,
                           non_final_mask)
