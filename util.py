@@ -1,11 +1,10 @@
 import torch
 import random
+import numpy as np
 from collections import namedtuple
 
-# TODO: TDEC should not be stored: TDE needs to be recalculated every time you sample a transition, otherwise the value is becomes stale
 Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward', 'TDEC'))
-
+                        ('state', 'action', 'next_state', 'reward', 'done'))
 
 class Normalizer():
     def __init__(self, input_shape, max_val=None):
@@ -39,30 +38,6 @@ class Normalizer():
 
         obs_std = torch.sqrt(self.var)
         return (inputs * obs_std) + self.mean
-
-
-# TODO: Include Combined Experience Replay (CER): Basically just always include the newest transition in the batch. Combine with PER
-# TODO: Include Prioritized Experience Replay (PER): Prioritize based on absolute TDE
-# TODO: Include PER with prioritization based on Upper Bound of Gradient Norm.
-
-class ReplayMemory(object):
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
-
-    def push(self, *args):
-        """Saves a transition."""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
 
 
 class Log(object):

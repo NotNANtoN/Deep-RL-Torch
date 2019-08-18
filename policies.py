@@ -4,7 +4,7 @@ import numpy as np
 
 from util import *
 from networks import Q, V, Actor, ProcessState, ProcessStateAction
-
+from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
 
 # This is the interface for the agent being trained by a Trainer instance
 class AgentInterface:
@@ -46,8 +46,6 @@ class Agent(AgentInterface):
         self.normalizer = normalizer
         self.log = log
         self.parameters = hyperparameters
-        self.memory = ReplayMemory(hyperparameters)
-        # TODO: put memory into policy
 
         self.policy = self.create_policy()
 
@@ -65,7 +63,7 @@ class Agent(AgentInterface):
         if self.parameters["use_hrl"]:
             policy = HierarchicalPolicy(base_policy, self.log, self.parameters)
         else:
-            policy = base_policy(self.env, self.device, self.log, self.parameters)
+            policy = base_policy(self.env, self.device, self.log, self.parameters, self.normalizer)
         return policy
 
     def remember(self, state, action, next_state, reward, done):
@@ -73,62 +71,6 @@ class Agent(AgentInterface):
 
     def optimize(self):
         self.policy.optimize()
-
-    def optimize_old(self):
-
-        # TODO: add optimization for TDEC! It would most likely be best to allow TDEC to have its own critics, therefore we need a sub-function here.
-
-        # Get Batch:
-        state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask, TDEC_reward_batch = self.get_batch()
-
-        state_features = self.F_s(state_batch)
-        state_action_features = self.F_sa(state_features,
-                                          action_batch)  # TODO not necessary if CACLA and no world model etc.
-
-        with torch.no_grad():
-            non_final_next_state_features = self.F_s(non_final_next_states)
-
-        if self.V_net:
-            self.V_net.optimize(state_features, reward_batch, non_final_next_state_features, non_final_mask)
-
-        if self.Q_net:
-            self.Q_net.optimize(state_features, state_action_features, action_batch, reward_batch,
-                                non_final_next_state_features, non_final_mask)
-            # TODO: possibly split up Q class into one that takes state_features and one tha ttakes state-atcion features as input
-
-        if self.actor:
-            # TODO: actor has access to Q net
-            self.actor.optimize(state_features, reward_batch, action_batch, non_final_next_states, non_final_mask)
-
-        if self.world_model:
-            self.world_model.optimize()
-            # TODO: create a world model at some point
-
-        # V-net updates:
-        if self.V_net:
-            if "r_V" in V_pred_batch_state:
-                TDE_r_V = self.optimize_net(self.V_net, V_pred_batch_state["r_V"], reward_batch, name="r_V")
-                TDE_R_V, V_expectations_next_state = self.optimize_critic(self.V_net, V_pred_batch_state["R_V"],
-                                                                          reward_batch, non_final_next_states,
-                                                                          non_final_mask, name="R_V")
-                TDE_V = TDE_r_V + TDE_R_V
-            else:
-                TDE_V = self.optimize_critic(self.V_net, V_pred_batch_state["V"], reward_batch,
-                                             non_final_next_states, non_final_mask, name="V")
-
-        # Q-net updates:
-        if self.Q_net:
-            if "r_Q" in Q_pred_batch_state_action:
-                TDE_r_Q = self.optimize_net(self.Q_net, Q_pred_batch_state_action["r_Q"], reward_batch, name="r_Q")
-                TDE_R_Q = self.optimize_critic(self.Q_net, Q_pred_batch_state_action["R_Q"], reward_batch,
-                                               non_final_next_states, non_final_mask, name="R_Q")
-                TDE_Q = TDE_r_Q + TDE_R_Q
-            else:
-                TDE_Q, Q_expectations_next_state = self.optimize_critic(self.Q_net, Q_pred_batch_state_action["Q"],
-                                                                        reward_batch, non_final_next_states,
-                                                                        non_final_mask, name="Q",
-                                                                        precalculated_next_state_expectations=
-                                                                        V_expectations_next_state)
 
     def explore(self, state):
         return self.policy.explore(state)
@@ -139,16 +81,23 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
-    def calculate_TDE(self, state, action, next_state, reward):
-        return self.policy.calculate_TDE(state, action, next_state, reward)
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        return self.policy.calculate_TDE(state, action, next_state, reward, done)
+
+    def update_targets(self, n_steps):
+        self.policy.update_targets(n_steps)
+
+    def display_debug_info(self):
+        self.policy.display_debug_info()
 
 
 class BasePolicy:
-    def __init__(self, env, device, log, hyperparameters):
+    def __init__(self, env, device, log, hyperparameters, normalizer):
         self.env = env
         self.device = device
         self.log = log
         self.hyperparameters = hyperparameters
+        self.normalizer = normalizer
 
         # Check env:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
@@ -161,18 +110,44 @@ class BasePolicy:
         self.use_actor_critic = self.hyperparameters["use_actor_critic"]
         self.use_QV = self.hyperparameters["use_QV"]
         self.use_QVMAX = self.hyperparameters["use_QVMAX"]
+        self.use_world_model = self.hyperparameters["use_world_model"]
         self.gaussian_action_noise = self.hyperparameters["action_sigma"]
         self.boltzmann_exploration_temp = self.hyperparameters["boltzmann_temp"]
+        self.epsilon = hyperparameters["epsilon"]
+        self.eps_decay = hyperparameters["epsilon_decay"]
+        self.batch_size = hyperparameters["batch_size"]
 
+        # TODO: -Include Prioritized Experience Replay (PER): Prioritize based on absolute TDE
+        # TODO: -Include PER with prioritization based on Upper Bound of Gradient Norm.
+        # TODO: -include different sampling schemes from the papers investigatin PER in SL (small and big buffer for gradient norm too)
 
+        # TODO: -add goal to replay buffer and Transition
+        # TODO: -add eligibility traces to replay buffer (probably the one that update after the current episode is done and after k steps)
+        # Set up replay buffer:
+        self.buffer_size = hyperparameters["replay_buffer_size"]
+        self.use_PER = hyperparameters["use_PER"]
+        self.use_CER = hyperparameters["use_CER"]
+        self.PER_alpha = hyperparameters["PER_alpha"]
+        self.PER_beta = hyperparameters["PER_beta"]
+        self.importance_weights = None
+        # TODO: implement the option to linearly increase PER_beta to 1 over training time
+        if self.use_PER:
+            self.memory = PrioritizedReplayBuffer(self.buffer_size, self.PER_alpha, use_CER=self.use_CER)
+        else:
+            self.memory = ReplayBuffer(self.buffer_size, use_CER=self.use_CER)
+
+        # Set up Networks:
         # TODO: move F_s and F_sa creation possibly into Agent to share among all policies
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.actor, self.critic = self.init_actor_critic(self.F_s, self.F_sa)
-        self.epsilon = hyperparameters["epsilon"]
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.add(state, action, reward, next_state, done)
+
 
     def random_action(self):
         if self.discrete_env:
-            return torch.tensor([[random.randrange(self.num_actions)]], device=self.device, dtype=torch.long)
+            return torch.tensor([[random.randrange(self.num_actions)]], device=self.device, dtype=torch.long).item()
         else:
             return (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
                                                                      dtype=torch.float) + self.action_low
@@ -185,7 +160,7 @@ class BasePolicy:
         if self.boltzmann_exploration_temp > 0:
             action = self.boltzmann_exploration(action)
         else:
-            action = torch.argmax(action, dim=-1)[0].item()
+            action = torch.argmax(action).item()
         return action
 
     def add_noise(self, action):
@@ -220,9 +195,11 @@ class BasePolicy:
         return self.explore(state)
 
     def exploit(self, state):
-        action = self.actor(state).detach()
+        with torch.no_grad():
+            state_features = self.F_s(state, None)
+            action = self.actor(state_features)
         if self.discrete_env:
-            action = torch.argmax(action, dim=-1)
+            action = torch.argmax(action).item()
         return action
 
     def init_feature_extractors(self):
@@ -260,12 +237,21 @@ class BasePolicy:
             self.V.Q = self.Q
         return self.Q
 
-    def train_critic(self, state_feature_batch, state_action_features, reward_batch, non_final_next_state_features,
+    def train_critic(self, state_feature_batch, state_action_features, action_batch, reward_batch, non_final_next_state_features,
                      non_final_mask):
         if self.use_QV or self.use_QVMAX:
-            self.V.optimize(state_feature_batch, reward_batch, non_final_next_state_features, non_final_mask)
-        self.Q.optimize(state_feature_batch, state_action_features, reward_batch, non_final_next_state_features,
-                            non_final_mask)
+            TDE_V = self.V.optimize(state_feature_batch, reward_batch, non_final_next_state_features, non_final_mask,
+                                    self.importance_weights)
+        else:
+            TDE_V = 0
+        TDE_Q = self.Q.optimize(state_feature_batch, state_action_features, action_batch, reward_batch,
+                        non_final_next_state_features, non_final_mask, self.importance_weights)
+        TDE = (abs(TDE_Q) + abs(TDE_V)) / 2 + 0.0001
+        if self.use_PER:
+            self.memory.update_priorities(self.PER_idxs, TDE)
+
+    def update_targets(self, n_steps):
+        raise NotImplementedError
 
 
     def optimize(self):
@@ -273,23 +259,33 @@ class BasePolicy:
         transitions = self.get_transitions()
         state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask = self.extract_batch(transitions)
         # Extract features:
-        state_feature_batch = self.F_s(state_batch)
-        non_final_next_state_features = self.F_s(non_final_next_states)
+        # TODO: we really need to convert a state_batch into vector/matrix stuff instead of hardcoding
+        state_feature_batch = self.F_s(state_batch, None)
+        non_final_next_state_features = self.F_s(non_final_next_states, None)
         # Optimize:
+        if self.use_world_model:
+            self.world_model.optimize()
+            # TODO: create a world model at some point
         self.optimize_networks(state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                                non_final_mask)
 
     def decay_exploration(self, n_steps):
-        self.epsilon *= eps_decay
+        if self.eps_decay:
+            self.epsilon *= self.eps_decay
         self.log.add("Epsilon", self.epsilon)
         # TODO: decay temperature for Boltzmann if that exploration is used
 
-    def calculate_TDE(self,  state, action, next_state, reward):
-        return self.critic.calculate_TDE(state, action, next_state, reward)
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        return self.critic.calculate_TDE(state, action, next_state, reward, done)
 
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
-        return self.memory.sample(sampling_size)
+        if self.use_PER:
+            transitions, self.importance_weights, self.PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
+            self.importance_weights = torch.from_numpy(self.importance_weights).float()
+            return transitions
+        else:
+            return self.memory.sample(sampling_size)
 
     def extract_batch(self, transitions):
         # TODO: How fast is this? Can't we put it into arrays?
@@ -301,11 +297,14 @@ class BasePolicy:
 
         # Compute a mask of non-final states and concatenate the batch elements
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                                batch.next_state)), device=self.device, dtype=torch.uint8)
+                                                batch.next_state)), device=self.device, dtype=torch.bool)
         non_final_next_states = self.normalizer.normalize(torch.cat([s for s in batch.next_state
                                                                      if s is not None]))
         state_batch = self.normalizer.normalize(torch.cat(batch.state))
         action_batch = torch.cat(batch.action)
+        if self.discrete_env:
+            action_batch = action_batch.long().unsqueeze(1)
+
         reward_batch = torch.cat(batch.reward)
 
         return state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask
@@ -314,9 +313,13 @@ class BasePolicy:
                                non_final_mask):
         raise NotImplementedError
 
+    def display_debug_info(self):
+        pass
+        # TODO: we could display something nice in here
+
 
 class ActorCritic(BasePolicy):
-    def __init__(self, env, device, log, hyperparameters):
+    def __init__(self, env, device, log, hyperparameters, normalizer):
         self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
         if self.discrete_env:
             self.num_actions = env.action_space.n
@@ -324,14 +327,14 @@ class ActorCritic(BasePolicy):
             self.num_actions = len(env.action_space.low)
             self.action_low = torch.tensor(env.action_space.high)
             self.action_high = torch.tensor(env.action_space.low)
-        super(ActorCritic, self).__init__(env, device, log, hyperparameters)
+        super(ActorCritic, self).__init__(env, device, log, hyperparameters, normalizer)
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
         # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
         # TODO: for HRL this might be nice
         state_action_features = self.F_sa(state_feature_batch, action_batch)
-        self.train_critic(state_feature_batch, state_action_features, reward_batch, non_final_next_state_features,
+        self.train_critic(state_feature_batch, state_action_features, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask)
         self.train_actor(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
 
@@ -342,18 +345,25 @@ class ActorCritic(BasePolicy):
     def train_actor(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask):
         self.actor.optimize(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
 
+    def update_targets(self, n_steps):
+        self.critic.update_targets(n_steps)
+        self.actor.update_targets(n_steps)
+
 
 class Q_Policy(BasePolicy):
-    def __init__(self, env, device, log, hyperparameters):
-        super(Q_Policy, self).__init__(env, device, log, hyperparameters)
+    def __init__(self, env, device, log, hyperparameters, normalizer):
+        super(Q_Policy, self).__init__(env, device, log, hyperparameters, normalizer)
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
-        self.train_critic(state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
+        self.train_critic(state_feature_batch, None, action_batch, reward_batch, non_final_next_state_features,
                              non_final_mask)
 
     def init_actor(self, critic, F_s):
         return critic
+
+    def update_targets(self, n_steps):
+        self.critic.update_targets(n_steps)
 
 
 class REM(BasePolicy):

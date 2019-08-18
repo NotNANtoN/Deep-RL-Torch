@@ -134,24 +134,23 @@ class Trainer:
             reward += torch.tensor(np.random.normal(0, self.reward_std))
         return reward
 
+    # TODO: atm the replay buffer is filled with the agent acting with a normal policy, not fully random. This should probably be changed
     def fill_replay_buffer(self, n_actions):
         state = self.env.reset()
-        state = torch.tensor([state], device=self.device).float()
+        state = torch.tensor([state], device=device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in range(n_actions):
-            action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=False)
-
-            self.policy.remember(state, action, next_state, reward, done)
+            action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False, explore=True)
 
             state = next_state
             if done:
                 state = self.env.reset()
-                state = torch.tensor([state], device=self.device).float()
+                state = torch.tensor([state], device=device).float()
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True):
         # Select an action
-        if  explore:
+        if explore:
             action = self.policy.explore(state)
         else:
             action = self.policy.exploit(state)
@@ -163,12 +162,15 @@ class Trainer:
         if done:
             next_state = None
         else:
-            next_state = torch.from_numpy(next_state).float()
+            next_state = torch.tensor([next_state], device=device).float()
             #next_state = torch.tensor([next_state], device=self.device).float()
             # Record state for normalization:
             self.normalizer.observe(next_state)
+        # Store the transition in memory
+        if self.use_exp_rep and store_in_exp_rep:
+            self.policy.remember(state, torch.tensor([action], device=device).float(), next_state, reward, done)
         # Calculate TDE for debugging purposes:
-        TDE = self.policy.calculate_TDE(state, action, next_state, reward)
+        TDE = self.policy.calculate_TDE(state, action, next_state, reward, done)
         self.log.add("TDE", TDE.item())
         # Render:
         if render:
@@ -177,12 +179,13 @@ class Trainer:
         return action, next_state, reward, done
 
     def _act_in_test_env(self, test_env, test_state, test_episode_rewards):
-        _, next_state, reward, done = self._act(test_env, test_state, explore=False)
+        _, next_state, reward, done = self._act(test_env, test_state, explore=False, store_in_exp_rep=False, render=False)
 
         test_episode_rewards.append(reward)
         self.log.add("Test_Env Reward", np.sum(test_episode_rewards))
         if done or (self.max_steps_per_episode > 0 and len(test_episode_rewards) >= self.max_steps_per_episode):
             next_state = test_env.reset()
+            next_state = torch.tensor([next_state], device=self.device).float()
             test_episode_rewards.clear()
 
         return next_state
@@ -193,7 +196,7 @@ class Trainer:
         print("Cumulative Reward this episode:", np.sum(episode_rewards))
         if i_episode % 10 == 0:
             plot_rewards(rewards)
-            plot_rewards(self.log.storage["Total Reward"], "Total Reward")
+            plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
 
         self.policy.display_debug_info()
         print()
@@ -205,6 +208,8 @@ class Trainer:
         # Initialize test environment:
         test_env = gym.make(self.env_name).unwrapped
         test_state = test_env.reset()
+        test_state = torch.tensor([test_state], device=device).float()
+
         test_episode_rewards = []
 
         # Do the actual training:
@@ -215,7 +220,7 @@ class Trainer:
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
-            state = torch.tensor([state], device=self.device).float()
+            state = torch.tensor([state], device=device).float()
             episode_rewards = []
 
             for t in count():
@@ -224,17 +229,11 @@ class Trainer:
                     print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%", end='\r')
 
                 # Act in exploratory env:
-                action, next_state, reward, done = self._act(self.env, state)
+                action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
+                                                             explore=True)
 
                 # Act in test env (no exploration in that env):
                 test_state = self._act_in_test_env(test_env, test_state, test_episode_rewards)
-
-                # Calculate TDE for current transition:
-                TDE = self.policy.calculateTDE(state, action, next_state, reward)
-
-                # Store the transition in memory
-                if self.use_exp_rep:
-                    self.policy.remember(state, action, next_state, reward, TDE)
 
                 # Move to the next state
                 state = next_state
@@ -622,13 +621,16 @@ if __name__ == "__main__":
     layers_r = standard_hidden_block
     layers_Q = standard_hidden_block
 
-    parameters = {"use_QV": False, "split_Bellman": False, "gamma_Q": 0.99, "batch_size": 64, "UPDATES_PER_STEP": 1,
+    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 0.99, "batch_size": 32, "UPDATES_PER_STEP": 1,
                   "use_QVMAX": False, "use_target_net": True,
                   "target_network_hard_steps": 500, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
-                  "lr_Q": 0.001, "lr_r": 0.001, "replay_buffer_size": 10000,
-                  "use_exp_rep": True, "epsilon": 0.1,"action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
+                  "lr_Q": 0.0003, "lr_r": 0.0001,
+                  "replay_buffer_size": 20000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
+                  "use_CER": True,
+                  "use_exp_rep": True,
+                  "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
                   "SPLIT_BELL_NO_TARGET_r": True,
-                  "n_initial_random_actions": 1024, "QV_NO_TARGET_Q": False,
+                  "n_initial_random_actions": 100, "QV_NO_TARGET_Q": False,
                   "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
                   "TDEC_ACT_FUNC": "abs",
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
@@ -637,7 +639,8 @@ if __name__ == "__main__":
                   "reward_std": 0.0, "use_actor_critic":False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG":False,
                   "use_SPG": False, "use_GISPG":False, "lr_actor": 0.001,
                   "max_episode_steps": 0, "use_hrl": False, "layers_feature_vector": layers_feature_vector,
-                  "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q}
+                  "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
+                  "use_world_model": False}
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -654,4 +657,4 @@ if __name__ == "__main__":
     # trainer = Trainer(environment_name, device)
 
     trainer = Trainer(cart, parameters)
-    trainer.run(50000, render=True)
+    trainer.run(50000, render=False, verbose=True)
