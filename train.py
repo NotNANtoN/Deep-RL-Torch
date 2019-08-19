@@ -41,11 +41,11 @@ Transition = namedtuple('Transition',
 ########################################
 
 
-def plot_rewards(rewards, name=None):
+def plot_rewards(rewards, name=None, xlabel="Step"):
     plt.figure(2)
     plt.clf()
     plt.title('Training...')
-    plt.xlabel('Step')
+    plt.xlabel(xlabel)
     plt.ylabel('Cumulative Reward of current Episode')
 
     idxs = calculate_reduced_idxs(len(rewards), 1000)
@@ -87,7 +87,8 @@ def plot_rewards(rewards, name=None):
 class Trainer:
     def __init__(self, env_name, hyperparameters):
         # Init logging:
-        self.log = Log()
+        self.path = os.getcwd()
+        self.log = Log(self.path + '/tb_log')
         self.steps_done = 0
 
         # Init env:
@@ -165,7 +166,8 @@ class Trainer:
             next_state = torch.tensor([next_state], device=device).float()
             #next_state = torch.tensor([next_state], device=self.device).float()
             # Record state for normalization:
-            self.normalizer.observe(next_state)
+            if self.normalize_observations:
+                self.normalizer.observe(next_state)
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
             self.policy.remember(state, torch.tensor([action], device=device).float(), next_state, reward, done)
@@ -195,8 +197,11 @@ class Trainer:
         print("Steps taken so far: ", self.steps_done)
         print("Cumulative Reward this episode:", np.sum(episode_rewards))
         if i_episode % 10 == 0:
-            plot_rewards(rewards)
-            plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
+            pass
+            # Not needed anymore, because he have tensorboard now
+            #plot_rewards(rewards)
+            #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
+            #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
 
         self.policy.display_debug_info()
         print()
@@ -248,6 +253,7 @@ class Trainer:
                 self.policy.update_targets(self.steps_done)
 
                 # Log reward:
+                self.log.step()
                 episode_rewards.append(reward.item())
                 rewards.append(np.sum(episode_rewards))
 
@@ -258,6 +264,7 @@ class Trainer:
                         or self.steps_done >= n_steps:
                     if verbose:
                         self._display_debug_info(i_episode, episode_rewards, rewards)
+                    self.log.add("Return", np.sum(episode_rewards), steps=i_episode)
                     if self.steps_done >= n_steps:
                         run = False
                     break
@@ -289,81 +296,6 @@ class TrainerOld(object):
         num_initial_states = 5
         self.initial_states = torch.tensor([self.env.reset() for _ in range(num_initial_states)], device=self.device,
                                            dtype=torch.float)
-        self.MAX_EPISODE_STEPS = MAX_EPISODE_STEPS
-        self.initial_random_actions = initial_random_actions
-
-        self.state_len = len(self.env.observation_space.high)
-
-        self.normalize_observations = normalize_observations
-        if normalize_observations:
-            self.normalizer = Normalizer(self.state_len)
-        else:
-            self.normalizer = None
-
-        self.reward_added_noise_std = reward_added_noise_std
-        self.critic_output_offset = critic_output_offset
-        if activation_function == "relu" or activation_function == 1:
-            self.activation_function = F.relu
-        elif activation_function == "sigmoid" or activation_function == 0:
-            self.activation_function = torch.sigmoid
-        elif activation_function == "elu" or activation_function == 2:
-            self.activation_function = F.elu
-        elif activation_function == "selu" or activation_function == 3:
-            self.activation_function = F.selu
-        self.gamma_Q = gamma_Q
-        self.batch_size = batch_size
-        self.UPDATES_PER_STEP = UPDATES_PER_STEP
-        self.target_network_steps = target_network_steps
-        self.EPS_START = 1
-        self.epsilon_mid = epsilon_mid
-        self.lr_Q = lr_Q
-        self.hidden_neurons = hidden_neurons
-        self.hidden_layers = hidden_layers
-        self.replay_buffer_size = replay_buffer_size
-        self.USE_EXP_REP = USE_EXP_REP
-
-        # Actor-Critic:
-        self.USE_CACLA = USE_CACLA
-        self.USE_OFFLINE_CACLA = USE_OFFLINE_CACLA
-        self.actor_lr = actor_lr
-        self.action_gaussian_noise_std = action_gaussian_noise_std
-        self.discrete_env = True if "Discrete" in str(self.env.action_space)[:8] else False
-        print("Environment has discrete action space: ", self.discrete_env)
-        if self.discrete_env:
-            self.num_actions = self.env.action_space.n
-        else:
-            self.num_actions = len(self.env.action_space.low)
-            self.action_low = torch.tensor(self.env.action_space.high)
-            self.action_high = torch.tensor(self.env.action_space.low)
-
-        self.actor = None
-
-        # Bellman Split:
-        self.SPLIT_BELLMAN = SPLIT_BELLMAN
-        self.SPLIT_BELL_NO_TARGET_r = SPLIT_BELL_NO_TARGET_r
-        self.lr_r = lr_r
-
-        # QV-Learning:
-        self.USE_QV = USE_QV
-        self.QV_SPLIT_Q = QV_SPLIT_Q
-        self.QV_SPLIT_V = QV_SPLIT_V
-        self.QV_NO_TARGET_Q = QV_NO_TARGET_Q
-
-        # TDEC:
-        self.TDEC_USE_TARGET_NET = TDEC_USE_TARGET_NET
-        self.TDEC_ENABLED = TDEC_ENABLED
-        self.TDEC_SCALE = TDEC_SCALE
-        self.TDEC_MID = TDEC_MID
-        self.TDEC_ACT_FUNC = TDEC_ACT_FUNC
-        self.TDEC_TRAIN_FUNC = TDEC_TRAIN_FUNC
-        self.TDEC_GAMMA = TDEC_GAMMA
-        self.TDEC_episodic = TDEC_episodic
-
-        self.num_Q_inputs = self.state_len
-
-        self.num_V_outputs = 1
-
-        self.reset()
 
     def reset(self):
         self.steps_done = 0
@@ -614,18 +546,20 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, random
 if __name__ == "__main__":
     # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
 
-    standard_hidden_block =  [{"name":"linear", "neurons": 64, "act_func": "relu"},
-                             {"name":"linear", "neurons": 64, "act_func": "relu"}]
+    standard_feature_block = [{"name": "linear", "neurons": 128, "act_func": "relu"},
+                              {"name": "linear", "neurons": 128}]
+    standard_hidden_block =  [{"name":"linear", "neurons": 128, "act_func": "relu"},
+                             {"name":"linear", "neurons": 128, "act_func": "relu"}]
     layers_feature_vector = standard_hidden_block
-    layers_feature_merge = standard_hidden_block
+    layers_feature_merge = standard_feature_block
     layers_r = standard_hidden_block
     layers_Q = standard_hidden_block
 
-    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 0.99, "batch_size": 32, "UPDATES_PER_STEP": 1,
+    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 1, "batch_size": 64, "UPDATES_PER_STEP": 1,
                   "use_QVMAX": False, "use_target_net": True,
-                  "target_network_hard_steps": 500, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
-                  "lr_Q": 0.0003, "lr_r": 0.0001,
-                  "replay_buffer_size": 20000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
+                  "target_network_hard_steps": 250, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
+                  "lr_Q": 0.001, "lr_r": 0.001,
+                  "replay_buffer_size": 10000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
                   "use_CER": True,
                   "use_exp_rep": True,
                   "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
@@ -635,13 +569,13 @@ if __name__ == "__main__":
                   "TDEC_ACT_FUNC": "abs",
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   "TDEC_episodic": True,
-                  "normalize_obs": True,
+                  "normalize_obs": False,
                   "reward_std": 0.0, "use_actor_critic":False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG":False,
                   "use_SPG": False, "use_GISPG":False, "lr_actor": 0.001,
                   "max_episode_steps": 0, "use_hrl": False, "layers_feature_vector": layers_feature_vector,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
-                  "use_world_model": False}
-
+                  "use_world_model": False, "max_norm":1}
+    # TODO: why does normalize_obs destroy the whole training for cartpole????
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     lunar = "LunarLander-v2"

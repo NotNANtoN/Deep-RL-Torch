@@ -85,6 +85,9 @@ class Agent(AgentInterface):
         return self.policy.calculate_TDE(state, action, next_state, reward, done)
 
     def update_targets(self, n_steps):
+        self.policy.F_s.update_targets(n_steps)
+        if self.policy.F_sa is not None:
+            self.policy.F_sa.update_targets(n_steps)
         self.policy.update_targets(n_steps)
 
     def display_debug_info(self):
@@ -116,8 +119,8 @@ class BasePolicy:
         self.epsilon = hyperparameters["epsilon"]
         self.eps_decay = hyperparameters["epsilon_decay"]
         self.batch_size = hyperparameters["batch_size"]
+        self.normalize_observations = hyperparameters["normalize_obs"]
 
-        # TODO: -Include Prioritized Experience Replay (PER): Prioritize based on absolute TDE
         # TODO: -Include PER with prioritization based on Upper Bound of Gradient Norm.
         # TODO: -include different sampling schemes from the papers investigatin PER in SL (small and big buffer for gradient norm too)
 
@@ -246,7 +249,7 @@ class BasePolicy:
             TDE_V = 0
         TDE_Q = self.Q.optimize(state_feature_batch, state_action_features, action_batch, reward_batch,
                         non_final_next_state_features, non_final_mask, self.importance_weights)
-        TDE = (abs(TDE_Q) + abs(TDE_V)) / 2 + 0.0001
+        TDE = (abs(TDE_Q) + abs(TDE_V)) / ((self.use_QV or self.use_QVMAX) + 1) + 0.0000001
         if self.use_PER:
             self.memory.update_priorities(self.PER_idxs, TDE)
 
@@ -261,7 +264,7 @@ class BasePolicy:
         # Extract features:
         # TODO: we really need to convert a state_batch into vector/matrix stuff instead of hardcoding
         state_feature_batch = self.F_s(state_batch, None)
-        non_final_next_state_features = self.F_s(non_final_next_states, None)
+        non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states, None)
         # Optimize:
         if self.use_world_model:
             self.world_model.optimize()
@@ -298,9 +301,12 @@ class BasePolicy:
         # Compute a mask of non-final states and concatenate the batch elements
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                 batch.next_state)), device=self.device, dtype=torch.bool)
-        non_final_next_states = self.normalizer.normalize(torch.cat([s for s in batch.next_state
-                                                                     if s is not None]))
-        state_batch = self.normalizer.normalize(torch.cat(batch.state))
+
+        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+        state_batch = torch.cat(batch.state)
+        if self.normalize_observations:
+            non_final_next_states = self.normalizer.normalize(non_final_next_states)
+            state_batch = self.normalizer.normalize(state_batch)
         action_batch = torch.cat(batch.action)
         if self.discrete_env:
             action_batch = action_batch.long().unsqueeze(1)
@@ -313,9 +319,14 @@ class BasePolicy:
                                non_final_mask):
         raise NotImplementedError
 
+    def calc_norm(self, layers):
+        total_norm = torch.tensor(0.)
+        for param in layers.parameters():
+            total_norm += torch.norm(param)
+        return total_norm
+
     def display_debug_info(self):
         pass
-        # TODO: we could display something nice in here
 
 
 class ActorCritic(BasePolicy):
@@ -350,6 +361,9 @@ class ActorCritic(BasePolicy):
         self.actor.update_targets(n_steps)
 
 
+
+
+
 class Q_Policy(BasePolicy):
     def __init__(self, env, device, log, hyperparameters, normalizer):
         super(Q_Policy, self).__init__(env, device, log, hyperparameters, normalizer)
@@ -364,6 +378,33 @@ class Q_Policy(BasePolicy):
 
     def update_targets(self, n_steps):
         self.critic.update_targets(n_steps)
+
+    def calc_gradient_norm(self, layers):
+        total_norm = 0
+        for p in layers.parameters():
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+        return total_norm ** (1. / 2)
+
+    def display_debug_info(self):
+        #self.critic.display_debug_info()
+        # Weights:
+        feature_extractor_weight_norm = self.calc_norm(self.F_s)
+        Q_weight_norm = self.calc_norm(self.Q.layers_TD)
+        if self.Q.split:
+            r_weight_norm = self.calc_norm(self.Q.layers_r)
+            self.log.add("r Weight Norm", Q_weight_norm)
+        self.log.add("F_s Weight Norm", feature_extractor_weight_norm)
+        self.log.add("Q Weight Norm", Q_weight_norm)
+
+        # Gradients:
+        F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_vector)
+        F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_merge)
+        #F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_vector)
+        Q_grad_norm = self.calc_gradient_norm(self.Q.layers_TD)
+        self.log.add("F_s Vector Gradient Norm", F_s_grad_norm)
+        self.log.add("F_s Merge Gradient Norm", F_s_grad_norm)
+        self.log.add("Q TD Gradient Norm", Q_grad_norm)
 
 
 class REM(BasePolicy):

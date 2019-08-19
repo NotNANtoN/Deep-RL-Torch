@@ -1,7 +1,13 @@
 import torch
 import random
 import numpy as np
+import os
+import sys
+import logging
 from collections import namedtuple
+from torch.utils.tensorboard import SummaryWriter
+from tensorboard import program
+
 
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
@@ -41,10 +47,37 @@ class Normalizer():
 
 
 class Log(object):
-    def __init__(self):
+    def __init__(self, path):
+        self.writer = SummaryWriter()
         self.storage = {}
+        self.global_step = 0
+        self.tb_path = 'runs'
+        self.run_tb()
 
-    def add(self, name, value):
+
+    def run_tb(self):
+        logging.getLogger('tensorflow').disabled = True
+        logging.getLogger('werkzeug').setLevel(logging.ERROR)
+
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+        logging.getLogger('tensorflow').setLevel(logging.FATAL)
+
+        tb = program.TensorBoard()
+        tb.configure(argv=[None, '--logdir', self.tb_path])
+        url = tb.launch()
+
+        sys.stdout.write('TensorBoard at %s \n' % url)
+        sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
+
+    def add(self, name, value, distribution=None, steps=None):
+        if steps is None:
+            steps = self.global_step
+        # Add to tensorboard:
+        if distribution is None:
+            self.writer.add_scalar(name, value, global_step=steps)
+        else:
+            self.writer.add_histogram(name, distribution, global_step=steps)
+
         try:
             self.storage[name].append(value)
         except KeyError:
@@ -53,6 +86,8 @@ class Log(object):
     def get(self):
         return self.storage
 
+    def step(self):
+        self.global_step += 1
 
 def meanSmoothing(x, N):
     x = np.array(x)
