@@ -85,10 +85,10 @@ def plot_rewards(rewards, name=None, xlabel="Step"):
 
 
 class Trainer:
-    def __init__(self, env_name, hyperparameters):
+    def __init__(self, env_name, hyperparameters, log=True):
         # Init logging:
         self.path = os.getcwd()
-        self.log = Log(self.path + '/tb_log')
+        self.log = Log(self.path + '/tb_log', log)
         self.steps_done = 0
 
         # Init env:
@@ -546,10 +546,10 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, random
 if __name__ == "__main__":
     # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
 
-    standard_feature_block = [{"name": "linear", "neurons": 128, "act_func": "relu"},
+    standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
                               {"name": "linear", "neurons": 128}]
-    standard_hidden_block =  [{"name":"linear", "neurons": 128, "act_func": "relu"},
-                             {"name":"linear", "neurons": 128, "act_func": "relu"}]
+    standard_hidden_block =  [{"name":"linear", "neurons": 64, "act_func": "relu"},
+                             {"name":"linear", "neurons": 64, "act_func": "relu"}]
     layers_feature_vector = standard_hidden_block
     layers_feature_merge = standard_feature_block
     layers_r = standard_hidden_block
@@ -559,7 +559,7 @@ if __name__ == "__main__":
                   "use_QVMAX": False, "use_target_net": True,
                   "target_network_hard_steps": 250, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
                   "lr_Q": 0.001, "lr_r": 0.001,
-                  "replay_buffer_size": 10000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
+                  "replay_buffer_size": 10000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
                   "use_CER": True,
                   "use_exp_rep": True,
                   "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
@@ -574,7 +574,8 @@ if __name__ == "__main__":
                   "use_SPG": False, "use_GISPG":False, "lr_actor": 0.001,
                   "max_episode_steps": 0, "use_hrl": False, "layers_feature_vector": layers_feature_vector,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
-                  "use_world_model": False, "max_norm":1}
+                  "use_world_model": False, "max_norm":1,
+                  "use_REM": True, "REM_num_heads": 50, "REM_num_samples": 5}
     # TODO: why does normalize_obs destroy the whole training for cartpole????
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -590,5 +591,5 @@ if __name__ == "__main__":
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(cart, parameters)
+    trainer = Trainer(lunar, parameters, log=False)
     trainer.run(50000, render=False, verbose=True)

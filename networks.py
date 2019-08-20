@@ -102,6 +102,7 @@ class OptimizableNet(nn.Module):
         self.device = device
         self.hyperparameters = hyperparameters
 
+        self.retain_graph = False
         self.max_norm = hyperparameters["max_norm"]
         self.batch_size = hyperparameters["batch_size"]
         self.target_network_polyak = hyperparameters["use_polyak_averaging"]
@@ -120,7 +121,7 @@ class OptimizableNet(nn.Module):
         loss = self.compute_loss(output, target.unsqueeze(1), sample_weights)
 
         optimizer.zero_grad()
-        loss.backward(retain_graph=retain_graph)
+        loss.backward(retain_graph=self.retain_graph + retain_graph)
         if self.max_norm:
             torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
         optimizer.step()

@@ -47,7 +47,9 @@ class Normalizer():
 
 
 class Log(object):
-    def __init__(self, path):
+    def __init__(self, path, log):
+        self.do_logging = log
+
         self.writer = SummaryWriter()
         self.storage = {}
         self.global_step = 0
@@ -55,7 +57,11 @@ class Log(object):
         self.run_tb()
 
 
+
     def run_tb(self):
+        if not self.do_logging:
+            return
+
         logging.getLogger('tensorflow').disabled = True
         logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
@@ -70,6 +76,9 @@ class Log(object):
         sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
 
     def add(self, name, value, distribution=None, steps=None):
+        if not self.do_logging:
+            return
+
         if steps is None:
             steps = self.global_step
         # Add to tensorboard:
