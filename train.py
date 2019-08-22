@@ -21,6 +21,7 @@ import torchvision.transforms as T
 import tracemalloc
 import os
 import linecache
+from RAdam import RAdam
 
 from util import *
 from networks import *
@@ -552,11 +553,15 @@ if __name__ == "__main__":
                              {"name":"linear", "neurons": 64, "act_func": "relu"}]
     layers_feature_vector = standard_hidden_block
     layers_feature_merge = standard_feature_block
+    layers_sa = standard_feature_block
     layers_r = standard_hidden_block
     layers_Q = standard_hidden_block
+    layers_actor = standard_hidden_block
 
-    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 1, "batch_size": 64, "UPDATES_PER_STEP": 1,
+    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 1, "batch_size": 4, "UPDATES_PER_STEP": 1,
                   "use_QVMAX": False, "use_target_net": True,
+                  "use_actor_critic": True, "use_CACLA_V": False, "use_CACLA_Q": True, "use_DDPG": False,
+                  "use_SPG": False, "use_GISPG": False, "lr_actor": 0.001,
                   "target_network_hard_steps": 250, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
                   "lr_Q": 0.001, "lr_r": 0.001,
                   "replay_buffer_size": 10000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
@@ -570,12 +575,13 @@ if __name__ == "__main__":
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   "TDEC_episodic": True,
                   "normalize_obs": False,
-                  "reward_std": 0.0, "use_actor_critic":False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG":False,
-                  "use_SPG": False, "use_GISPG":False, "lr_actor": 0.001,
-                  "max_episode_steps": 0, "use_hrl": False, "layers_feature_vector": layers_feature_vector,
+                  "reward_std": 0.0,
+                  "max_episode_steps": 0, "use_hrl": False,
+                  "layers_feature_vector": layers_feature_vector, "layers_state_action_features": layers_sa,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
+                  "layers_actor": layers_actor,
                   "use_world_model": False, "max_norm":1,
-                  "use_REM": True, "REM_num_heads": 50, "REM_num_samples": 5}
+                  "use_REM": False, "REM_num_heads": 50, "REM_num_samples": 5, "optimizer": RAdam} # optim.Adam/RAdam
     # TODO: why does normalize_obs destroy the whole training for cartpole????
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -591,5 +597,6 @@ if __name__ == "__main__":
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(lunar, parameters, log=False)
-    trainer.run(50000, render=False, verbose=True)
+    trainer = Trainer(cart, parameters, log=False)
+    # TODO: introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
+    trainer.run(50000, render=True, verbose=True)

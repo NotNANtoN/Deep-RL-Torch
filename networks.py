@@ -92,19 +92,43 @@ def apply_layers(x, layers, act_functs):
 
 
 class OptimizableNet(nn.Module):
-    def __repr__(self):
+    #def __repr__(self):
         # TODO: return summary using pytorch
-        return self.type
+    #    return str(self.type)
 
-    def __init__(self, device, log, hyperparameters):
+    def __init__(self, env, device, log, hyperparameters):
         super(OptimizableNet, self).__init__()
+        self.env = env
         self.log = log
         self.device = device
         self.hyperparameters = hyperparameters
 
+        # Env Action Space:
+        self.discrete_env = True if "Discrete" in str(env.action_space) else False
+        if self.discrete_env:
+            self.num_actions = env.action_space.n
+        else:
+            self.num_actions = len(env.action_space.low)
+            self.action_low = torch.tensor(env.action_space.high)
+            self.action_high = torch.tensor(env.action_space.low)
+        # Env Obs Space:
+        self.vector_len = len(self.env.observation_space.high)
+        self.matrix_shape = None
+
+        # Load hyperparameters:
         self.retain_graph = False
         self.max_norm = hyperparameters["max_norm"]
         self.batch_size = hyperparameters["batch_size"]
+        self.optimizer = hyperparameters["optimizer"]
+        # Actor:
+        self.use_actor_critic = hyperparameters["use_actor_critic"]
+        self.use_CACLA_V = hyperparameters["use_CACLA_V"]
+        self.use_CACLA_Q = hyperparameters["use_CACLA_Q"]
+        self.use_DDPG = hyperparameters["use_DDPG"]
+        self.use_SPG = hyperparameters["use_SPG"]
+        self.use_GISPG = hyperparameters["use_GISPG"]
+
+        # Target net:
         self.target_network_polyak = hyperparameters["use_polyak_averaging"]
         if self.target_network_polyak:
             self.tau = hyperparameters["polyak_averaging_tau"]
@@ -112,13 +136,13 @@ class OptimizableNet(nn.Module):
 
     def compute_loss(self, output, target, sample_weights):
         loss = F.smooth_l1_loss(output, target, reduction='none')
-        return (loss * sample_weights).mean()
-
+        if sample_weights is None:
+            return loss.mean()
+        else:
+            return (loss * sample_weights).mean()
 
     def optimize_net(self, output, target, optimizer, name="", sample_weights=None, retain_graph=False):
-        if sample_weights is None:
-            sample_weights = torch.ones_like(output)
-        loss = self.compute_loss(output, target.unsqueeze(1), sample_weights)
+        loss = self.compute_loss(output, target, sample_weights)
 
         optimizer.zero_grad()
         loss.backward(retain_graph=self.retain_graph + retain_graph)
@@ -163,11 +187,33 @@ class OptimizableNet(nn.Module):
                 #print()
                 self.target_net.load_state_dict(current_weight_dict_filtered)
 
+    def create_target_net(self):
+        target_net = None
+        if self.use_target_net:
+            target_net = self.recreate_self()
+            # TODO(small): check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
+            #target_net.apply(self.weights_init)
+            for param in target_net.parameters():
+                param.requires_grad = False
+            target_net.use_target_net = False
+            target_net.eval()
+        return target_net
+
+    def one_hot_encode(self, x):
+        y = torch.zeros(x.shape[0], self.num_actions).float()
+        print(x.squeeze())
+        print(y[:, x.squeeze()])
+        y[:, x.squeeze()] = 1.0
+        return y
+
 
 
 class ProcessState(OptimizableNet):
-    def __init__(self, vector_len, matrix_shape, log, device, hyperparameters, matrix_max_val=255, is_target_net=False):
-        super(ProcessState, self).__init__(device, log, hyperparameters)
+    def __init__(self, env, log, device, hyperparameters, matrix_max_val=255, is_target_net=False):
+        super(ProcessState, self).__init__(env, device, log, hyperparameters)
+
+        vector_len = self.vector_len
+        matrix_shape = self.matrix_shape
 
         if is_target_net:
             self.use_target_net = False
@@ -200,7 +246,8 @@ class ProcessState(OptimizableNet):
         self.to(device)
 
         if self.use_target_net:
-            self.target_net = self.create_target_net(vector_len, matrix_shape)
+            self.target_net = self.create_target_net()
+
 
     def forward(self, vector, matrix):
         # TODO: instead of having two inputs, only have one state to make the function more general.
@@ -225,44 +272,59 @@ class ProcessState(OptimizableNet):
         else:
             return self(vector, matrix)
 
-    def create_target_net(self, vector_len, matrix_shape):
-        target_net = None
-        if self.use_target_net:
-            target_net = self.__class__(vector_len, matrix_shape, self.log, self.device,
-                                        self.hyperparameters, is_target_net=True)
-            #target_net = copy.deepcopy(self)
-            # TODO(small): check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
-            #target_net.apply(self.weights_init)
-            target_net.use_target_net = False
-            for param in target_net.parameters():
-                param.requires_grad = False
-            target_net.eval()
-        return target_net
+    def recreate_self(self):
+        return self.__class__(self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
 
+# TODO for all nets: enable options to not update target nets and to predict next state value based on current net instead of using the target net
 
 class ProcessStateAction(OptimizableNet):
-    def __init__(self, state_features_len, action_len, log, device, hyperparameters):
-        super(ProcessStateAction, self).__init__(device, log, hyperparameters)
+    def __init__(self, state_features_len, env, log, device, hyperparameters, is_target_net=False):
+        super(ProcessStateAction, self).__init__(env, device, log, hyperparameters)
 
-        input_size = state_features_len + action_len
+        self.state_features_len = state_features_len
 
+        # Create layers:
+        print("num actions: ", self.num_actions)
+        input_size = state_features_len + self.num_actions
         layers = hyperparameters["layers_state_action_features"]
-        self.layers, self.act_functs = create_ff_layers(input_size, layers, device, None)
+        self.layers, self.act_functs = create_ff_layers(input_size, layers, None)
 
         #self.log.writer.add_graph(self, input_to_model=torch.rand(state_features_len), verbose=True)
 
         # Put feature extractor on GPU if possible:
         self.to(device)
 
+        # Create target net if needed:
+        if is_target_net:
+            self.use_target_net = False
+        else:
+            self.use_target_net = hyperparameters["use_target_net"]
+        if self.use_target_net:
+            self.target_net = self.create_target_net()
+
     def forward(self, state_features, actions):
-        x = torch.cat((state_features, actions), 0)
+        print(actions)
+        actions = self.one_hot_encode(actions)
+        print("Encoded: ", actions)
+        x = torch.cat((state_features, actions), 1)
         x = apply_layers(x, self.layers, self.act_functs)
         return x
 
-class TempDiffNet(OptimizableNet):
-    def __init__(self, device, log, hyperparameters, is_target_net=False):
-        super(TempDiffNet, self).__init__(device, log, hyperparameters)
+    def forward_next_state(self, state_features, action):
+        if self.use_target_net:
+            return self.target_net(state_features, action)
+        else:
+            return self(state_features, action)
 
+    def recreate_self(self):
+        return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
+
+
+class TempDiffNet(OptimizableNet):
+    def __init__(self, env, device, log, hyperparameters, is_target_net=False):
+        super(TempDiffNet, self).__init__(env, device, log, hyperparameters)
+
+        self.use_actor_critic = hyperparameters["use_actor_critic"]
         self.split = hyperparameters["split_Bellman"]
         self.use_target_net = hyperparameters["use_target_net"] if not is_target_net else False
         self.gamma = hyperparameters["gamma"]
@@ -276,22 +338,11 @@ class TempDiffNet(OptimizableNet):
             reward_layers = hyperparameters["layers_r"]
             self.layers_r, self.act_functs_r = create_ff_layers(input_size, reward_layers, self.output_neurons)
             self.to(device)
-            self.optimizer_r = optim.Adam(list(self.layers_r.parameters()) + updateable_parameters, lr=self.lr_r)
+            self.optimizer_r = self.optimizer(list(self.layers_r.parameters()) + updateable_parameters, lr=self.lr_r)
 
-    def create_target_net(self):
-        target_net = None
-        if self.use_target_net:
-            target_net = self.__class__(self.input_size, self.num_actions, self.discrete_action_space, None,
-                                        None, self.device, self.log,
-                                        self.hyperparameters, is_target_net=True)
-            #target_net = copy.deepcopy(self)
-            # TODO(small): check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
-            #target_net.apply(self.weights_init)
-            for param in target_net.parameters():
-                param.requires_grad = False
-            target_net.use_target_net = False
-            target_net.eval()
-        return target_net
+    def recreate_self(self):
+        return self.__class__(self.input_size, self.env, None, None, self.device, self.log,
+                              self.hyperparameters, is_target_net=True)
 
     def forward(self, x):
         predicted_reward = 0
@@ -316,9 +367,9 @@ class TempDiffNet(OptimizableNet):
         raise NotImplementedError
 
     def calculate_next_state_values(self, non_final_next_state_features, non_final_mask):
-        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        next_state_values = torch.zeros(self.batch_size, 1, device=self.device)
         with torch.no_grad():
-            next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features)
+            next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features, self.F_sa)
         next_state_values[non_final_mask] = next_state_predictions  # [0] #TODO: why [0]?
         return next_state_values
 
@@ -354,15 +405,13 @@ class TempDiffNet(OptimizableNet):
 
         # TD must be stored for actor-critic updates:
         self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD, "TD", sample_weights=importance_weights)
-        TDE_TD = self.expected_value_next_state.unsqueeze(1) - predictions_current
+        TDE_TD = self.expected_value_next_state - predictions_current
         self.TDE = (TDE_r + TDE_TD).detach()
         return self.TDE
 
     def calculate_TDE(self, state, action_batch, next_state, reward_batch, done):
         return torch.tensor([0])
         # TODO fix
-
-
 
         # TODO: replace the None for matrix as soon as we have the function in policies.py of state2parts
         state_features = self.F_s(state, None)
@@ -388,19 +437,16 @@ class TempDiffNet(OptimizableNet):
 
 
 class Q(TempDiffNet):
-    def __init__(self, input_size, num_actions, discrete_action_space, F_s, F_sa, device, log, hyperparameters, is_target_net=False):
-        super(Q, self).__init__(device, log, hyperparameters, is_target_net)
+    def __init__(self, input_size, env, F_s, F_sa, device, log, hyperparameters, is_target_net=False):
+        super(Q, self).__init__(env, device, log, hyperparameters, is_target_net)
+
 
         self.input_size = input_size
-        self.num_actions = num_actions
-        self.discrete_action_space = discrete_action_space
         self.hyperparameters = hyperparameters
 
         # can either have many outputs or one
         self.name = "Q"
-        self.num_actions = num_actions
-        self.discrete = discrete_action_space
-        self.output_neurons = num_actions if self.discrete else 1
+        self.output_neurons = self.num_actions if self.discrete_env else 1
 
         # Set up params:
         self.use_QV = hyperparameters["use_QV"]
@@ -410,14 +456,14 @@ class Q(TempDiffNet):
         if is_target_net:
             updateable_parameters = []
         else:
-            updateable_parameters = list(F_s.parameters()) +(list(F_sa.parameters()) if not discrete_action_space else [])
+            updateable_parameters = list(F_s.parameters()) + (list(F_sa.parameters()) if not self.discrete_env else [])
 
         # Create split net:
-        self.create_split_net(input_size, updateable_parameters, device, hyperparameters)
+        self.create_split_net(self.input_size, updateable_parameters, device, hyperparameters)
 
         # Create layers
         layers = hyperparameters["layers_Q"]
-        self.layers_TD, self.act_functs_TD = create_ff_layers(input_size, layers, self.output_neurons)
+        self.layers_TD, self.act_functs_TD = create_ff_layers(self.input_size, layers, self.output_neurons)
         # Put feature extractor on GPU if possible:
         self.to(device)
 
@@ -431,11 +477,9 @@ class Q(TempDiffNet):
         #    random_input = torch.rand(self.input_size)
         #    w.add_graph(self, input_to_model=random_input, verbose=True)
 
-        self.optimizer_TD = optim.Adam(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
-
-
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask):
         if self.use_QVMAX:
@@ -447,7 +491,7 @@ class Q(TempDiffNet):
             return self.calculate_next_state_values(non_final_next_state_features, non_final_mask)
 
     def predict_current_state(self, state_features, state_action_features, actions):
-        if self.discrete:
+        if self.discrete_env:
             input_features = state_features
             if self.split:
                 reward_prediction = self.forward_r(input_features).gather(1, actions)
@@ -464,17 +508,17 @@ class Q(TempDiffNet):
             value_prediction = self.forward_R(input_features)
             return value_prediction, reward_prediction
 
-    def predict_state_value(self, state_features):
-        if self.discrete:
+    def predict_state_value(self, state_features, F_sa):
+        if self.discrete_env:
             return self.forward(state_features).max(1)[0]
         else:
             with torch.no_grad():
-                state_action_features = self.F_sa(state_features, self.actor(state_features))
+                state_action_features = F_sa(state_features, self.actor(state_features))
             # TODO: make sure whether these state-action_features are required somewhere else and store it if that is the case
             return self.predict_state_action_value(None, state_action_features, None)
 
     def predict_state_action_value(self, state_features, state_action_features, actions):
-        if self.discrete:
+        if self.discrete_env:
             return self.forward(state_features).gather(1, actions)  # .gather action that is taken
         else:
             return self.forward(state_action_features)  # self.F_s_A(state_features, actions))
@@ -499,7 +543,7 @@ class V(TempDiffNet):
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        self.optimizer_TD = optim.Adam(itertools.chain(self.layers, updateable_parameters), lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(itertools.chain(self.layers, updateable_parameters), lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
 
@@ -521,69 +565,71 @@ class V(TempDiffNet):
 
 
 class Actor(OptimizableNet):
-    def __init__(self, input_size, num_actions, action_lows, action_highs,
-                 hyperparameters, device):
-        super(Actor, self).__init__()
-
-        self.discrete_action_space = num_actions > 1
-        output_size = num_actions if self.discrete_action_space else len(action_lows)
+    def __init__(self, F_s, env, log, device, hyperparameters):
+        super(Actor, self).__init__(env, device, log, hyperparameters)
 
         # Initiate arrays for output function:
         self.relu_idxs = []
         self.sigmoid_idxs = []
         self.tanh_idxs = []
-        self.scaling = np.ones(len(action_lows))
-        self.offset = np.ones(len(action_lows))
+        self.scaling = None
+        self.offset = None
 
         # Create layers
+        input_size = F_s.layers_merge[-1].out_features
+        output_size = self.num_actions if self.discrete_env else len(self.action_low)
         layers = hyperparameters["layers_actor"]
         self.layers, self.act_functs = create_ff_layers(input_size, layers, output_size)
-        self.act_func_output_layer = self.create_output_act_func(self.discrete_action_space, action_lows,
-                                                                 action_highs)
+        self.act_func_output_layer = self.create_output_act_func()
         # Put feature extractor on GPU if possible:
         self.to(device)
 
         # Define optimizer and previous networks
         self.lr = hyperparameters["lr_actor"]
         self.F_s = F_s
-        updateable_parameters = [self.F_s.parameters()]
-        self.optimizer = optim.Adam(itertools.chain.from_iterable(self.layers + updateable_parameters), lr=self.lr)
+        updateable_parameters = list(self.F_s.parameters())
+        self.optimizer = self.optimizer(list(self.layers.parameters()) + updateable_parameters, lr=self.lr)
 
 
     def forward(self, x):
-        for idx in range(len(self.layers)):
-            x = self.act_functs[idx](self.layers[idx](x))
-
-        outputs = []
-        for i in range(len(self.output_layers)):
-            outputs.append(self.act_funcs_output_layer[i](self.output_layers[i](x)))
-
-        return torch.cat(outputs, dim=1)
+        x = apply_layers(x, self.layers, self.act_functs)
+        return self.act_func_output_layer(x)
 
     def compute_loss(self, output, target, sample_weights=None):
-        if sample_weights is None:
-            sample_weights = torch.ones_like(target)
-        # TODO: incorporate sample weights properly
-        if self.discrete_action_space:
-            loss_func =  torch.nn.CrossEntropyLoss()
-            return loss_func(output, target)
+        if self.discrete_env:
+            loss_func =  torch.nn.CrossEntropyLoss(reduction='none')
+            loss = loss_func(output, target)
         else:
             # TODO: this loss does not help combat the vanishing gradient problem that we have because of the use of sigmoid activations to squash our actions into the correct range
-            return F.smooth_l1_loss(output, target)
+            loss = F.smooth_l1_loss(output, target, reduction='none')
+
+        if sample_weights is None:
+            return loss.mean()
+        else:
+            return (loss * sample_weights).mean()
 
     def output_function_continuous(self, x):
         if self.relu_idxs:
             x[self.relu_idxs] = F.relu(x[self.relu_idxs])
         if self.sigmoid_idxs:
-            x[self.sigmoid_idxs] = F.sigmoid(x[self.sigmoid_idxs])
+            x[self.sigmoid_idxs] = torch.sigmoid(x[self.sigmoid_idxs])
         if self.tanh_idxs:
-            x[self.tanh_idxs] = F.tanh(x[self.tanh_idxs])
+            print("first: ", x)
+            print(self.tanh_idxs)
+            print(x[:, self.tanh_idxs])
+            x[:, self.tanh_idxs] = torch.tanh(x[:, self.tanh_idxs])
+            print("after: ", x)
         return (x * self.scaling) + self.offset
 
-    def create_output_act_func(self, discrete_action_space, action_lows, action_highs):
-        if discrete_action_space:
-            return F.sigmoid
+    def create_output_act_func(self,):
+        print("Action_space: ", self.env.action_space)
+        if self.discrete_env:
+            print("Actor has only sigmoidal activation function")
+            print()
+            return torch.sigmoid
         else:
+            self.scaling = torch.ones(len(self.action_low))
+            self.offset = torch.zeros(len(self.action_low))
             for i in range(len(action_lows)):
                 low = action_lows[i]
                 high = action_highs[i]
@@ -601,28 +647,36 @@ class Actor(OptimizableNet):
                     self.offset[i] = (high - low) / 2
                     self.scaling[i] = high - offset[i]
                     self.tanh_idxs.append(i)
+            num_linear_actions = len(self.scaling) - len(self.tanh_idxs) - len(self.relu_idxs) - len(self.sigmoid_idxs)
+            print("Actor has ", len(self.relu_idxs), " ReLU, ", len(self.tanh_idxs), " tanh, ", len(self.sigmoid_idxs), " sigmoid, and ", num_linear_actions, " linear actions.")
+            print("Action Scaling: ", self.scaling)
+            print("Action Offset: ", self.offset)
+            print()
         return self.output_function_continuous
 
     def optimize(self, state_features, reward_batch, action_batch, non_final_next_states, non_final_mask):
         # Calculate current actions for state_batch:
-        actions_current_state = self.actor(state_features)
-        better_actions_current_state = actions_current_state.detach().copy()
+        torch.autograd.set_detect_anomaly(True)
+        actions_current_state = self(state_features)
+        better_actions_current_state = actions_current_state.detach()
+
+        action_batch = action_batch.unsqueeze(1)
         if self.use_CACLA_V:
             # Requires TDE_V
             # Check which actions have a pos TDE
-            pos_TDE_mask = self.V_net.TDE > 0
+            pos_TDE_mask = self.V.TDE > 0
             better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
         if self.use_CACLA_Q:
             # Calculate mask of pos expected Q minus Q(s, mu(s))
-            action_TDE = self.Q_net.expectations_next_state - self.Q_net(state_features, actions_current_state).detach()
-            pos_TDE_mask = action_TDE > 0
+            #action_TDE = self.Q.expectations_next_state - self.Q(state_features, actions_current_state).detach()
+            pos_TDE_mask = self.Q.TDE > 0
             better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
         # TODO: implement CACLA+Var
 
         # TODO - Idea: When using QV, possibly reinforce actions only if Q and V net agree (first check how often they disagree and in which cases)
         if self.use_DDPG:
             # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
-            q_vals = self.Q_net(state_features, actions_current_state)
+            q_vals = self.Q(state_features, actions_current_state)
             q_vals.backward()  # retain necessary?
             gradients = actions_current_state.grad
             # TODO: multiply gradients * -1 to ensure Q values increase? probably...
@@ -656,3 +710,7 @@ class Actor(OptimizableNet):
 
         self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer, "actor")
         # Train actor towards better actions (loss = better - current)
+
+    def recreate_self(self):
+        return self.__class__(input_size, num_actions, action_lows, action_highs, log,
+                 device, hyperparameters)

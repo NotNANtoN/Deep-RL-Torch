@@ -54,14 +54,13 @@ class Agent(AgentInterface):
 
     def init_feature_extractors(self):
         # TODO: this currently only works for input vectors, NOT for matrices or multiple input vectors (not for MineRL)
-        input_vector_len = len(self.env.observation_space.high)
-        matrix_shape = None
 
-        F_s = ProcessState(input_vector_len, matrix_shape, self.log, self.device, self.hyperparameters)
+        F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
 
         F_sa = None
         if self.use_actor_critic:
-            F_sa = ProcessStateAction(state_feature_len, self.num_actions, self.device, self.log, self.hyperparameters)
+            state_feature_len = F_s.layers_merge[-1].out_features
+            F_sa = ProcessStateAction(state_feature_len, self.env, self.log, self.device, self.hyperparameters)
         return F_s, F_sa
 
     def create_policy(self):
@@ -100,7 +99,6 @@ class Agent(AgentInterface):
 
     def exploit(self, state):
         return self.policy.exploit(state)
-
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
@@ -132,18 +130,30 @@ class BasePolicy:
             self.num_actions = self.env.action_space.n
         else:
             self.num_actions = len(self.env.action_space.high)
+            self.action_low = torch.tensor(env.action_space.high)
+            self.action_high = torch.tensor(env.action_space.low)
+
 
         # Set up parameters:
+        # Actor-Critic:
         self.use_actor_critic = hyperparameters["use_actor_critic"]
+        self.use_CACLA_V = hyperparameters["use_CACLA_V"]
+        self.use_CACLA_Q = hyperparameters["use_CACLA_Q"]
+        self.use_DDPG = hyperparameters["use_DDPG"]
+        self.use_SPG = hyperparameters["use_SPG"]
+        self.use_GISPG = hyperparameters["use_GISPG"]
+        # QV:
         self.use_QV = hyperparameters["use_QV"]
         self.use_QVMAX = hyperparameters["use_QVMAX"]
-        self.use_world_model = hyperparameters["use_world_model"]
+        # Exploration:
         self.gaussian_action_noise = hyperparameters["action_sigma"]
         self.boltzmann_exploration_temp = hyperparameters["boltzmann_temp"]
         self.epsilon = hyperparameters["epsilon"]
         self.eps_decay = hyperparameters["epsilon_decay"]
+        # General:
         self.batch_size = hyperparameters["batch_size"]
         self.normalize_observations = hyperparameters["normalize_obs"]
+        self.use_world_model = hyperparameters["use_world_model"]
 
         # TODO: -Include PER with prioritization based on Upper Bound of Gradient Norm.
         # TODO: -include different sampling schemes from the papers investigatin PER in SL (small and big buffer for gradient norm too)
@@ -241,20 +251,25 @@ class BasePolicy:
     def init_actor_critic(self, F_s, F_sa):
         Q_net, V_net = self.init_critic(F_s, F_sa)
         actor = self.init_actor(Q_net, V_net, F_s)
+        #print(Q_net.actor)
         return actor, Q_net, V_net
 
     def init_critic(self, F_s, F_sa):
         # TODO: differentiate between DQN critic and AC critic by checking in Q __init__ for use_actor_critic
+
         if self.use_actor_critic:
-            input_len = self.state_action_feature_len
+            self.state_action_feature_len = F_sa.layers[-1].out_features
+            input_size = self.state_action_feature_len
         else:
-            input_len = self.state_feature_len
-        Q_net = Q(input_len, self.num_actions, self.discrete_env, F_s, F_sa, self.device, self.log, self.hyperparameters)
+            self.state_feature_len = F_s.layers_merge[-1].out_features
+            input_size = self.state_feature_len
+
+        Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
 
         V_net = None
-        if self.use_QV or self.use_QVMAX:
+        if self.use_QV or self.use_QVMAX or (self.use_actor_critic and self.use_CACLA_V):
             # Init Networks:
-            V_net = V(input_len, F_s, self.device, self.log, self.hyperparameters)
+            V_net = V(self.state_feature_len, self.env, F_s, self.device, self.log, self.hyperparameters)
             # Create links for training value calculations:
             Q_net.V = V_net
             V_net.Q = Q_net
@@ -321,9 +336,10 @@ class BasePolicy:
         if self.normalize_observations:
             non_final_next_states = self.normalizer.normalize(non_final_next_states)
             state_batch = self.normalizer.normalize(state_batch)
-        action_batch = torch.cat(batch.action)
+        action_batch = torch.cat(batch.action).unsqueeze(1)
         if self.discrete_env:
-            action_batch = action_batch.long().unsqueeze(1)
+            action_batch = action_batch.long()
+        print("action batch shape", action_batch.shape)
 
         reward_batch = torch.cat(batch.reward)
 
@@ -340,6 +356,8 @@ class BasePolicy:
         return total_norm
 
     def calculate_TDE(self, state, action, next_state, reward, done):
+        return torch.tensor([0])
+        # TODO fix
         return self.critic.calculate_TDE(state, action, next_state, reward, done)
 
     def set_retain_graph(self, val):
@@ -361,15 +379,14 @@ class BasePolicy:
 
 
 class ActorCritic(BasePolicy):
+    def __repr__(self):
+        return "Actor"
+
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
         super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer)
-        self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
-        if self.discrete_env:
-            self.num_actions = env.action_space.n
-        else:
-            self.num_actions = len(env.action_space.low)
-            self.action_low = torch.tensor(env.action_space.high)
-            self.action_high = torch.tensor(env.action_space.low)
+
+        self.F_s = F_s
+
 
     def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
                           non_final_mask):
@@ -381,10 +398,12 @@ class ActorCritic(BasePolicy):
         self.train_actor(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
 
     def init_actor(self, Q, V, F_s):
-        actor = Actor(F_s, env, device, log, hyperparameters)
+        actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
         actor.Q = Q
         actor.V = V
-        Q.actor = actor
+        Q.target_net.actor = actor
+
+        #print(actor)
         return actor
 
     def train_actor(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask):
