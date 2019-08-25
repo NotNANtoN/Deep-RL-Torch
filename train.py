@@ -567,31 +567,52 @@ if __name__ == "__main__":
     layers_V = standard_hidden_block
     layers_actor = standard_hidden_block
 
-    parameters = {"use_QV": True, "split_Bellman": False, "gamma": 1, "batch_size": 8, "UPDATES_PER_STEP": 1,
-                  "use_QVMAX": False, "use_target_net": True,
-                  "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
-                  "use_SPG": False, "use_GISPG": False, "lr_actor": 0.001,
-                  "target_network_hard_steps": 250, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
-                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001,
+    parameters = {# General:
+                  "use_QV": False, "split_Bellman": False, "gamma": 1,
+                  "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
+                  "normalize_obs": False, # turning this on destroy training on cartpole
+                  "reward_std": 0.0,
+                  # Actor-Critic:
+                  "use_actor_critic": True, "use_CACLA_V": True, "use_CACLA_Q": False, "use_DDPG": False,
+                  "use_SPG": False, "use_GISPG": False,
+                  # Target-net:
+                  "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau":0.01,
+                  # NN Training:
+                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.001, "batch_size": 8, "optimizer": RAdam,
+                  "max_norm": 1,
+                  # Replay buffer:
                   "replay_buffer_size": 10000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
                   "use_CER": True,
                   "use_exp_rep": True,
+                  # Exploration:
                   "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
-                  "SPLIT_BELL_NO_TARGET_r": True,
-                  "n_initial_random_actions": 100, "QV_NO_TARGET_Q": False,
-                  "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
-                  "TDEC_ACT_FUNC": "abs",
-                  "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
-                  "TDEC_episodic": True,
-                  "normalize_obs": False,
-                  "reward_std": 0.0,
-                  "max_episode_steps": 0, "use_hrl": False,
+                  "n_initial_random_actions": 100,
+                  # REM:
+                  "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
+                  # NN architecture setup:
                   "layers_feature_vector": layers_feature_vector, "layers_state_action_features": layers_sa,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
                   "layers_V": layers_V,
                   "layers_actor": layers_actor,
-                  "use_world_model": False, "max_norm":1,
-                  "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5, "optimizer": RAdam} # optim.Adam/RAdam
+
+                  # TODO: The following still need to be implemented:
+                  "SPLIT_BELL_NO_TARGET_r": True,
+                  "QV_NO_TARGET_Q": False,
+                  "network_updates_per_step": 1,
+
+
+                  "use_hrl": False,
+                  "target_policy_smoothing_noise": 0.1, # can decay, make uniform or clip
+                  "delayed_policy_update_steps": 0,
+                  "use_double_Q": False,
+                  "use_clipped_double_Q": False,
+                  "use_world_model": False,
+                  "TDEC_episodic": True,
+                  "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
+                  "TDEC_ACT_FUNC": "abs",
+                  "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
+                  }
+
     # TODO: why does normalize_obs destroy the whole training for cartpole????
 
     # TODO: investigate the hyperparameter 'eps' of Adam and RAdam. For Deep RL it is usually set at 0.01 instead of 1e-8 -- see https://medium.com/autonomous-learning-library/radam-a-new-state-of-the-art-optimizer-for-rl-442c1e830564

@@ -173,22 +173,16 @@ class OptimizableNet(nn.Module):
 
         return detached_loss
 
-    # TODO: the following functions is just a model to modify the two functions below it appropriately
+
     def take_mean_weights_of_two_models(self, target_net, real_net):
         # beta = 0.5  # The interpolation parameter. 0.5 for mean
+        real_params = filter_weight_dict(real_net.state_dict())
+        target_params = filter_weight_dict(target_net.state_dict())
 
-        params1 = target_net.named_parameters()
-        params2 = real_net.named_parameters()
-
-        dict_params2 = dict(params2)
-
-        for name1, param1 in params1:
-            # print(name1)
-            if name1 in dict_params2:
-                # print("is drin")
-                dict_params2[name1].data.copy_((1 - self.tau) * param1.data + self.tau * dict_params2[name1].data)
-
-        return dict_params2
+        for current_param, real_params_current in real_params.items():
+            target_params[current_param].data.copy_((1 - self.tau) * target_params[current_param].data +
+                                                    self.tau * real_params_current.data)
+        return target_params
 
     def update_targets(self, steps):
         if self.target_network_polyak:
@@ -196,15 +190,10 @@ class OptimizableNet(nn.Module):
             self.target_net.load_state_dict(self.take_mean_weights_of_two_models(self.target_net, self))
         else:
             if steps % self.target_network_hard_steps == 0:
-                current_weight_dict = self.state_dict()
+                current_weight_dict = filter_weight_dict(self.state_dict())
                 # print("Q weight dict items: ", current_weight_dict.items())
                 # print("Target weight dict items: ", self.target_net.state_dict().items())
                 # print("Current dict: ", self.state_dict().items())
-                current_weight_dict_filtered = {k: v for k, v in current_weight_dict.items()
-                                                if "target_net" not in k and
-                                                "F_s" not in k and
-                                                "Q" not in k and
-                                                "V" not in k}
                 # print("Filtered: ", current_weight_dict_filtered)
                 # print("Target dict: ", self.target_net.state_dict().items())
                 # print()
@@ -315,11 +304,10 @@ class ProcessStateAction(OptimizableNet):
         # Put feature extractor on GPU if possible:
         self.to(device)
 
-
         self.target_net = self.create_target_net()
 
-    def forward(self, state_features, actions):
-        if self.discrete_env:
+    def forward(self, state_features, actions, apply_one_hot_encoding=True):
+        if self.discrete_env and apply_one_hot_encoding:
             actions = one_hot_encode(actions, self.num_actions)
         x = torch.cat((state_features, actions), 1)
         x = apply_layers(x, self.layers, self.act_functs)
@@ -394,15 +382,15 @@ class TempDiffNet(OptimizableNet):
     def calculate_updated_value_next_state(self, reward_batch, non_final_next_state_features, non_final_mask,
                                            actor=None, Q=None, V=None):
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
+        self.predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
+        #self.log.add(self.name + " Prediction_next_state", self.predictions_next_state[0].item())
         # print("Next state features: ", non_final_next_state_features)
         # print("Prediction next state: ", predictions_next_state)
 
         # Compute the updated expected values. Do not add the reward, if the critic is split
-        return (predictions_next_state * self.gamma) + (reward_batch if not self.split else 0)
+        return (self.predictions_next_state * self.gamma) + (reward_batch if not self.split else 0)
 
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None):
-
         state_features = transitions["state_features"]
         state_action_features = transitions["state_action_features"]
         action_batch = transitions["action"]
@@ -414,12 +402,10 @@ class TempDiffNet(OptimizableNet):
         predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
                                                                             action_batch)
 
-        # Store for SPG Actor update:--- probably not necessary, as we need to use target network predictions for SPG
-        #self.predictions_current_state = (predictions_current + reward_prediction).detach().clone()
-
         # print("Current state features: ", state_features)
         # print("Prediction current state: ", predictions_current.detach())
 
+        # TODO: separate reward net from Q and V nets, to have them share one
         # Train reward net if it exists:
         if self.split:
             self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
@@ -428,16 +414,16 @@ class TempDiffNet(OptimizableNet):
             TDE_r = 0
 
         # Compute the expected values. Do not add the reward, if the critic is split
-        self.expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
+        expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
                                                                                  non_final_next_state_features,
                                                                                  non_final_mask, actor, Q, V)
         # print("Expected value next state: ", self.expected_value_next_state)
         # print()
 
         # TD must be stored for actor-critic updates:
-        self.optimize_net(predictions_current, self.expected_value_next_state, self.optimizer_TD, "TD",
+        self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
-        TDE_TD = self.expected_value_next_state - predictions_current
+        TDE_TD = expected_value_next_state - predictions_current
         self.TDE = (TDE_r + TDE_TD).detach()
         return self.TDE
 
@@ -516,7 +502,7 @@ class Q(TempDiffNet):
             return V.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor)
         elif self.use_QV:
             # This assumes that V is always trained directly before Q
-            return V.expected_value_next_state
+            return V.predictions_next_state
         else:
             return self.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor)
 
@@ -734,7 +720,11 @@ class Actor(OptimizableNet):
 
             output = actions_current_state[pos_TDE_mask]
             target = action_batch[pos_TDE_mask].view(output.shape[0])
-            sample_weights = self.V.TDE[pos_TDE_mask]
+
+            # TODO: investigate why the multiplication by minus one is necessary for sample weights
+
+            # TODO: also investigate whether scaling by TDE can be benefitial
+            sample_weights = -1 * torch.ones(output.shape[0]) # self.V.TDE[pos_TDE_mask]
         if self.use_CACLA_Q:
             # Calculate mask of pos expected Q minus Q(s, mu(s))
             # action_TDE = self.Q.expectations_next_state - self.Q(state_features, actions_current_state).detach()
@@ -759,15 +749,17 @@ class Actor(OptimizableNet):
         # TODO - Idea: When using QV, possibly reinforce actions only if Q and V net agree (first check how often they disagree and in which cases)
         if self.use_DDPG:
             # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
-            q_vals = self.Q(state_features, actions_current_state)
-            q_vals.backward()  # retain necessary?
+            state_action_features_current_policy = self.Q.F_sa(state_features, actions_current_state, apply_one_hot_encoding=False)
+            q_vals = self.Q(state_action_features_current_policy)
+            q_vals.backward(retain_graph=True)  # retain necessary?
             gradients = actions_current_state.grad
             # TODO: multiply gradients * -1 to ensure Q values increase? probably...
             # Normalize gradients:
-            gradients = self.normalize_gradients(gradients)
+            #gradients = self.normalize_gradients(gradients)
             # TODO: maybe normalize within the actor optimizer...?
             # TODO Normalize over batch, then scale by inverse TDE (risky thing:what about very small TDEs?
-            better_actions_current_state = actions_current_state + gradients
+            output = actions_current_state
+            target = (actions_current_state.detach().clone() + gradients).clip(self.action_low, self.action_high)
 
         if self.use_SPG:
             # Calculate mask of Q(s,a) minus Q(s, mu(s))
@@ -776,15 +768,15 @@ class Actor(OptimizableNet):
                 state_features_target = self.F_s.target_net(state_batch)
                 actions_target_net = self.target_net(state_features_target)
                 # print("Actions target net: ", actions_target_net)
-                if self.discrete_env:
-                    actions_current_policy = actions_target_net.argmax(1).unsqueeze(1)
+                #if self.discrete_env:
+                #    actions_current_policy = actions_target_net.argmax(1).unsqueeze(1)
                 state_action_features_sampled_actions = self.Q.F_sa.target_net(state_features_target, action_batch)
-                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_current_policy)
+                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_target_net, apply_one_hot_encoding=False)
                 Q_val_sampled_actions = self.Q.target_net(state_action_features_sampled_actions)
                 Q_val_current_policy = self.Q.target_net(state_action_features_current_policy)
                 action_TDE = Q_val_sampled_actions - Q_val_current_policy
                 # print("action TDE: ", action_TDE)
-            pos_TDE_mask = (action_TDE > 0).squeeze()
+            pos_TDE_mask = (action_TDE < 0).squeeze()
 
             # better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
 
@@ -792,7 +784,7 @@ class Actor(OptimizableNet):
             # print("Output: ", output)
             target = action_batch[pos_TDE_mask].view(output.shape[0])
             # print("Target: ", target)
-            # sample_weights = action_TDE[pos_TDE_mask]
+            sample_weights = action_TDE[pos_TDE_mask]
 
             # 1. Get batch_actions and batch_best_actions (implement best_actions everywhere)
             # 2. Calculate eval of current action

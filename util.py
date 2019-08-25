@@ -142,3 +142,23 @@ def display_top_memory_users(key_type='lineno', limit=3, censored=True):
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f KiB" % (total / 1024))
     print()
+
+def calc_gradient_norm(layers):
+    total_norm = 0
+    for p in layers.parameters():
+        param_norm = p.grad.data.norm(2)
+        total_norm += param_norm.item() ** 2
+    return total_norm ** (1. / 2)
+
+def calc_norm(layers):
+    total_norm = torch.tensor(0.)
+    for param in layers.parameters():
+        total_norm += torch.norm(param)
+    return total_norm
+
+def filter_weight_dict(weight_dict):
+    return {k: v for k, v in weight_dict.items()
+            if "target_net" not in k and
+            "F_s" not in k and
+            "Q" not in k and
+            "V" not in k}

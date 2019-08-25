@@ -3,8 +3,10 @@ import torch
 import numpy as np
 
 from util import *
+from util import calc_gradient_norm, calc_norm
 from networks import Q, V, Actor, ProcessState, ProcessStateAction, create_ff_layers
 from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
+
 
 # This is the interface for the agent being trained by a Trainer instance
 class AgentInterface:
@@ -128,6 +130,8 @@ class BasePolicy:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
         if self.discrete_env:
             self.num_actions = self.env.action_space.n
+            self.action_low = torch.zeros(self.num_actions)
+            self.action_high = torch.ones(self.num_actions)
         else:
             self.num_actions = len(self.env.action_space.high)
             self.action_low = torch.tensor(env.action_space.high)
@@ -206,9 +210,9 @@ class BasePolicy:
         return action
 
     def add_noise(self, action):
-        if self.action_gaussian_noise_std:
-            action += torch.tensor(np.random.normal(0, self.action_gaussian_noise_std, len(action)), dtype=torch.float)
-            action = torch.tensor(np.clip(action, self.action_low, self.action_high))
+        if self.gaussian_action_noise:
+            action += torch.tensor(np.random.normal(0, self.gaussian_action_noise, len(action)), dtype=torch.float)
+            action = np.clip(action, self.action_low, self.action_high)
         return action
 
     def choose_action(self, state):
@@ -321,10 +325,8 @@ class BasePolicy:
             transitions = self.memory.sample(sampling_size)
             PER_idxs = None
             importance_weights = None
-
         # Transform the stored tuples into torch arrays:
         transitions = self.extract_batch(transitions)
-
         # Save PER relevant info:
         transitions["PER_idxs"] = PER_idxs
         transitions["importance_weights"] = importance_weights
@@ -351,10 +353,8 @@ class BasePolicy:
         action_batch = torch.cat(batch.action).unsqueeze(1)
         if self.discrete_env:
             action_batch = action_batch.long()
-
         reward_batch = torch.cat(batch.reward).unsqueeze(1)
 
-        #print("Sampled transitions (s,a,r,s',mask s'): ", state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask)
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
                        "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None}
@@ -364,11 +364,38 @@ class BasePolicy:
     def optimize_networks(self, transitions):
         raise NotImplementedError
 
-    def calc_norm(self, layers):
-        total_norm = torch.tensor(0.)
-        for param in layers.parameters():
-            total_norm += torch.norm(param)
-        return total_norm
+
+    def record_nn_data(self, layers, name):
+        weight_norm = calc_norm(layers)
+        grad_norm = calc_gradient_norm(layers)
+        self.log.add(name + " Weight Norm", weight_norm)
+        self.log.add(name + " Grad Norm", grad_norm)
+
+    def display_debug_info(self):
+        if not self.log.do_logging:
+            return
+
+        if self.Q is not None:
+            self.record_nn_data(self.Q.layers_TD, "Q_TD")
+            if self.Q.split:
+                self.record_nn_data(self.Q.layers_r, "Q_r")
+
+
+        if self.V is not None:
+            self.record_nn_data(self.V.layers_TD, "V_TD")
+            if self.V.split:
+                self.record_nn_data(self.Q.layers_r, "V_r")
+
+        if self.F_s is not None:
+            self.record_nn_data(self.F_s.layers_vector, "F_s Vector")
+            self.record_nn_data(self.F_s.layers_merge, "F_s Merge")
+
+        if self.F_sa is not None:
+            self.record_nn_data(self.F_sa.layers, "F_sa")
+
+        if self.actor is not None and self.use_actor_critic:
+            self.record_nn_data(self.actor.layers, "Actor")
+
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         return torch.tensor([0])
@@ -383,11 +410,17 @@ class BasePolicy:
         if self.actor is not None:
             self.actor.retain_graph = val
 
-    def display_debug_info(self):
-        raise NotImplementedError
-
     def update_targets(self, n_steps):
-        raise NotImplementedError
+        if self.Q is not None:
+            self.Q.update_targets(n_steps)
+        if self.V is not None:
+            self.V.update_targets(n_steps)
+        if self.actor is not None and self.use_actor_critic:
+            self.actor.update_targets(n_steps)
+        if self.F_s is not None:
+            self.F_s.update_targets(n_steps)
+        if self.F_sa is not None:
+            self.F_sa.update_targets(n_steps)
 
     def init_actor(self, Q, V, F_s):
         raise NotImplementedError
@@ -399,7 +432,6 @@ class ActorCritic(BasePolicy):
 
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
         super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer)
-
         self.F_s = F_s
 
 
@@ -419,7 +451,7 @@ class ActorCritic(BasePolicy):
 
         error = self.train_actor(transitions)
 
-        return TDE + error
+        return abs(TDE) + abs(error)
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
@@ -434,15 +466,6 @@ class ActorCritic(BasePolicy):
         error = self.actor.optimize(transitions)
         return error
 
-    def update_targets(self, n_steps):
-        if self.Q is not None:
-            self.Q.update_targets(n_steps)
-        if self.V is not None:
-            self.V.update_targets(n_steps)
-        self.actor.update_targets(n_steps)
-
-    def display_debug_info(self):
-        return
 
 
 
@@ -461,37 +484,6 @@ class Q_Policy(BasePolicy):
     def init_actor(self, Q, V, F_s):
         return Q
 
-    def update_targets(self, n_steps):
-        self.critic.update_targets(n_steps)
-
-    def calc_gradient_norm(self, layers):
-        total_norm = 0
-        for p in layers.parameters():
-            param_norm = p.grad.data.norm(2)
-            total_norm += param_norm.item() ** 2
-        return total_norm ** (1. / 2)
-
-    def display_debug_info(self):
-        if not self.log.do_logging:
-            return
-        #self.critic.display_debug_info()
-        # Weights:
-        feature_extractor_weight_norm = self.calc_norm(self.F_s)
-        Q_weight_norm = self.calc_norm(self.Q.layers_TD)
-        if self.Q.split:
-            r_weight_norm = self.calc_norm(self.Q.layers_r)
-            self.log.add("r Weight Norm", Q_weight_norm)
-        self.log.add("F_s Weight Norm", feature_extractor_weight_norm)
-        self.log.add("Q Weight Norm", Q_weight_norm)
-
-        # Gradients:
-        F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_vector)
-        F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_merge)
-        #F_s_grad_norm = self.calc_gradient_norm(self.F_s.layers_vector)
-        Q_grad_norm = self.calc_gradient_norm(self.Q.layers_TD)
-        self.log.add("F_s Vector Gradient Norm", F_s_grad_norm)
-        self.log.add("F_s Merge Gradient Norm", F_s_grad_norm)
-        self.log.add("Q TD Gradient Norm", Q_grad_norm)
 
 # 1. For ensemble: simply create many base policies, train them all with .optimize() and sum action output.
 #    When creating policies, have them share seam feature processor (possibly create one in this class and pass it to base policies)
