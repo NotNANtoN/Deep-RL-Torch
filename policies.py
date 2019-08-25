@@ -211,15 +211,9 @@ class BasePolicy:
             action = torch.tensor(np.clip(action, self.action_low, self.action_high))
         return action
 
-    def state2parts(self, state):
-        # TODO: adjust this function to be able to deal with vector envs, rgb envs, and mineRL
-        # TODO: also move it into F_s and let F_s just take the state as input
-        return state, None
-
     def choose_action(self, state):
         with torch.no_grad():
-            vectors, matrix = self.state2parts(state)
-            state_features = self.F_s(vectors, matrix)
+            state_features = self.F_s(state)
             action = self.actor(state_features)
         return action
 
@@ -264,45 +258,53 @@ class BasePolicy:
             self.state_feature_len = F_s.layers_merge[-1].out_features
             input_size = self.state_feature_len
 
-        Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
+        Q_net = None
+        if not (self.use_CACLA_V and not self.use_QVMAX):
+            Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
 
         V_net = None
         if self.use_QV or self.use_QVMAX or (self.use_actor_critic and self.use_CACLA_V):
             # Init Networks:
-            V_net = V(self.state_feature_len, self.env, F_s, self.device, self.log, self.hyperparameters)
-            # Create links for training value calculations:
-            Q_net.V = V_net
-            V_net.Q = Q_net
+            V_net = V(self.state_feature_len, self.env, F_s, None, self.device, self.log, self.hyperparameters)
         return Q_net, V_net
 
-    def train_critic(self, Q, V, state_feature_batch, state_action_features, action_batch, reward_batch, non_final_next_state_features,
-                     non_final_mask, retain_graph=False):
-        if self.use_QV or self.use_QVMAX:
-            TDE_V = V.optimize(state_feature_batch, reward_batch, non_final_next_state_features, non_final_mask,
-                                    self.importance_weights)
-        else:
-            TDE_V = 0
-        TDE_Q = Q.optimize(state_feature_batch, state_action_features, action_batch, reward_batch,
-                        non_final_next_state_features, non_final_mask, self.importance_weights)
-        TDE = (abs(TDE_Q) + abs(TDE_V)) / ((self.use_QV or self.use_QVMAX) + 1) + 0.0000001
-        if self.use_PER:
-            self.memory.update_priorities(self.PER_idxs, TDE)
+    def train_critic(self, Q, V, transitions, retain_graph=False):
+        TDE_V = 0
+        if self.V is not None:
+            V.retain_graph = True
+            TDE_V = V.optimize(transitions, transitions["PER_importance_weights"], self.actor, Q, None)
+
+        # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
+        TDE_Q = 0
+        if self.Q is not None:
+            TDE_Q = Q.optimize(transitions, self.importance_weights, self.actor, None, V)
+
+        TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
+
+        return TDE
 
 
     def optimize(self):
         # Get Batch:
         transitions = self.get_transitions()
-        state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask = self.extract_batch(transitions)
         # Extract features:
         # TODO: we really need to convert a state_batch into vector/matrix stuff instead of hardcoding
-        state_feature_batch = self.F_s(state_batch, None)
-        non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states, None)
+        state_batch = transitions["state"]
+        non_final_next_states = transitions["non_final_next_states"]
+        state_feature_batch = self.F_s(state_batch)
+        non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
+        transitions["state_features"] = state_feature_batch
+        transitions["non_final_next_state_features"] = non_final_next_state_features
         # Optimize:
         if self.use_world_model:
             self.world_model.optimize()
             # TODO: create a world model at some point
-        self.optimize_networks(state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                               non_final_mask)
+        error = self.optimize_networks(transitions)
+
+        error = abs(error) + 0.0001
+        if self.use_PER:
+            self.memory.update_priorities(transitions["PER_idxs"], error)
+
 
     def decay_exploration(self, n_steps):
         if self.eps_decay:
@@ -313,11 +315,21 @@ class BasePolicy:
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
-            transitions, self.importance_weights, self.PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
-            self.importance_weights = torch.from_numpy(self.importance_weights).float()
-            return transitions
+            transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
+            importance_weights = torch.from_numpy(importance_weights).float()
         else:
-            return self.memory.sample(sampling_size)
+            transitions = self.memory.sample(sampling_size)
+            PER_idxs = None
+            importance_weights = None
+
+        # Transform the stored tuples into torch arrays:
+        transitions = self.extract_batch(transitions)
+
+        # Save PER relevant info:
+        transitions["PER_idxs"] = PER_idxs
+        transitions["importance_weights"] = importance_weights
+
+        return transitions
 
     def extract_batch(self, transitions):
         # TODO: How fast is this? Can't we put it into arrays?
@@ -339,14 +351,17 @@ class BasePolicy:
         action_batch = torch.cat(batch.action).unsqueeze(1)
         if self.discrete_env:
             action_batch = action_batch.long()
-        print("action batch shape", action_batch.shape)
 
-        reward_batch = torch.cat(batch.reward)
+        reward_batch = torch.cat(batch.reward).unsqueeze(1)
 
-        return state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask
+        #print("Sampled transitions (s,a,r,s',mask s'): ", state_batch, action_batch, reward_batch, non_final_next_states, non_final_mask)
+        transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
+                       "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
+                       "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None}
 
-    def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                               non_final_mask):
+        return transitions
+
+    def optimize_networks(self, transitions):
         raise NotImplementedError
 
     def calc_norm(self, layers):
@@ -388,30 +403,46 @@ class ActorCritic(BasePolicy):
         self.F_s = F_s
 
 
-    def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                          non_final_mask):
+    def optimize_networks(self, transitions):
         # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
         # TODO: for HRL this might be nice
-        state_action_features = self.F_sa(state_feature_batch, action_batch)
-        self.train_critic(self.Q, self.V, state_feature_batch, state_action_features, action_batch, reward_batch, non_final_next_state_features,
-                          non_final_mask)
-        self.train_actor(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
+        state_features = transitions["state_features"]
+        action_batch = transitions["action"]
+
+        state_action_features = self.F_sa(state_features, action_batch)
+        transitions["state_action_features"] = state_action_features
+        if self.Q is not None:
+            self.Q.retain_graph = True
+        if self.V is not None:
+            self.V.retain_graph = True
+        TDE = self.train_critic(self.Q, self.V, transitions)
+
+        error = self.train_actor(transitions)
+
+        return TDE + error
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
         actor.Q = Q
         actor.V = V
-        Q.target_net.actor = actor
+        #Q.target_net.actor = actor
 
         #print(actor)
         return actor
 
-    def train_actor(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask):
-        self.actor.optimize(state_feature_batch, action_batch, reward_batch, non_final_next_state_features, non_final_mask)
+    def train_actor(self, transitions):
+        error = self.actor.optimize(transitions)
+        return error
 
     def update_targets(self, n_steps):
-        self.critic.update_targets(n_steps)
+        if self.Q is not None:
+            self.Q.update_targets(n_steps)
+        if self.V is not None:
+            self.V.update_targets(n_steps)
         self.actor.update_targets(n_steps)
+
+    def display_debug_info(self):
+        return
 
 
 
@@ -423,10 +454,9 @@ class Q_Policy(BasePolicy):
         self.critic = self.Q
 
 
-    def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                          non_final_mask, retain_graph=False):
-        self.train_critic(self.Q, None, state_feature_batch, None, action_batch, reward_batch, non_final_next_state_features,
-                             non_final_mask)
+    def optimize_networks(self, transitions, retain_graph=False):
+        TDE = self.train_critic(self.Q, self.V, transitions)
+        return TDE
 
     def init_actor(self, Q, V, F_s):
         return Q
@@ -442,7 +472,7 @@ class Q_Policy(BasePolicy):
         return total_norm ** (1. / 2)
 
     def display_debug_info(self):
-        if self.log.do_logging:
+        if not self.log.do_logging:
             return
         #self.critic.display_debug_info()
         # Weights:
@@ -485,21 +515,20 @@ class REM(BasePolicy):
         return None, None
 
     # TODO: atm we iterate through the list of sampled base_policies - can this be done in a better way? MPI, GPU like?
-    def optimize_networks(self, state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                               non_final_mask):
+    def optimize_networks(self, transitions):
         idxes = random.sample(range(self.num_heads), self.num_samples)
+        error = 0
         for idx in idxes:
             current_policy = self.policy_heads[idx]
             is_last =  (idx == idxes[-1])
             current_policy.set_retain_graph(not is_last)
             # TODO: here we still need to bootstrap over our batch to have slightly different training data per policy
-            current_policy.optimize_networks(state_feature_batch, action_batch, reward_batch, non_final_next_state_features,
-                               non_final_mask)
+            error += current_policy.optimize_networks(transitions)
+        return error / self.num_samples
 
     def choose_action(self, state):
         # Preprocess:
-        vectors, matrix = self.state2parts(state)
-        state_features = self.F_s(vectors, matrix)
+        state_features = self.F_s(state)
         # Select random subset to output action:
         idxes = random.sample(range(self.num_heads), self.num_samples)
         summed_action = None

@@ -551,20 +551,29 @@ if __name__ == "__main__":
                               {"name": "linear", "neurons": 128}]
     standard_hidden_block =  [{"name":"linear", "neurons": 64, "act_func": "relu"},
                              {"name":"linear", "neurons": 64, "act_func": "relu"}]
+
+    test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
+
+    #standard_hidden_block = test_block
+    #standard_feature_block = test_block
+
+    # TODO: add action 'embedding'/hidden layer for F_sa
+
     layers_feature_vector = standard_hidden_block
     layers_feature_merge = standard_feature_block
     layers_sa = standard_feature_block
     layers_r = standard_hidden_block
     layers_Q = standard_hidden_block
+    layers_V = standard_hidden_block
     layers_actor = standard_hidden_block
 
-    parameters = {"use_QV": False, "split_Bellman": True, "gamma": 1, "batch_size": 4, "UPDATES_PER_STEP": 1,
+    parameters = {"use_QV": True, "split_Bellman": False, "gamma": 1, "batch_size": 8, "UPDATES_PER_STEP": 1,
                   "use_QVMAX": False, "use_target_net": True,
-                  "use_actor_critic": True, "use_CACLA_V": False, "use_CACLA_Q": True, "use_DDPG": False,
+                  "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
                   "use_SPG": False, "use_GISPG": False, "lr_actor": 0.001,
                   "target_network_hard_steps": 250, "use_polyak_averaging":False, "polyak_averaging_tau":0.001,
-                  "lr_Q": 0.001, "lr_r": 0.001,
-                  "replay_buffer_size": 10000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
+                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001,
+                  "replay_buffer_size": 10000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
                   "use_CER": True,
                   "use_exp_rep": True,
                   "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
@@ -579,10 +588,16 @@ if __name__ == "__main__":
                   "max_episode_steps": 0, "use_hrl": False,
                   "layers_feature_vector": layers_feature_vector, "layers_state_action_features": layers_sa,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
+                  "layers_V": layers_V,
                   "layers_actor": layers_actor,
                   "use_world_model": False, "max_norm":1,
-                  "use_REM": False, "REM_num_heads": 50, "REM_num_samples": 5, "optimizer": RAdam} # optim.Adam/RAdam
+                  "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5, "optimizer": RAdam} # optim.Adam/RAdam
     # TODO: why does normalize_obs destroy the whole training for cartpole????
+
+    # TODO: investigate the hyperparameter 'eps' of Adam and RAdam. For Deep RL it is usually set at 0.01 instead of 1e-8 -- see https://medium.com/autonomous-learning-library/radam-a-new-state-of-the-art-optimizer-for-rl-442c1e830564
+
+    # TODO: Introduce lr schedule - cosine anneal
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     lunar = "LunarLander-v2"
@@ -599,4 +614,4 @@ if __name__ == "__main__":
 
     trainer = Trainer(cart, parameters, log=False)
     # TODO: introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    trainer.run(50000, render=True, verbose=True)
+    trainer.run(50000, render=False, verbose=True)
