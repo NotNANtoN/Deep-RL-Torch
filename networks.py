@@ -6,6 +6,7 @@ import itertools
 from util import *
 
 from torch.utils.tensorboard import SummaryWriter
+from torch.autograd import Variable
 
 import math
 import copy
@@ -119,10 +120,12 @@ class OptimizableNet(nn.Module):
         self.discrete_env = True if "Discrete" in str(env.action_space) else False
         if self.discrete_env:
             self.num_actions = env.action_space.n
+            self.action_low = torch.zeros(self.num_actions)
+            self.action_high = torch.ones(self.num_actions)
         else:
             self.num_actions = len(env.action_space.low)
-            self.action_low = torch.tensor(env.action_space.high)
-            self.action_high = torch.tensor(env.action_space.low)
+            self.action_low = torch.tensor(env.action_space.low)
+            self.action_high = torch.tensor(env.action_space.high)
         # Env Obs Space:
         self.vector_len = len(self.env.observation_space.high)
         self.matrix_shape = None
@@ -171,6 +174,9 @@ class OptimizableNet(nn.Module):
         detached_loss = loss.detach().clone().item()
         self.log.add(name, detached_loss)
 
+        if self.log.do_logging:
+            self.log_nn_data()
+
         return detached_loss
 
 
@@ -211,6 +217,11 @@ class OptimizableNet(nn.Module):
             target_net.eval()
         return target_net
 
+    def record_nn_data(self, layers, name, extra_name=""):
+        weight_norm = calc_norm(layers)
+        grad_norm = calc_gradient_norm(layers)
+        self.log.add(name + " Weight Norm", weight_norm)
+        self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
 
 class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, matrix_max_val=255, is_target_net=False):
@@ -282,8 +293,13 @@ class ProcessState(OptimizableNet):
         # TODO: adjust this function to be able to deal with vector envs, rgb envs, and mineRL
         return state, None
 
+    def log_nn_data(self, name):
+        self.record_nn_data(self.layers_vector, "F_s Vector", extra_name=name)
+        self.record_nn_data(self.layers_merge, "F_s Merge", extra_name=name)
+
     def recreate_self(self):
         return self.__class__(self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
+
 
 
 # TODO for all nets: enable options to not update target nets and to predict next state value based on current net instead of using the target net
@@ -318,6 +334,9 @@ class ProcessStateAction(OptimizableNet):
             return self.target_net(state_features, action)
         else:
             return self(state_features, action)
+
+    def log_nn_data(self, name):
+        self.record_nn_data(self.layers, "F_sa", extra_name=name)
 
     def recreate_self(self):
         return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters,
@@ -371,6 +390,8 @@ class TempDiffNet(OptimizableNet):
 
     def calculate_next_state_values(self, non_final_next_state_features, non_final_mask, actor=None):
         next_state_values = torch.zeros(self.batch_size, 1, device=self.device)
+        if non_final_next_state_features is None:
+            return next_state_values
         with torch.no_grad():
             next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features, self.F_sa,
                                                                          actor)
@@ -451,6 +472,15 @@ class TempDiffNet(OptimizableNet):
         # Compute the expected values. Do not add the reward, if the critic is split
         expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
         return expected_value_next_state - current_prediction
+
+    def log_nn_data(self):
+        self.record_nn_data(self.layers_TD, self.name + "_TD")
+        if self.split:
+            self.record_nn_data(self.layers_r, self.name + "_r")
+        if self.F_s is not None:
+            self.F_s.log_nn_data(self.name)
+        if self.F_sa is not None:
+            self.F_sa.log_nn_data(self.name)
 
 
 class Q(TempDiffNet):
@@ -602,12 +632,16 @@ class Actor(OptimizableNet):
     def __init__(self, F_s, env, log, device, hyperparameters, is_target_net=False):
         super(Actor, self).__init__(env, device, log, hyperparameters, is_target_net=is_target_net)
 
+
         self.name = "Actor"
 
         # Initiate arrays for output function:
-        self.relu_idxs = []
-        self.sigmoid_idxs = []
-        self.tanh_idxs = []
+        self.relu_mask = None
+        self.sigmoid_mask = None
+        self.tanh_mask = None
+        self.relu_idxs = None
+        self.tanh_idxs = None
+        self.sigmoid_idxs = None
         self.scaling = None
         self.offset = None
 
@@ -639,7 +673,7 @@ class Actor(OptimizableNet):
         return x
 
     def compute_loss(self, output, target, sample_weights=None):
-        # TODO: implement cross entropy loss: we need to have targets of type long
+        # TODO: test if actor training might be better without CrossEntropyLoss. It might be, because we do not need to convert to long!
         if self.discrete_env:
             loss_func = torch.nn.CrossEntropyLoss(reduction='none')
             loss = loss_func(output, target)
@@ -658,15 +692,32 @@ class Actor(OptimizableNet):
         if self.sigmoid_idxs:
             x[self.sigmoid_idxs] = torch.sigmoid(x[self.sigmoid_idxs])
         if self.tanh_idxs:
-            print("first: ", x)
-            print(self.tanh_idxs)
-            print(x[:, self.tanh_idxs])
-            x[:, self.tanh_idxs] = torch.tanh(x[:, self.tanh_idxs])
-            print("after: ", x)
+            #print("first: ", x)
+            #print(self.tanh_idxs)
+            #print(x[:, self.tanh_idxs])
+            y = x[:, self.tanh_idxs].tanh()
+            #x[self.tanh_mask] = torch.tanh(x[self.tanh_mask])
+            #print("after: ", y)
+            with torch.no_grad():
+                x[:, self.tanh_idxs] = y
+            #print("inserted: ", x)
         return (x * self.scaling) + self.offset
 
     def create_output_act_func(self):
         print("Action_space: ", self.env.action_space)
+        relu_idxs = []
+        tanh_idxs = []
+        sigmoid_idxs = []
+
+        # Init masks:
+        #self.relu_mask = torch.zeros(self.batch_size, len(self.action_low))
+        #self.relu_mask.scatter_(1, torch.tensor(relu_idxs).long(), 1.)
+        #self.tanh_mask = torch.zeros(self.batch_size, len(self.action_low))
+        #self.tanh_mask.scatter_(1, torch.tensor(tanh_idxs).long(), 1.)
+        #self.sigmoid_mask = torch.zeros(self.batch_size, len(self.action_low))
+        #self.sigmoid_mask.scatter_(1, torch.tensor(sigmoid_idxs).long(), 1.)
+
+
         if self.discrete_env:
             print("Actor has only sigmoidal activation function")
             print()
@@ -674,38 +725,46 @@ class Actor(OptimizableNet):
         else:
             self.scaling = torch.ones(len(self.action_low))
             self.offset = torch.zeros(len(self.action_low))
-            for i in range(len(action_lows)):
-                low = action_lows[i]
-                high = action_highs[i]
+            for i in range(len(self.action_low)):
+                low = self.action_low[i]
+                high = self.action_high[i]
                 if not (low and high):
                     if low == -math.inf or high == math.inf:
-                        self.relu_idxs.append(i)
+                        relu_idxs.append(i)
+                        #self.relu_mask[i] = 1.0
                     else:
-                        self.sigmoid_idxs.append(i)
+                        sigmoid_idxs.append(i)
+                        #self.sigmoid_mask[i] = 1.0
                         self.scaling[i] = high + low
                 elif low == high * -1:
                     if low != -math.inf:
-                        self.tanh_idxs.append(i)
+                        tanh_idxs.append(i)
+                        #self.tanh_mask[i] = 1.0
                         self.scaling[i] = high
                 else:
                     self.offset[i] = (high - low) / 2
                     self.scaling[i] = high - offset[i]
-                    self.tanh_idxs.append(i)
-            num_linear_actions = len(self.scaling) - len(self.tanh_idxs) - len(self.relu_idxs) - len(self.sigmoid_idxs)
-            print("Actor has ", len(self.relu_idxs), " ReLU, ", len(self.tanh_idxs), " tanh, ", len(self.sigmoid_idxs),
+                    tanh_idxs.append(i)
+            num_linear_actions = len(self.scaling) - len(tanh_idxs) - len(relu_idxs) - len(sigmoid_idxs)
+            print("Actor has ", len(relu_idxs), " ReLU, ", len(tanh_idxs), " tanh, ", len(sigmoid_idxs),
                   " sigmoid, and ", num_linear_actions, " linear actions.")
             print("Action Scaling: ", self.scaling)
             print("Action Offset: ", self.offset)
             print()
+
+        self.tanh_idxs = tanh_idxs
+
         return self.output_function_continuous
 
     def optimize(self, transitions):
+        # Only for debugging:
+        torch.autograd.set_detect_anomaly(True)
+
         state_batch = transitions["state"]
         state_features = transitions["state_features"]
         action_batch = transitions["action"]
 
         # Calculate current actions for state_batch:
-        # torch.autograd.set_detect_anomaly(True)
         actions_current_state = self(state_features)
         better_actions_current_state = actions_current_state.detach().clone()
         # if self.discrete_env:
@@ -749,17 +808,34 @@ class Actor(OptimizableNet):
         # TODO - Idea: When using QV, possibly reinforce actions only if Q and V net agree (first check how often they disagree and in which cases)
         if self.use_DDPG:
             # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
-            state_action_features_current_policy = self.Q.F_sa(state_features, actions_current_state, apply_one_hot_encoding=False)
+            actions_current_state_detached = Variable(actions_current_state, requires_grad=True)
+            #actions_current_state = Variable(actions_current_state[0].unsqueeze(0), requires_grad=True)
+            #state_features = state_features[0].unsqueeze(0)
+            #print(actions_current_state)
+            state_action_features_current_policy = self.Q.F_sa(state_features, actions_current_state_detached,
+                                                               apply_one_hot_encoding=False)
+            self.optimizer.zero_grad()
             q_vals = self.Q(state_action_features_current_policy)
-            q_vals.backward(retain_graph=True)  # retain necessary?
-            gradients = actions_current_state.grad
+            actor_loss = q_vals.mean() * -1
+            #print("loss: ", actor_loss)
+            actor_loss.backward(retain_graph=True)  # retain necessary?
+            gradients = actions_current_state_detached.grad
+            #print(gradients)
+            #print()
+            #self.optimizer.step()
+            #return actor_loss.detach()
+
             # TODO: multiply gradients * -1 to ensure Q values increase? probably...
             # Normalize gradients:
             #gradients = self.normalize_gradients(gradients)
             # TODO: maybe normalize within the actor optimizer...?
             # TODO Normalize over batch, then scale by inverse TDE (risky thing:what about very small TDEs?
             output = actions_current_state
-            target = (actions_current_state.detach().clone() + gradients).clip(self.action_low, self.action_high)
+            target = (actions_current_state.detach().clone() + gradients)
+            target = torch.max(torch.min(target, self.action_high), self.action_low)
+            if self.discrete_env:
+                target = target.argmax(1).long()
+
 
         if self.use_SPG:
             # Calculate mask of Q(s,a) minus Q(s, mu(s))
@@ -771,7 +847,8 @@ class Actor(OptimizableNet):
                 #if self.discrete_env:
                 #    actions_current_policy = actions_target_net.argmax(1).unsqueeze(1)
                 state_action_features_sampled_actions = self.Q.F_sa.target_net(state_features_target, action_batch)
-                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_target_net, apply_one_hot_encoding=False)
+                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_target_net,
+                                                                              apply_one_hot_encoding=False)
                 Q_val_sampled_actions = self.Q.target_net(state_action_features_sampled_actions)
                 Q_val_current_policy = self.Q.target_net(state_action_features_current_policy)
                 action_TDE = Q_val_sampled_actions - Q_val_current_policy
@@ -800,17 +877,31 @@ class Actor(OptimizableNet):
             # Do SPG, but do not sample with Gaussian noise. Instead always walk towards gradient of best action,
             #  with magnitude that decreases over one sampling period
             #
-            #
             pass
 
         # TODO: filter out actions where actions_current_state is equal to better_actions
         # self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer, "actor")
+
+        #print("output", output)
+        #print(target)
+        if not self.discrete_env:
+            target = target.unsqueeze(1)
+
         error = 0
         if len(output) > 0:
-            error = self.optimize_net(output, target, self.optimizer, "actor", sample_weights=sample_weights)
-        # Train actor towards better actions (loss = better - current)
+            # Train actor towards better actions (loss = better - current)
+            error = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
+        else:
+            pass
+            #TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
+            #print("No Training for Actor...")
 
         return error
+
+    def log_nn_data(self):
+        self.record_nn_data(self.layers, "Actor")
+        if self.F_s is not None:
+            self.F_s.log_nn_data(self.name)
 
     def recreate_self(self):
         return self.__class__(self.F_s, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)

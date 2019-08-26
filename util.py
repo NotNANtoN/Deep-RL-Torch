@@ -49,6 +49,7 @@ class Normalizer():
 class Log(object):
     def __init__(self, path, log):
         self.do_logging = log
+        print("Log gradients and weights: ", self.do_logging)
 
         self.writer = SummaryWriter()
         self.storage = {}

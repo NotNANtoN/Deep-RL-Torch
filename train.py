@@ -204,7 +204,6 @@ class Trainer:
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
 
-        self.policy.display_debug_info()
         print()
 
     def run(self, n_steps, verbose=False, render=False, on_server=True):
@@ -573,7 +572,7 @@ if __name__ == "__main__":
                   "normalize_obs": False, # turning this on destroy training on cartpole
                   "reward_std": 0.0,
                   # Actor-Critic:
-                  "use_actor_critic": True, "use_CACLA_V": True, "use_CACLA_Q": False, "use_DDPG": False,
+                  "use_actor_critic": True, "use_CACLA_V": False, "use_CACLA_Q": True, "use_DDPG": False,
                   "use_SPG": False, "use_GISPG": False,
                   # Target-net:
                   "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau":0.01,
@@ -621,18 +620,32 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Basic Discrete:
     lunar = "LunarLander-v2"
     cart = "CartPole-v1"
     acro = "Acrobot-v1"
     mountain = "MountainCar-v0"
+    # Continuous:
     pendulum = "Pendulum-v0"
     mountain_cont = "MountainCarContinuous-v0"
+    # Box2d Continuous:
+    lunar_cont = "LunarLanderContinuous-v2"
+    car_race = "CarRacing-v0"
+    biped = "BipedalWalker-v2"
+    biped_hard = "BipedalWalkerHardcore-v2"
+    # Mujoco:
+    ant = "Ant-v2"
+    cheetah = "HalfCheetah-v2"
+    inv_double_pend = "InvertedDoublePendulum-v2"
+    hopper = "Hopper-v2"
+    human = "Humanoid-v2"
+    human_stand = "HumanoidStandup-v2"
 
     # print("Action space: ", env.action_space)
     # print("Observation space: ", env.observation_space)
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(cart, parameters, log=False)
-    # TODO: introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
+    trainer = Trainer(cart, parameters, log=True)
+    # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(50000, render=False, verbose=True)

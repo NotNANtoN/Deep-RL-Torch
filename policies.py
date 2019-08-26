@@ -134,8 +134,10 @@ class BasePolicy:
             self.action_high = torch.ones(self.num_actions)
         else:
             self.num_actions = len(self.env.action_space.high)
-            self.action_low = torch.tensor(env.action_space.high)
-            self.action_high = torch.tensor(env.action_space.low)
+            self.action_low = torch.tensor(env.action_space.low)
+            self.action_high = torch.tensor(env.action_space.high)
+        print("Env action low: ", self.action_low)
+        print("Env action high: ", self.action_high)
 
 
         # Set up parameters:
@@ -296,7 +298,9 @@ class BasePolicy:
         state_batch = transitions["state"]
         non_final_next_states = transitions["non_final_next_states"]
         state_feature_batch = self.F_s(state_batch)
-        non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
+        non_final_next_state_features = None
+        if non_final_next_states is not None:
+            non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
         transitions["state_features"] = state_feature_batch
         transitions["non_final_next_state_features"] = non_final_next_state_features
         # Optimize:
@@ -308,6 +312,8 @@ class BasePolicy:
         error = abs(error) + 0.0001
         if self.use_PER:
             self.memory.update_priorities(transitions["PER_idxs"], error)
+
+        self.display_debug_info()
 
 
     def decay_exploration(self, n_steps):
@@ -345,7 +351,11 @@ class BasePolicy:
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                 batch.next_state)), device=self.device, dtype=torch.bool)
 
-        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None])
+        non_final_next_states = [s for s in batch.next_state if s is not None]
+        if non_final_next_states != []:
+            non_final_next_states = torch.cat(non_final_next_states)
+        else:
+            non_final_next_states = None
         state_batch = torch.cat(batch.state)
         if self.normalize_observations:
             non_final_next_states = self.normalizer.normalize(non_final_next_states)
@@ -365,36 +375,9 @@ class BasePolicy:
         raise NotImplementedError
 
 
-    def record_nn_data(self, layers, name):
-        weight_norm = calc_norm(layers)
-        grad_norm = calc_gradient_norm(layers)
-        self.log.add(name + " Weight Norm", weight_norm)
-        self.log.add(name + " Grad Norm", grad_norm)
 
     def display_debug_info(self):
-        if not self.log.do_logging:
-            return
-
-        if self.Q is not None:
-            self.record_nn_data(self.Q.layers_TD, "Q_TD")
-            if self.Q.split:
-                self.record_nn_data(self.Q.layers_r, "Q_r")
-
-
-        if self.V is not None:
-            self.record_nn_data(self.V.layers_TD, "V_TD")
-            if self.V.split:
-                self.record_nn_data(self.Q.layers_r, "V_r")
-
-        if self.F_s is not None:
-            self.record_nn_data(self.F_s.layers_vector, "F_s Vector")
-            self.record_nn_data(self.F_s.layers_merge, "F_s Merge")
-
-        if self.F_sa is not None:
-            self.record_nn_data(self.F_sa.layers, "F_sa")
-
-        if self.actor is not None and self.use_actor_critic:
-            self.record_nn_data(self.actor.layers, "Actor")
+        pass
 
 
     def calculate_TDE(self, state, action, next_state, reward, done):
@@ -465,8 +448,6 @@ class ActorCritic(BasePolicy):
     def train_actor(self, transitions):
         error = self.actor.optimize(transitions)
         return error
-
-
 
 
 
