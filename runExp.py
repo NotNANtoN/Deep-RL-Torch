@@ -1,5 +1,5 @@
 from comet_ml import Optimizer, Experiment, OfflineExperiment
-from train import *
+from trainer import *
 import csv
 from cycler import cycler
 import os
@@ -8,6 +8,39 @@ from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
 from hyperopt.pyll.base import scope
 import copy
 
+
+def testSetup(env, device, number_of_tests, length_of_tests, trialParams, randomizeList=[], on_server=False,
+              max_points=2000, hyperparamDict={}, verbose=True):
+    results_len = []
+    results = []
+    logs = []
+
+    for i in range(number_of_tests):
+        if len(randomizeList) > 0:
+            randomizedParams = randomizeList[i]
+            print("Hyperparameters:")
+            for key in randomizedParams:
+                print(key + ":", randomizedParams[key], end=" ")
+            print()
+        else:
+            randomizedParams = {}
+
+        trainer = Trainer(env, device, **trialParams, **randomizedParams, **hyperparamDict)
+        steps, rewards, log = trainer.run(verbose=False, n_steps=length_of_tests, on_server=on_server)
+
+        rewards = reducePoints(rewards, max_points)
+        for key in log:
+            log[key] = reducePoints(log[key], max_points)
+
+        results_len.append(len(rewards))
+        results.append(rewards)
+        logs.append(log)
+
+        if number_of_tests > 1:
+            print("Run ", str(i), "/", str(number_of_tests), end=" | ")
+            print("Mean reward ", round(np.mean(rewards), 1), end=" ")
+            print("Score: ", round(run_metric(log["Total Reward"]), 1))
+    return results, logs
 
 def saveList(some_list, path):
     with open(path + ".csv", 'w', newline='') as myfile:

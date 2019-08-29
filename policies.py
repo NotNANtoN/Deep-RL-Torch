@@ -268,6 +268,7 @@ class BasePolicy:
             self.state_feature_len = F_s.layers_merge[-1].out_features
             input_size = self.state_feature_len
 
+
         Q_net = None
         if not (self.use_CACLA_V and not self.use_QVMAX):
             Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
@@ -482,6 +483,7 @@ class REM(BasePolicy):
         self.num_samples = hyperparameters["REM_num_samples"]
 
         # Create ensemble of ground policies:
+        # TODO: maybe let all the critics of the ground policy share their reward nets if they are split
         self.policy_heads = [ground_policy(None, F_s, F_sa, env, device, log, hyperparameters, normalizer)
                              for _ in range(self.num_heads)]
 
@@ -499,7 +501,7 @@ class REM(BasePolicy):
             current_policy = self.policy_heads[idx]
             is_last =  (idx == idxes[-1])
             current_policy.set_retain_graph(not is_last)
-            # TODO: here we still need to bootstrap over our batch to have slightly different training data per policy
+            # TODO: here we might bootstrap over our batch to have slightly different training data per policy!
             error += current_policy.optimize_networks(transitions)
         return error / self.num_samples
 
