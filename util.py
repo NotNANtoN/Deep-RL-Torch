@@ -47,11 +47,13 @@ class Normalizer():
 
 
 class Log(object):
-    def __init__(self, path, log):
+    def __init__(self, path, log, comment, log_NNs):
         self.do_logging = log
         print("Log gradients and weights: ", self.do_logging)
 
-        self.writer = SummaryWriter()
+        self.log_NNs = log_NNs
+        self.comment = comment
+        self.writer = SummaryWriter(comment=comment)
         self.storage = {}
         self.global_step = 0
         self.tb_path = 'runs'

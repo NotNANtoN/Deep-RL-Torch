@@ -47,7 +47,7 @@ def plot_rewards(rewards, name=None, xlabel="Step"):
     plt.clf()
     plt.title('Training...')
     plt.xlabel(xlabel)
-    plt.ylabel('Cumulative Reward of current Episode')
+    plt.ylabel('Return of current Episode')
 
     idxs = calculate_reduced_idxs(len(rewards), 1000)
     rewards = reducePoints(rewards, 1000)
@@ -86,15 +86,15 @@ def plot_rewards(rewards, name=None, xlabel="Step"):
 
 
 class Trainer:
-    def __init__(self, env_name, hyperparameters, log=True):
+    def __init__(self, env_name, hyperparameters, log=True, tb_comment="", log_NNs=False):
         # Init logging:
         self.path = os.getcwd()
-        self.log = Log(self.path + '/tb_log', log)
+        self.log = Log(self.path + '/tb_log', log, tb_comment, log_NNs)
         self.steps_done = 0
 
         # Init env:
         self.env_name = env_name
-        self.env = gym.make(env_name).unwrapped
+        self.env = gym.make(env_name)
         # Extract relevant hyperparameters:
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]
@@ -104,11 +104,14 @@ class Trainer:
             self.max_steps_per_episode = 500
         elif self.env_name == "CartPole-v0":
             self.max_steps_per_episode = 200
+        elif self.env_name == "Pendulum-v0":
+            self.max_steps_per_episode = 200
         else:
             self.max_steps_per_episode = 0
         self.reward_std = hyperparameters["reward_std"]
         self.use_exp_rep = hyperparameters["use_exp_rep"]
         self.n_initial_random_actions = hyperparameters["n_initial_random_actions"]
+        self.updates_per_step = hyperparameters["network_updates_per_step"]
 
         # copied from Old class:
         self.state_len = len(self.env.observation_space.high)
@@ -136,26 +139,28 @@ class Trainer:
             reward += torch.tensor(np.random.normal(0, self.reward_std))
         return reward
 
-    # TODO: atm the replay buffer is filled with the agent acting with a normal policy, not fully random. This should probably be changed
     def fill_replay_buffer(self, n_actions):
         state = self.env.reset()
         state = torch.tensor([state], device=device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in range(n_actions):
-            action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False, explore=True)
+            action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
+                                                         explore=True, fully_random=True)
 
             state = next_state
             if done:
                 state = self.env.reset()
                 state = torch.tensor([state], device=device).float()
 
-    def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True):
+    def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
         # Select an action
         if explore:
-            action = self.policy.explore(state)
+            # Raw actions are the logits for the actions. Useful for e.g. DDPG training in discrete envs.
+            action, raw_action = self.policy.explore(state, fully_random=fully_random)
         else:
-            action = self.policy.exploit(state)
+            action, raw_action = self.policy.exploit(state)
+
         # Apply the action:
         next_state, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
@@ -171,9 +176,9 @@ class Trainer:
                 self.normalizer.observe(next_state)
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
-            self.policy.remember(state, torch.tensor([action], device=device).float(), next_state, reward, done)
+            self.policy.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
-        TDE = self.policy.calculate_TDE(state, action, next_state, reward, done)
+        TDE = self.policy.calculate_TDE(state, raw_action, next_state, reward, done)
         self.log.add("TDE", TDE.item())
         # Render:
         if render:
@@ -194,9 +199,9 @@ class Trainer:
         return next_state
 
     def _display_debug_info(self, i_episode, episode_rewards, rewards):
-        print("Episode ", i_episode)
-        print("Steps taken so far: ", self.steps_done)
-        print("Cumulative Reward this episode:", np.sum(episode_rewards))
+        print("#Episode ", i_episode)
+        print("#Steps: ", self.steps_done)
+        print(" Return:", round(np.sum(episode_rewards), 2))
         if i_episode % 10 == 0:
             pass
             # Not needed anymore, because he have tensorboard now
@@ -238,6 +243,7 @@ class Trainer:
                                                              explore=True)
 
                 # Act in test env (no exploration in that env):
+                # TODO: replace the one-step in test env per step in train env by a proper evaluation every N steps (e.g. every 100/1000 training steps, test for 10 episodes in test env and record mean)
                 test_state = self._act_in_test_env(test_env, test_state, test_episode_rewards)
 
                 # Move to the next state
@@ -246,11 +252,14 @@ class Trainer:
                 # Reduce epsilon and other exploratory values:
                 self.policy.decay_exploration(self.steps_done)
 
-                # Perform one step of the optimization (on the target network)
-                self.policy.optimize()
+                num_updates = self.updates_per_step if self.updates_per_step >= 1\
+                                                    else n_steps % (1 / self.updates_per_step) == 0
+                for _ in range(num_updates):
+                    # Perform one step of the optimization (on the target network)
+                    self.policy.optimize()
 
-                # Update the target network
-                self.policy.update_targets(self.steps_done)
+                    # Update the target network
+                    self.policy.update_targets(self.steps_done)
 
                 # Log reward:
                 self.log.step()
@@ -273,35 +282,13 @@ class Trainer:
         return i_episode, rewards, self.log.storage
 
 
-# TODO: just pass parameter object around and extract needed ones in the respective classes
+
 class TrainerOld(object):
-    def __init__(self, env_name, device, USE_QV=False, SPLIT_BELLMAN=False, gamma_Q=0.99,
-                 batch_size=64, UPDATES_PER_STEP=1, target_network_steps=500, lr_Q=0.001, lr_r=0.001,
-                 replay_buffer_size=10000, USE_EXP_REP=True, epsilon_mid=0.1, activation_function="elu",
-                 SPLIT_BELL_additional_individual_hidden_layer=False, SPLIT_BELL_NO_TARGET_r=True, hidden_neurons=64,
-                 hidden_layers=1, MAX_EPISODE_STEPS=0, initial_random_actions=1024,
-                 QV_NO_TARGET_Q=False, QV_SPLIT_Q=False, QV_SPLIT_V=False, QVC_TRAIN_ABS_TDE=False,
-                 TDEC_ENABLED=False, TDEC_TRAIN_FUNC="normal", TDEC_ACT_FUNC="abs", TDEC_SCALE=0.5, TDEC_MID=0,
-                 TDEC_USE_TARGET_NET=True, TDEC_GAMMA=0.99, TDEC_episodic=True,
-                 normalize_observations=True, critic_output_offset=0, reward_added_noise_std=0,
-                 action_gaussian_noise_std=0.1, USE_CACLA=False, USE_OFFLINE_CACLA=False, actor_lr=0.001):
-
-        self.steps_done = 0
-        self.rewards = []
-        self.log = Log()
-
-        self.device = device
-        self.env_name = env_name
-        self.env = gym.make(env_name).unwrapped
+    def __init__(self, env_name, device):
         num_initial_states = 5
         self.initial_states = torch.tensor([self.env.reset() for _ in range(num_initial_states)], device=self.device,
                                            dtype=torch.float)
 
-    def reset(self):
-        self.steps_done = 0
-        self.episode_durations = []
-
-        self.policy.reset()
 
     def initialize_workers(self):
         self.workers = [{"env": gym.make(self.env_name).unwrapped, "episode length": 0} for i in range(self.batch_size)]
@@ -355,128 +342,6 @@ class TrainerOld(object):
     # def getActionIdxs(self, action_batch):
     #    return torch.cat([action_batch * self.num_Q_output_slots + i for i in range(self.num_Q_output_slots)], dim=1)
 
-    def optimize_model(self):
-        self.policy.optimize()
-
-    def run(self, num_steps=5000, verbose=True, render=False, on_server=False):
-        eps_decay = self.epsilon_mid ** (1 / (num_steps / 2))
-        self.epsilon = 1.0
-        QVC_decay = self.QV_CURIOSITY_MID ** (1 / (num_steps / 2.0))
-        TDEC_DECAY = self.TDEC_MID ** (1 / (num_steps / 2.0))
-
-        self.testEnv = gym.make(self.env_name).unwrapped
-        self.testState = self.testEnv.reset()
-        self.testState = torch.tensor([self.testState], device=self.device).float()
-        self.test_episode_rewards = []
-
-        state = self.env.reset()
-        state = torch.tensor([state], device=self.device).float()
-
-        # Fill exp replay buffer so that we can start training immediately:
-        for i in range(self.initial_random_actions):
-            action = self.select_action(state, 1)
-            next_state, reward, done, _ = self.env.step(action)
-            if done:
-                next_state = None
-            else:
-                next_state = torch.tensor([next_state], device=self.device).float()
-            reward = torch.tensor([reward], device=self.device, dtype=torch.float)
-
-            TDE = self.calculateTDE(state, action, next_state, reward, store_log=False)
-
-            if self.reward_added_noise_std:
-                reward += torch.tensor(np.random.normal(0, self.reward_added_noise_std))
-
-            if self.USE_EXP_REP:
-                self.memory.push(state, action, next_state, reward, TDE)
-
-            state = next_state
-
-            if done:
-                state = self.env.reset()
-                state = torch.tensor([state], device=self.device).float()
-
-        # Do the actual training:
-        i_episode = 0
-        run = True
-        while run:
-            i_episode += 1
-            # Initialize the environment and state
-            state = self.env.reset()
-            state = torch.tensor([state], device=self.device).float()
-            episode_rewards = []
-
-            for t in count():
-                if not verbose and not on_server:
-                    print("Current setting test: ", round(self.steps_done / num_steps * 100, 2), "%", end='\r')
-                # Stop when max number of steps is reached
-                if self.steps_done >= num_steps:
-                    run = False
-                    break
-
-                self.act_in_test_env()
-
-                # Select and perform an action
-                action = self.policy.select_action(state)
-                self.steps_done += 1
-                next_state, reward, done, _ = self.env.step(action)
-                if done:
-                    next_state = None
-                else:
-                    next_state = torch.tensor([next_state], device=self.device).float()
-
-                reward = torch.tensor([reward], device=self.device, dtype=torch.float)
-                episode_rewards.append(reward.item())
-                self.rewards.append(np.sum(episode_rewards))
-
-                if render:
-                    self.env.render()
-
-                TDE = self.calculateTDE(state, action, next_state, reward)
-
-                # Store the transition in memory
-                if self.USE_EXP_REP:
-                    self.memory.push(state, action, next_state, reward, TDE)
-
-                # Move to the next state
-                state = next_state
-
-                self.epsilon *= eps_decay
-                self.log.add("Epsilon", self.epsilon)
-
-
-            # Optimize the policy
-            self.policy.optimize()
-
-            if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode):
-                if verbose:
-                    print("Episode ", i_episode)
-                    print("Steps taken so far: ", self.steps_done)
-                    print("Cumulative Reward this episode:", np.sum(episode_rewards))
-                    if i_episode % 10 == 0:
-                        plot_rewards(self.rewards)
-                        plot_rewards(self.log.storage["Total Reward"], "Total Reward")
-                    print("Epsilon: ", round(self.epsilon, 4))
-
-                    print()
-                break
-            # Update the target network
-            for net in self.networks:
-                net.update_target_network(self.steps_done)
-
-        # if self.steps_done % self.target_network_steps == 0:
-        #    if __debug__ and verbose:
-        #        print("Updating Target Network")
-        #    if self.USE_QV:
-        #        self.target_value_net.load_state_dict(self.V_net.state_dict())
-        #    else:
-        #        self.target_net.load_state_dict(self.Q_net.state_dict())
-
-    # if verbose:
-    #     plot_rewards(self.rewards)
-    #     plot_rewards(self.log.storage["Total Reward"], "Total Reward")
-    #     print('Complete')
-    #     self.env.close()
 
 
 def calculate_reduced_idxs(len_of_point_list, max_points):
@@ -556,40 +421,41 @@ if __name__ == "__main__":
     #standard_hidden_block = test_block
     #standard_feature_block = test_block
 
-    # TODO: add action 'embedding'/hidden layer for F_sa
+    # TODO: add action-embedding/hidden layer for F_sa
 
     layers_feature_vector = standard_hidden_block
     layers_feature_merge = standard_feature_block
-    layers_sa = standard_feature_block
+    layers_action = standard_feature_block
+    layers_state_action_merge = standard_feature_block
     layers_r = standard_hidden_block
     layers_Q = standard_hidden_block
     layers_V = standard_hidden_block
     layers_actor = standard_hidden_block
 
     parameters = {# General:
-                  "use_QV": False, "split_Bellman": False, "gamma": 1,
+                  "use_QV": False, "split_Bellman": True, "gamma": 1,
                   "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
-                  "normalize_obs": False, # turning this on destroy training on cartpole
+                  "normalize_obs": False, # turning this on destroys training on cartpole
                   "reward_std": 0.0,
                   # Actor-Critic:
-                  "use_actor_critic": True, "use_CACLA_V": False, "use_CACLA_Q": True, "use_DDPG": False,
+                  "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
                   "use_SPG": False, "use_GISPG": False,
                   # Target-net:
-                  "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau":0.01,
-                  # NN Training:
-                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.001, "batch_size": 8, "optimizer": RAdam,
-                  "max_norm": 1,
+                  "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau":0.005,
                   # Replay buffer:
-                  "replay_buffer_size": 10000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
+                  "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
                   "use_CER": True,
-                  "use_exp_rep": True,
                   # Exploration:
                   "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
-                  "n_initial_random_actions": 100,
+                  "n_initial_random_actions": 3000,
                   # REM:
                   "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
+                  # NN Training:
+                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 32, "optimizer": RAdam,
+                  "max_norm": 1, "network_updates_per_step": 1,
                   # NN architecture setup:
-                  "layers_feature_vector": layers_feature_vector, "layers_state_action_features": layers_sa,
+                  "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
+                  "layers_action": layers_action,
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
                   "layers_V": layers_V,
                   "layers_actor": layers_actor,
@@ -597,20 +463,20 @@ if __name__ == "__main__":
                   # TODO: The following still need to be implemented:
                   "SPLIT_BELL_NO_TARGET_r": True,
                   "QV_NO_TARGET_Q": False,
-                  "network_updates_per_step": 1,
 
 
-                  "use_hrl": False,
-                  "target_policy_smoothing_noise": 0.1, # can decay, make uniform or clip
-                  "delayed_policy_update_steps": 0,
-                  "use_double_Q": False,
-                  "use_clipped_double_Q": False,
+                  "use_hrl": False, # important
+                  "target_policy_smoothing_noise": 0.1, #  only for ac. can be delayed. can decay, make uniform or clip
+                  "delayed_policy_update_steps": 0, # only for actor critic, can be delayed to implement
+                  "use_double_Q": False, # also implement for REM: sample a random other Q net that serves as target
+                  "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
                   "use_world_model": False,
                   "TDEC_episodic": True,
                   "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
                   "TDEC_ACT_FUNC": "abs",
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   }
+    tensorboard_comment = "DDPG_linearLoss*20"
 
     # TODO: why does normalize_obs destroy the whole training for cartpole????
 
@@ -634,10 +500,10 @@ if __name__ == "__main__":
     biped = "BipedalWalker-v2"
     biped_hard = "BipedalWalkerHardcore-v2"
     # Mujoco:
-    ant = "Ant-v2"
-    cheetah = "HalfCheetah-v2"
     inv_double_pend = "InvertedDoublePendulum-v2"
     hopper = "Hopper-v2"
+    ant = "Ant-v2"
+    cheetah = "HalfCheetah-v2"
     human = "Humanoid-v2"
     human_stand = "HumanoidStandup-v2"
 
@@ -646,6 +512,6 @@ if __name__ == "__main__":
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(cart, parameters, log=True)
+    trainer = Trainer(cart, parameters, log=False, log_NNs=True, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(50000, render=False, verbose=True)

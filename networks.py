@@ -169,12 +169,12 @@ class OptimizableNet(nn.Module):
             torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
         optimizer.step()
 
-        # TODO: log gradients and weight sizes/stds! Have one log per NN (whether V, Q, or actor)
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = loss.detach().clone().item()
         self.log.add(name, detached_loss)
 
-        if self.log.do_logging:
+        # Log weight and gradient norms:
+        if self.log.do_logging and self.log.log_NNs:
             self.log_nn_data()
 
         return detached_loss
@@ -189,6 +189,11 @@ class OptimizableNet(nn.Module):
             target_params[current_param].data.copy_((1 - self.tau) * target_params[current_param].data +
                                                     self.tau * real_params_current.data)
         return target_params
+
+    # TODO: use the soft_update function instead of the previous methodology. I think atm we update the params twice by using .copy_ and then load_dict
+    def soft_update(self, net, net_target):
+        for param_target, param in zip(net_target.parameters(), net.parameters()):
+            param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
 
     def update_targets(self, steps):
         if self.target_network_polyak:
@@ -302,8 +307,6 @@ class ProcessState(OptimizableNet):
 
 
 
-# TODO for all nets: enable options to not update target nets and to predict next state value based on current net instead of using the target net
-
 class ProcessStateAction(OptimizableNet):
     def __init__(self, state_features_len, env, log, device, hyperparameters, is_target_net=False):
         super(ProcessStateAction, self).__init__(env, device, log, hyperparameters, is_target_net)
@@ -311,9 +314,13 @@ class ProcessStateAction(OptimizableNet):
         self.state_features_len = state_features_len
 
         # Create layers:
-        input_size = state_features_len + self.num_actions
-        layers = hyperparameters["layers_state_action_features"]
-        self.layers, self.act_functs = create_ff_layers(input_size, layers, None)
+        # Action Embedding
+        layers_action = hyperparameters["layers_action"]
+        self.layers_action, self.act_functs_action = create_ff_layers(self.num_actions, layers_action, None)
+        # State features and Action features concat:
+        input_size = state_features_len + self.layers_action[-1].out_features
+        layers = hyperparameters["layers_state_action_merge"]
+        self.layers_merge, self.act_functs_merge = create_ff_layers(input_size, layers, None)
 
         # self.log.writer.add_graph(self, input_to_model=torch.rand(state_features_len), verbose=True)
 
@@ -323,10 +330,11 @@ class ProcessStateAction(OptimizableNet):
         self.target_net = self.create_target_net()
 
     def forward(self, state_features, actions, apply_one_hot_encoding=True):
-        if self.discrete_env and apply_one_hot_encoding:
-            actions = one_hot_encode(actions, self.num_actions)
+        #if not self.use_actor_critic and apply_one_hot_encoding:
+        #    actions = one_hot_encode(actions, self.num_actions)
+        actions = apply_layers(self.layers_action, self.act_functs_action)
         x = torch.cat((state_features, actions), 1)
-        x = apply_layers(x, self.layers, self.act_functs)
+        x = apply_layers(x, self.layers_merge, self.act_functs_merge)
         return x
 
     def forward_next_state(self, state_features, action):
@@ -336,7 +344,8 @@ class ProcessStateAction(OptimizableNet):
             return self(state_features, action)
 
     def log_nn_data(self, name):
-        self.record_nn_data(self.layers, "F_sa", extra_name=name)
+        self.record_nn_data(self.layers_action, "F_sa Action", extra_name=name)
+        self.record_nn_data(self.layers_merge, "F_sa Merge", extra_name=name)
 
     def recreate_self(self):
         return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters,
@@ -539,6 +548,7 @@ class Q(TempDiffNet):
     def predict_current_state(self, state_features, state_action_features, actions):
         if not self.use_actor_critic:
             input_features = state_features
+            actions = torch.argmax(actions, 1).unsqueeze(1)
             if self.split:
                 reward_prediction = self.forward_r(input_features).gather(1, actions)
             else:
@@ -560,8 +570,8 @@ class Q(TempDiffNet):
         else:
             with torch.no_grad():
                 action = actor(state_features)
-                if self.discrete_env:
-                    action = action.max(1)[1].unsqueeze(1)
+                #if self.discrete_env:
+                #    action = action.max(1)[1].unsqueeze(1)
                 state_action_features = F_sa(state_features, action)
             # TODO: make sure whether these state-action_features are required somewhere else and store it if that is the case
             return self.predict_state_action_value(None, state_action_features, None)
@@ -674,17 +684,18 @@ class Actor(OptimizableNet):
 
     def compute_loss(self, output, target, sample_weights=None):
         # TODO: test if actor training might be better without CrossEntropyLoss. It might be, because we do not need to convert to long!
-        if self.discrete_env:
+        if self.use_DDPG:
+            loss = abs(target - output)
+        elif self.discrete_env:
             loss_func = torch.nn.CrossEntropyLoss(reduction='none')
             loss = loss_func(output, target)
         else:
             # TODO: this loss does not help combat the vanishing gradient problem that we have because of the use of sigmoid activations to squash our actions into the correct range
             loss = F.smooth_l1_loss(output, target, reduction='none')
 
-        if sample_weights is None:
-            return loss.mean()
-        else:
-            return (loss * sample_weights).mean()
+        if sample_weights is not None:
+            loss *= sample_weights
+        return loss.mean()
 
     def output_function_continuous(self, x):
         if self.relu_idxs:
@@ -716,7 +727,6 @@ class Actor(OptimizableNet):
         #self.tanh_mask.scatter_(1, torch.tensor(tanh_idxs).long(), 1.)
         #self.sigmoid_mask = torch.zeros(self.batch_size, len(self.action_low))
         #self.sigmoid_mask.scatter_(1, torch.tensor(sigmoid_idxs).long(), 1.)
-
 
         if self.discrete_env:
             print("Actor has only sigmoidal activation function")
@@ -758,11 +768,15 @@ class Actor(OptimizableNet):
 
     def optimize(self, transitions):
         # Only for debugging:
-        torch.autograd.set_detect_anomaly(True)
+        #torch.autograd.set_detect_anomaly(True)
 
         state_batch = transitions["state"]
         state_features = transitions["state_features"]
         action_batch = transitions["action"]
+
+        # TODO: also do it for SPG?
+        if self.discrete_env and self.use_CACLA_V or self.use_CACLA_Q:
+            transformed_action_batch = torch.argmax(action_batch, dim=1)
 
         # Calculate current actions for state_batch:
         actions_current_state = self(state_features)
@@ -772,70 +786,77 @@ class Actor(OptimizableNet):
         sample_weights = None
 
         if self.use_CACLA_V:
-            # Requires TDE_V
             # Check which actions have a pos TDE
             pos_TDE_mask = (self.V.TDE < 0).squeeze()
-            #better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
-
             output = actions_current_state[pos_TDE_mask]
-            target = action_batch[pos_TDE_mask].view(output.shape[0])
 
-            # TODO: investigate why the multiplication by minus one is necessary for sample weights
+            if self.discrete_env:
+                target = transformed_action_batch[pos_TDE_mask].view(output.shape[0])
+            else:
+                target = action_batch[pos_TDE_mask]
 
-            # TODO: also investigate whether scaling by TDE can be benefitial
-            sample_weights = -1 * torch.ones(output.shape[0]) # self.V.TDE[pos_TDE_mask]
+            # TODO: investigate why the multiplication by minus one is necessary for sample weights... seems to be for the V.TDE < 0 check. Using all actions with sample weights = TDE also works, but worse in cartpole
+            # TODO: also investigate whether scaling by TDE can be beneficial. Both works at least with V.TDE < 0
+            sample_weights = -1 * torch.ones(output.shape)#.unsqueeze(1) #
+            #sample_weights = self.V.TDE[pos_TDE_mask].view(output.shape)
+
+            #print(output)
+            #print(target)
+            #print()
+            #print(sample_weights)
+
+
         if self.use_CACLA_Q:
             # Calculate mask of pos expected Q minus Q(s, mu(s))
             # action_TDE = self.Q.expectations_next_state - self.Q(state_features, actions_current_state).detach()
             pos_TDE_mask = (self.Q.TDE < 0).squeeze()
-            # print(self.Q.TDE)
-            # print("Actions predicted for current state: ", actions_current_state)
-            # print("Action batch when updating: ", action_batch)
-            # print("Better action initial : ", better_actions_current_state)
-            # print("action batch of pos TDE mask: ", action_batch[pos_TDE_mask])
-
-            # better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
 
             output = actions_current_state[pos_TDE_mask]
-            target = action_batch[pos_TDE_mask].view(output.shape[0])
-            sample_weights = self.Q.TDE[pos_TDE_mask]
-            # print("output: ", output)
-            # print("target: ", target)
-            # print("target shape: ", target.shape)
+
+            if self.discrete_env:
+                target = transformed_action_batch[pos_TDE_mask].view(output.shape[0])
+            else:
+                target = action_batch[pos_TDE_mask]
+
+            #sample_weights = -1 * torch.ones(output.shape[0])
+            sample_weights = self.Q.TDE[pos_TDE_mask].view(output.shape[0])
 
         # TODO: implement CACLA+Var
 
         # TODO - Idea: When using QV, possibly reinforce actions only if Q and V net agree (first check how often they disagree and in which cases)
         if self.use_DDPG:
-            # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
-            actions_current_state_detached = Variable(actions_current_state, requires_grad=True)
-            #actions_current_state = Variable(actions_current_state[0].unsqueeze(0), requires_grad=True)
-            #state_features = state_features[0].unsqueeze(0)
-            #print(actions_current_state)
-            state_action_features_current_policy = self.Q.F_sa(state_features, actions_current_state_detached,
-                                                               apply_one_hot_encoding=False)
+            # Dirty and fast way (still does not work yet... :-( )
+            q_vals = -self.Q(self.Q.F_sa(state_features, actions_current_state)).mean()
             self.optimizer.zero_grad()
+            q_vals.backward()
+            self.optimizer.step()
+            return q_vals.detach()
+
+            # 1. calculate derivative of Q towards actions 2. Reinforce towards actions plus gradients
+            actions_current_state_detached = Variable(actions_current_state.detach(), requires_grad=True)
+            state_action_features_current_policy = self.Q.F_sa(state_features, actions_current_state_detached)
             q_vals = self.Q(state_action_features_current_policy)
             actor_loss = q_vals.mean() * -1
-            #print("loss: ", actor_loss)
-            actor_loss.backward(retain_graph=True)  # retain necessary?
+            actor_loss.backward(retain_graph=True)  # retain necessary? I thnk so
             gradients = actions_current_state_detached.grad
-            #print(gradients)
-            #print()
-            #self.optimizer.step()
-            #return actor_loss.detach()
+            self.log.add("DDPG Action Gradient", gradients.mean())
 
-            # TODO: multiply gradients * -1 to ensure Q values increase? probably...
             # Normalize gradients:
             #gradients = self.normalize_gradients(gradients)
             # TODO: maybe normalize within the actor optimizer...?
             # TODO Normalize over batch, then scale by inverse TDE (risky thing:what about very small TDEs?
             output = actions_current_state
             target = (actions_current_state.detach().clone() + gradients)
-            target = torch.max(torch.min(target, self.action_high), self.action_low)
-            if self.discrete_env:
-                target = target.argmax(1).long()
 
+
+            # Clip actions
+            target = torch.max(torch.min(target, self.action_high), self.action_low)
+
+            #sample_weights = torch.ones(output.shape[0]).unsqueeze(1) / abs(self.Q.TDE)
+
+            #print(sample_weights)
+            #print(output)
+            #print(gradients)
 
         if self.use_SPG:
             # Calculate mask of Q(s,a) minus Q(s, mu(s))
@@ -847,13 +868,13 @@ class Actor(OptimizableNet):
                 #if self.discrete_env:
                 #    actions_current_policy = actions_target_net.argmax(1).unsqueeze(1)
                 state_action_features_sampled_actions = self.Q.F_sa.target_net(state_features_target, action_batch)
-                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_target_net,
+                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_current_policy,
                                                                               apply_one_hot_encoding=False)
                 Q_val_sampled_actions = self.Q.target_net(state_action_features_sampled_actions)
                 Q_val_current_policy = self.Q.target_net(state_action_features_current_policy)
                 action_TDE = Q_val_sampled_actions - Q_val_current_policy
                 # print("action TDE: ", action_TDE)
-            pos_TDE_mask = (action_TDE < 0).squeeze()
+            pos_TDE_mask = (action_TDE > 0).squeeze()
 
             # better_actions_current_state[pos_TDE_mask] = action_batch[pos_TDE_mask]
 
@@ -879,13 +900,13 @@ class Actor(OptimizableNet):
             #
             pass
 
-        # TODO: filter out actions where actions_current_state is equal to better_actions
         # self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer, "actor")
 
         #print("output", output)
         #print(target)
-        if not self.discrete_env:
-            target = target.unsqueeze(1)
+        #if not self.discrete_env:
+        #    target = target.unsqueeze(1)
+
 
         error = 0
         if len(output) > 0:
@@ -895,6 +916,9 @@ class Actor(OptimizableNet):
             pass
             #TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
             #print("No Training for Actor...")
+
+        if self.use_CACLA_V or self.use_CACLA_Q or self.use_SPG:
+            self.log.add("Actor_actual_train_batch_size", len(output))
 
         return error
 

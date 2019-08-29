@@ -96,8 +96,8 @@ class Agent(AgentInterface):
     def optimize(self):
         self.policy.optimize()
 
-    def explore(self, state):
-        return self.policy.explore(state)
+    def explore(self, state, fully_random=False):
+        return self.policy.explore(state, fully_random)
 
     def exploit(self, state):
         return self.policy.exploit(state)
@@ -194,11 +194,9 @@ class BasePolicy:
 
 
     def random_action(self):
-        if self.discrete_env:
-            return torch.tensor([[random.randrange(self.num_actions)]], device=self.device, dtype=torch.long).item()
-        else:
-            return (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
-                                                                     dtype=torch.float) + self.action_low
+        action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
+                                                                     dtype=torch.float).unsqueeze(0) + self.action_low
+        return action
 
     def boltzmann_exploration(self, action):
         pass
@@ -223,30 +221,36 @@ class BasePolicy:
             action = self.actor(state_features)
         return action
 
-    def explore(self, state):
+    def explore(self, state, fully_random=False):
         # Epsilon-Greedy:
-        if self.epsilon:
-            sample = random.random()
-            if sample < self.epsilon:
-                return self.random_action()
-        # Raw action:
-        action = self.choose_action(state)
-        # Add Gaussian noise:
-        if self.gaussian_action_noise:
-            action = self.add_noise(action)
+        sample = random.random()
+        if fully_random or sample < self.epsilon:
+            raw_action = self.random_action()
+        else:
+            # Raw action:
+            raw_action = self.choose_action(state)
+            # Add Gaussian noise:
+            if self.gaussian_action_noise:
+                raw_action = self.add_noise(raw_action)
+
         # If env is discrete explore accordingly and set action
         if self.discrete_env:
-            action = self.explore_discrete_actions(action)
-        return action
+            action = self.explore_discrete_actions(raw_action)
+        else:
+            action = raw_action
+
+        return action, raw_action
 
     def act(self, state):
         return self.explore(state)
 
     def exploit(self, state):
-        action = self.choose_action(state)
+        raw_action = self.choose_action(state)
         if self.discrete_env:
-            action = torch.argmax(action).item()
-        return action
+            action = torch.argmax(raw_action).item()
+        else:
+            action = raw_action
+        return action, raw_action
 
     def init_actor_critic(self, F_s, F_sa):
         Q_net, V_net = self.init_critic(F_s, F_sa)
@@ -360,9 +364,9 @@ class BasePolicy:
         if self.normalize_observations:
             non_final_next_states = self.normalizer.normalize(non_final_next_states)
             state_batch = self.normalizer.normalize(state_batch)
-        action_batch = torch.cat(batch.action).unsqueeze(1)
-        if self.discrete_env:
-            action_batch = action_batch.long()
+        action_batch = torch.cat(batch.action)#.unsqueeze(1)
+        #if self.discrete_env:
+        #    action_batch = action_batch.long()
         reward_batch = torch.cat(batch.reward).unsqueeze(1)
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
