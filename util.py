@@ -1,10 +1,11 @@
-import torch
-import random
-import numpy as np
-import os
-import sys
 import logging
 import matplotlib
+import numpy as np
+import os
+import random
+import sys
+import torch
+
 matplotlib.use('Pdf')
 import matplotlib.pyplot as plt
 
@@ -53,17 +54,29 @@ class Normalizer():
 class Log(object):
     def __init__(self, path, log, comment, log_NNs):
         self.do_logging = log
-        print("Log gradients and weights: ", self.do_logging)
+        print("Log tensorboard: ", log)
+        print("Log gradients and weights: ", log_NNs)
 
         self.log_NNs = log_NNs
         self.comment = comment
         self.writer = SummaryWriter(comment=comment)
+        self.episodic_storage = {}
         self.storage = {}
         self.global_step = 0
         self.tb_path = 'runs'
         self.run_tb()
 
+    def flush_episodic(self):
+        self.episodic_storage = {}
 
+    def get_episodic(self, name):
+        return self.episodic_storage[name]
+
+    def _add_to_storage(self, storage, name, value):
+        try:
+            storage[name].append(value)
+        except KeyError:
+            storage[name] = [value]
 
     def run_tb(self):
         if not self.do_logging:
@@ -83,21 +96,17 @@ class Log(object):
         sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
 
     def add(self, name, value, distribution=None, steps=None):
-        if not self.do_logging:
-            return
+        self._add_to_storage(self.storage, name, value)
+        self._add_to_storage(self.episodic_storage, name, value)
 
-        if steps is None:
-            steps = self.global_step
-        # Add to tensorboard:
-        if distribution is None:
-            self.writer.add_scalar(name, value, global_step=steps)
-        else:
-            self.writer.add_histogram(name, distribution, global_step=steps)
-
-        try:
-            self.storage[name].append(value)
-        except KeyError:
-            self.storage[name] = [value]
+        if self.do_logging:
+            if steps is None:
+                steps = self.global_step
+            # Add to tensorboard:
+            if distribution is None:
+                self.writer.add_scalar(name, value, global_step=steps)
+            else:
+                self.writer.add_histogram(name, distribution, global_step=steps)
 
     def get(self):
         return self.storage
@@ -163,12 +172,15 @@ def calc_norm(layers):
         total_norm += torch.norm(param)
     return total_norm
 
-def filter_weight_dict(weight_dict):
-    return {k: v for k, v in weight_dict.items()
-            if "target_net" not in k and
-            "F_s" not in k and
-            "Q" not in k and
-            "V" not in k}
+
+def soft_update(net, net_target, tau):
+    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
+        param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
+
+
+def hard_update(net, net_target):
+    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
+        param_target.data.copy_(param.data)
 
 def calculate_reduced_idxs(len_of_point_list, max_points):
     if max_points != 0:

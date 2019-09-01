@@ -17,6 +17,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 import tracemalloc
 import os
+import time
 import linecache
 
 from util import *
@@ -80,7 +81,7 @@ class Trainer:
 
     def fill_replay_buffer(self, n_actions):
         state = self.env.reset()
-        state = torch.tensor([state], device=device).float()
+        state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in range(n_actions):
@@ -89,7 +90,7 @@ class Trainer:
             state = next_state
             if done:
                 state = self.env.reset()
-                state = torch.tensor([state], device=device).float()
+                state = torch.tensor([state], device=self.device).float()
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
         # Select an action
@@ -107,7 +108,7 @@ class Trainer:
         if done:
             next_state = None
         else:
-            next_state = torch.tensor([next_state], device=device).float()
+            next_state = torch.tensor([next_state], device=self.device).float()
             #next_state = torch.tensor([next_state], device=self.device).float()
             # Record state for normalization:
             if self.normalize_observations:
@@ -136,12 +137,18 @@ class Trainer:
 
         return next_state
 
-    def _display_debug_info(self, i_episode, episode_rewards, rewards):
+    def _display_debug_info(self, i_episode):
+        episode_return = self.log.get_episodic("Return")
+        optimize_time = self.log.get_episodic("Optimize Time")
+        non_optimize_time = self.log.get_episodic("Non-Optimize Time")
         print("#Episode ", i_episode)
         print("#Steps: ", self.steps_done)
-        print(" Return:", round(np.sum(episode_rewards), 2))
+        print(" Return:", episode_return[0])
+        print(" Opt-time: ", round(np.mean(optimize_time), 4), "s")
+        print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:
             pass
+            # TODO: to an extensive test in test_env every N steps
             # Not needed anymore, because he have tensorboard now
             #plot_rewards(rewards)
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
@@ -155,25 +162,21 @@ class Trainer:
         # Initialize test environment:
         test_env = gym.make(self.env_name).unwrapped
         test_state = test_env.reset()
-        test_state = torch.tensor([test_state], device=device).float()
-
-        test_episode_rewards = []
+        test_state = torch.tensor([test_state], device=self.device).float()
 
         # Do the actual training:
-        rewards = []
+        time_after_optimize = None
         i_episode = 0
-        run = True
-        while run:
+        while self.steps_done < n_steps:
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
-            state = torch.tensor([state], device=device).float()
-            episode_rewards = []
+            state = torch.tensor([state], device=self.device).float()
 
             for t in count():
                 self.steps_done += 1
                 if not verbose and not on_server:
-                    print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%", end='\r')
+                    print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%")  # , end="\r")
 
                 # Act in exploratory env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
@@ -181,13 +184,18 @@ class Trainer:
 
                 # Act in test env (no exploration in that env):
                 # TODO: replace the one-step in test env per step in train env by a proper evaluation every N steps (e.g. every 100/1000 training steps, test for 10 episodes in test env and record mean)
-                test_state = self._act_in_test_env(test_env, test_state, test_episode_rewards)
+                # test_state = self._act_in_test_env(test_env, test_state)
 
                 # Move to the next state
                 state = next_state
 
                 # Reduce epsilon and other exploratory values:
                 self.policy.decay_exploration(self.steps_done)
+
+                time_before_optimize = time.time()
+                # Log time between optimizations:
+                if time_after_optimize is not None:
+                    self.log.add("Non-Optimize Time", time_before_optimize - time_after_optimize)
 
                 num_updates = self.updates_per_step if self.updates_per_step >= 1\
                                                     else n_steps % (1 / self.updates_per_step) == 0
@@ -197,23 +205,25 @@ class Trainer:
 
                     # Update the target network
                     self.policy.update_targets(self.steps_done)
+                time_after_optimize = time.time()
 
-                # Log reward:
-                self.log.step()
-                episode_rewards.append(reward.item())
-                rewards.append(np.sum(episode_rewards))
+                # Log reward and time:
+                self.log.add("Train Reward", reward.item())
+                self.log.add("Train Cum. Episode Reward", np.sum(self.log.get_episodic("Train Reward")))
+                self.log.add("Optimize Time", time_after_optimize - time_before_optimize)
 
                 if render:
                     self.env.render()
 
+                self.log.step()
                 if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode) \
                         or self.steps_done >= n_steps:
+                    self.log.add("Return", np.sum(self.log.get_episodic("Train Reward")), steps=i_episode)
                     if verbose:
-                        self._display_debug_info(i_episode, episode_rewards, rewards)
-                    self.log.add("Return", np.sum(episode_rewards), steps=i_episode)
-                    if self.steps_done >= n_steps:
-                        run = False
+                        self._display_debug_info(i_episode)
+                    self.log.flush_episodic()
                     break
+
         print('Done.')
         self.env.close()
         return i_episode, rewards, self.log.storage

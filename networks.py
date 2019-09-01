@@ -1,16 +1,15 @@
+import copy
+import itertools
+import math
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torch.nn.functional as F
-import itertools
-from util import *
-
-from torch.utils.tensorboard import SummaryWriter
+import torch.optim as optim
 from torch.autograd import Variable
+from torch.utils.tensorboard import SummaryWriter
 
-import math
-import copy
-import numpy as np
+from util import *
 
 
 def conv2d_size_out(size, kernel_size=5, stride=2):
@@ -179,36 +178,15 @@ class OptimizableNet(nn.Module):
 
         return detached_loss
 
-
-    def take_mean_weights_of_two_models(self, target_net, real_net):
-        # beta = 0.5  # The interpolation parameter. 0.5 for mean
-        real_params = filter_weight_dict(real_net.state_dict())
-        target_params = filter_weight_dict(target_net.state_dict())
-
-        for current_param, real_params_current in real_params.items():
-            target_params[current_param].data.copy_((1 - self.tau) * target_params[current_param].data +
-                                                    self.tau * real_params_current.data)
-        return target_params
-
-    # TODO: use the soft_update function instead of the previous methodology. I think atm we update the params twice by using .copy_ and then load_dict
-    def soft_update(self, net, net_target):
-        for param_target, param in zip(net_target.parameters(), net.parameters()):
-            param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
+    def get_updateable_params(self):
+        return self.parameters()
 
     def update_targets(self, steps):
         if self.target_network_polyak:
-            # TODO: maybe find a better way than these awkward modify dict functions? (if they even work)
-            self.target_net.load_state_dict(self.take_mean_weights_of_two_models(self.target_net, self))
+            soft_update(self, self.target_net, self.tau)
         else:
             if steps % self.target_network_hard_steps == 0:
-                current_weight_dict = filter_weight_dict(self.state_dict())
-                # print("Q weight dict items: ", current_weight_dict.items())
-                # print("Target weight dict items: ", self.target_net.state_dict().items())
-                # print("Current dict: ", self.state_dict().items())
-                # print("Filtered: ", current_weight_dict_filtered)
-                # print("Target dict: ", self.target_net.state_dict().items())
-                # print()
-                self.target_net.load_state_dict(current_weight_dict_filtered)
+                hard_update(self, self.target_net)
 
     def create_target_net(self):
         target_net = None
@@ -232,27 +210,24 @@ class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, matrix_max_val=255, is_target_net=False):
         super(ProcessState, self).__init__(env, device, log, hyperparameters)
 
-        vector_len = self.vector_len
-        matrix_shape = self.matrix_shape
-
         if is_target_net:
             self.use_target_net = False
         else:
             self.use_target_net = hyperparameters["use_target_net"]
 
         vector_output_size = 0
-        if vector_len is not None:
-            self.vector_normalizer = Normalizer(vector_len)
+        if self.vector_len is not None:
+            self.vector_normalizer = Normalizer(self.vector_len)
             vector_layers = hyperparameters["layers_feature_vector"]
-            self.layers_vector, self.act_functs_vector = create_ff_layers(vector_len, vector_layers, None)
+            self.layers_vector, self.act_functs_vector = create_ff_layers(self.vector_len, vector_layers, None)
             vector_output_size = self.layers_vector[-1].out_features
 
         # matrix size has format (x_len, y_len, n_channels)
         matrix_output_size = 0
-        if matrix_shape is not None:
-            self.matrix_normalizer = Normalizer(matrix_shape, matrix_max_val)
+        if self.matrix_shape is not None:
+            self.matrix_normalizer = Normalizer(self.matrix_shape, matrix_max_val)
             matrix_layers = hyperparameters["layers_feature_matrix"]
-            self.layers_matrix, matrix_output_size, self.act_functs_matrix = create_conv_layers(matrix_shape,
+            self.layers_matrix, matrix_output_size, self.act_functs_matrix = create_conv_layers(self.matrix_shape,
                                                                                                 matrix_layers)
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
@@ -305,6 +280,14 @@ class ProcessState(OptimizableNet):
     def recreate_self(self):
         return self.__class__(self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
 
+    def get_updateable_params(self):
+        params = list(self.layers_merge.parameters())
+        if self.vector_len is not None:
+            params += list(self.layers_vector.parameters())
+        if self.matrix_shape is not None:
+            params += list(self.layers_matrix.parameters())
+        return params
+
 
 
 class ProcessStateAction(OptimizableNet):
@@ -332,7 +315,7 @@ class ProcessStateAction(OptimizableNet):
     def forward(self, state_features, actions, apply_one_hot_encoding=True):
         #if not self.use_actor_critic and apply_one_hot_encoding:
         #    actions = one_hot_encode(actions, self.num_actions)
-        actions = apply_layers(self.layers_action, self.act_functs_action)
+        actions = apply_layers(actions, self.layers_action, self.act_functs_action)
         x = torch.cat((state_features, actions), 1)
         x = apply_layers(x, self.layers_merge, self.act_functs_merge)
         return x
@@ -351,6 +334,10 @@ class ProcessStateAction(OptimizableNet):
         return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters,
                               is_target_net=True)
 
+    def get_updateable_params(self):
+        params = list(self.layers_merge.parameters())
+        params += list(self.layers_action.parameters())
+        return params
 
 class TempDiffNet(OptimizableNet):
     def __init__(self, env, device, log, hyperparameters, is_target_net=False):
@@ -363,6 +350,9 @@ class TempDiffNet(OptimizableNet):
 
         self.current_reward_prediction = None
 
+    def get_updateable_params(self):
+        return self.layers_TD.parameters()
+
     def create_split_net(self, input_size, updateable_parameters, device, hyperparameters):
         if self.split:
             self.lr_r = hyperparameters["lr_r"]
@@ -372,8 +362,11 @@ class TempDiffNet(OptimizableNet):
             self.optimizer_r = self.optimizer(list(self.layers_r.parameters()) + updateable_parameters, lr=self.lr_r)
 
     def recreate_self(self):
-        return self.__class__(self.input_size, self.env, None, None, self.device, self.log,
-                              self.hyperparameters, is_target_net=True)
+        new_self = self.__class__(self.input_size, self.env, None, None, self.device, self.log,
+                                  self.hyperparameters, is_target_net=True)
+        if self.split:
+            new_self.layers_r = self.layers_r
+        return new_self
 
     def forward(self, x):
         predicted_reward = 0
@@ -929,3 +922,6 @@ class Actor(OptimizableNet):
 
     def recreate_self(self):
         return self.__class__(self.F_s, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
+
+    def get_updateable_params(self):
+        return self.layers.parameters()

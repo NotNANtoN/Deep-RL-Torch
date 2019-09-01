@@ -1,15 +1,7 @@
 import torch
-from trainer import Trainer
+
 from RAdam import RAdam
-
-
-########## Setup #################
-# set up matplotlib
-is_ipython = 'inline' in matplotlib.get_backend()
-if is_ipython:
-    from IPython import display
-
-plt.ion()
+from trainer import Trainer
 
 if __name__ == "__main__":
     # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
@@ -37,7 +29,7 @@ if __name__ == "__main__":
 
     parameters = {# General:
                   "use_QV": False, "split_Bellman": True, "gamma": 1,
-                  "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
+        "use_QVMAX": True, "use_target_net": True, "max_episode_steps": 0,
                   "normalize_obs": False, # turning this on destroys training on cartpole
                   "reward_std": 0.0,
                   # Actor-Critic:
@@ -79,7 +71,7 @@ if __name__ == "__main__":
                   "TDEC_ACT_FUNC": "abs",
                   "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
                   }
-    tensorboard_comment = "DDPG_linearLoss*20"
+    tensorboard_comment = ""
 
     # TODO: why does normalize_obs destroy the whole training for cartpole????
 
