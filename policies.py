@@ -1,11 +1,11 @@
+import numpy as np
 import random
 import torch
-import numpy as np
 
+from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
+from networks import Q, V, Actor, ProcessState, ProcessStateAction, create_ff_layers
 from util import *
 from util import calc_gradient_norm, calc_norm
-from networks import Q, V, Actor, ProcessState, ProcessStateAction, create_ff_layers
-from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
 
 
 # This is the interface for the agent being trained by a Trainer instance
@@ -130,12 +130,12 @@ class BasePolicy:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
         if self.discrete_env:
             self.num_actions = self.env.action_space.n
-            self.action_low = torch.zeros(self.num_actions)
-            self.action_high = torch.ones(self.num_actions)
+            self.action_low = torch.zeros(self.num_actions, device=self.device)
+            self.action_high = torch.ones(self.num_actions, device=self.device)
         else:
             self.num_actions = len(self.env.action_space.high)
-            self.action_low = torch.tensor(env.action_space.low)
-            self.action_high = torch.tensor(env.action_space.high)
+            self.action_low = torch.tensor(env.action_space.low, device=self.device)
+            self.action_high = torch.tensor(env.action_space.high, device=self.device)
         print("Env action low: ", self.action_low)
         print("Env action high: ", self.action_high)
 
@@ -194,6 +194,7 @@ class BasePolicy:
 
 
     def random_action(self):
+        print(self.action_low)
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
                                                                      dtype=torch.float).unsqueeze(0) + self.action_low
         return action
