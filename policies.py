@@ -194,7 +194,6 @@ class BasePolicy:
 
 
     def random_action(self):
-        print(self.action_low)
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
                                                                      dtype=torch.float).unsqueeze(0) + self.action_low
         return action

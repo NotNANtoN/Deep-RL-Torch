@@ -249,7 +249,7 @@ class ProcessState(OptimizableNet):
 
         vector, matrix = self.state2parts(state)
 
-        merged = torch.tensor([])
+        merged = torch.tensor([], device=self.device)
         if matrix is not None:
             batch_size = matrix.size(0)
             matrix = apply_layers(matrix, self.layers_matrix, self.act_functs_matrix)
