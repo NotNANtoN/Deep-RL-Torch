@@ -216,6 +216,8 @@ class ProcessState(OptimizableNet):
         self.matrix_layers = hyperparameters["layers_feature_matrix"]
         self.normalize_obs = hyperparameters["normalize_obs"]
 
+        self.freeze_normalizer = False
+
         if is_target_net:
             self.use_target_net = False
         else:
@@ -234,6 +236,8 @@ class ProcessState(OptimizableNet):
         self.to(device)
 
         self.target_net = self.create_target_net()
+        # TODO: set normalizers of target net equal to normalizers of current net.
+
 
     def apply_processing_dict(self, x, proc_dict):
         normalizer = proc_dict["Normalizer"]
@@ -241,9 +245,13 @@ class ProcessState(OptimizableNet):
         act_functs = proc_dict["Act_Functs"]
 
         batch_size = x.shape[0]
-
         if self.normalize_obs:
+            print("Frozen? ", self.freeze_normalizer)
+            if not self.freeze_normalizer:
+                normalizer.observe(x)
+            print("normalize!")
             x = normalizer.normalize(x)
+            print()
         x = apply_layers(x, layers, act_functs)
         return x.view(batch_size, -1)
 
@@ -254,7 +262,6 @@ class ProcessState(OptimizableNet):
                 obs = sample[key]
                 obs = self.apply_processing_dict(obs, proc_dict)
                 outputs.append(obs)
-
         # If the obs is simply a torch tensor:
         else:
             x = self.apply_processing_dict(x, proc_list[0])
@@ -266,7 +273,7 @@ class ProcessState(OptimizableNet):
         if len(obs.shape) == 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             output_size = layers_vector[-1].out_features
-            vector_normalizer = Normalizer(obs.shape)
+            vector_normalizer = Normalizer(np.expand_dims(obs, 0).shape)
             # TODO: for both normalizers (vector normalizer above too) extract max and min obs value somehow for good normalization
 
             # Add to lists:
@@ -275,7 +282,7 @@ class ProcessState(OptimizableNet):
         # Create conv layers:
         elif 1 < len(obs.shape) <= 4:
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
-            matrix_normalizer = Normalizer(obs.shape, rgb_to_gray=self.rgb_to_gray)
+            matrix_normalizer = Normalizer(np.expand_dims(obs.shape, 0), rgb_to_gray=self.rgb_to_gray)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
             proc_list.append(layer_dict)
@@ -316,9 +323,13 @@ class ProcessState(OptimizableNet):
             return self(states)
 
     def freeze_normalizers(self):
-        for network_dict in self.processing_list:
-            normalizer = network_dict["Normalizer"]
-            normalizer.freeze()
+        self.freeze_normalizer = True
+
+        # for network_dict in self.processing_list:
+        #    normalizer = network_dict["Normalizer"]
+        #    print(normalizer)
+        #    normalizer.freeze()
+        #    print("kaka")
 
     def log_nn_data(self, name):
         self.record_nn_data(self.layers_vector, "F_s Vector", extra_name=name)

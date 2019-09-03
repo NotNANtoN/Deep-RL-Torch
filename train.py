@@ -31,10 +31,10 @@ if __name__ == "__main__":
     layers_conv = standard_hidden_block
 
     parameters = {# General:
-                  "use_QV": False, "split_Bellman": True, "gamma": 1,
-        "use_QVMAX": True, "use_target_net": True, "max_episode_steps": 0,
-                  "normalize_obs": False, # turning this on destroys training on cartpole
-        "rgb_to_gray": True, "freeze_normalize_after_initial": False,
+        "use_QV": False, "split_Bellman": False, "gamma": 1,
+        "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
+        "normalize_obs": True,  # turning this on destroys training on cartpole
+        "rgb_to_gray": True, "freeze_normalize_after_initial": True,
                   "reward_std": 0.0,
                   # Actor-Critic:
                   "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,

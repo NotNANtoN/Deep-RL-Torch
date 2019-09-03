@@ -39,13 +39,12 @@ class AgentInterface:
 
 
 class Agent(AgentInterface):
-    def __init__(self, env, device, normalizer, log, hyperparameters):
+    def __init__(self, env, device, log, hyperparameters):
         self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
         print(env.action_space)
         print("Env with discrete action space: ", self.discrete_env)
         self.env = env
         self.device = device
-        self.normalizer = normalizer
         self.log = log
         self.hyperparameters = hyperparameters
 
@@ -87,7 +86,8 @@ class Agent(AgentInterface):
         else:
             print("Base Policy (will act concretely): ", base_policy)
             print("Ground Policy (will use base policy): ", ground_policy)
-            policy = base_policy(ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log, self.hyperparameters, self.normalizer)
+            policy = base_policy(ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
+                                 self.hyperparameters)
         return policy
 
     def remember(self, state, action, next_state, reward, done):
@@ -121,12 +121,11 @@ class Agent(AgentInterface):
 
 
 class BasePolicy:
-    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
+    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
         self.env = env
         self.device = device
         self.log = log
         self.hyperparameters = hyperparameters
-        self.normalizer = normalizer
         self.ground_policy = ground_policy
 
         # Check env:
@@ -365,9 +364,6 @@ class BasePolicy:
         else:
             non_final_next_states = None
         state_batch = torch.cat(batch.state)
-        if self.normalize_observations:
-            non_final_next_states = self.normalizer.normalize(non_final_next_states)
-            state_batch = self.normalizer.normalize(state_batch)
         action_batch = torch.cat(batch.action)#.unsqueeze(1)
         #if self.discrete_env:
         #    action_batch = action_batch.long()
@@ -423,8 +419,8 @@ class ActorCritic(BasePolicy):
     def __repr__(self):
         return "Actor"
 
-    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
-        super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer)
+    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.F_s = F_s
 
 
@@ -463,8 +459,8 @@ class ActorCritic(BasePolicy):
 
 
 class Q_Policy(BasePolicy):
-    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
-        super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer)
+    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.critic = self.Q
 
 
@@ -481,15 +477,15 @@ class Q_Policy(BasePolicy):
 # 2. For REM: pick random subset to train
 # 3. For new idea with Matthias: have additional SOM
 class REM(BasePolicy):
-    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
-        super(REM, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer)
+    def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(REM, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
 
         self.num_heads = hyperparameters["REM_num_heads"]
         self.num_samples = hyperparameters["REM_num_samples"]
 
         # Create ensemble of ground policies:
         # TODO: maybe let all the critics of the ground policy share their reward nets if they are split
-        self.policy_heads = [ground_policy(None, F_s, F_sa, env, device, log, hyperparameters, normalizer)
+        self.policy_heads = [ground_policy(None, F_s, F_sa, env, device, log, hyperparameters)
                              for _ in range(self.num_heads)]
 
     def init_actor(self, Q, V, F_s):

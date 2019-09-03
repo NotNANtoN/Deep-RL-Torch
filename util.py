@@ -25,21 +25,20 @@ class Normalizer():
         self.var = torch.zeros(input_shape)
         self.max_val = max_val
         self.rgb_to_gray = rgb_to_gray
-        # Enable the normalizer to be frozen at some point s.t. its mean and stds do not change anymore:
-        self.freeze = False
+
 
     def observe(self, x):
-        if self.max_val or self.freeze:
+        if self.max_val:
             return
 
-        x = x.view(-1)
         self.n += 1.
         last_mean = self.mean.clone()
-        self.mean += (x - self.mean) / self.n
-        self.mean_diff += (x - last_mean) * (x - self.mean)
+        self.mean += (x - self.mean).mean(dim=0) / self.n
+        self.mean_diff += (x - last_mean).mean(dim=0) * (x - self.mean).mean(dim=0)
         self.var = torch.clamp(self.mean_diff / self.n, min=1e-2)
 
     def normalize(self, inputs):
+        print(self.mean)
         if self.rgb_to_gray and len(inputs.shape) == 4:  # 4 dims (batch_size, length, width, channels)
             inputs = inputs.mean(dim=-1)
 
@@ -56,9 +55,6 @@ class Normalizer():
 
         obs_std = torch.sqrt(self.var)
         return (inputs * obs_std) + self.mean
-
-    def freeze(self):
-        self.freeze = True
 
 
 class Log(object):

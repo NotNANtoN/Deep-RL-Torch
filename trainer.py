@@ -57,14 +57,14 @@ class Trainer:
         self.state_len = len(self.env.observation_space.high)
         self.normalize_observations = hyperparameters["normalize_obs"]
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
-        if self.normalize_observations:
-            self.normalizer = Normalizer(self.state_len)
-        else:
-            self.normalizer = None
+        # if self.normalize_observations:
+        #    self.normalizer = Normalizer(self.state_len)
+        # else:
+        #    self.normalizer = None
 
         # Init Policy:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.policy = Agent(self.env, self.device, self.normalizer, self.log, hyperparameters)
+        self.policy = Agent(self.env, self.device, self.log, hyperparameters)
 
     def reset(self):
         self.steps_done = 0
@@ -111,9 +111,6 @@ class Trainer:
         else:
             next_state = torch.tensor([next_state], device=self.device).float()
             #next_state = torch.tensor([next_state], device=self.device).float()
-            # Record state for normalization:
-            if self.normalize_observations:
-                self.normalizer.observe(next_state)
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
             self.policy.remember(state, raw_action, next_state, reward, done)
