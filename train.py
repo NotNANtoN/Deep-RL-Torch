@@ -8,8 +8,8 @@ if __name__ == "__main__":
 
     standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
                               {"name": "linear", "neurons": 128}]
-    standard_hidden_block =  [{"name":"linear", "neurons": 64, "act_func": "relu"},
-                             {"name":"linear", "neurons": 64, "act_func": "relu"}]
+    standard_hidden_block = [{"name": "linear", "neurons": 64, "act_func": "relu"},
+                             {"name": "linear", "neurons": 64, "act_func": "relu"}]
 
     test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
 
@@ -27,10 +27,14 @@ if __name__ == "__main__":
     layers_V = standard_hidden_block
     layers_actor = standard_hidden_block
 
+    # TODO: define conv architectures
+    layers_conv = standard_hidden_block
+
     parameters = {# General:
                   "use_QV": False, "split_Bellman": True, "gamma": 1,
         "use_QVMAX": True, "use_target_net": True, "max_episode_steps": 0,
                   "normalize_obs": False, # turning this on destroys training on cartpole
+        "rgb_to_gray": True, "freeze_normalize_after_initial": False,
                   "reward_std": 0.0,
                   # Actor-Critic:
                   "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
@@ -54,6 +58,7 @@ if __name__ == "__main__":
                   "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
                   "layers_V": layers_V,
                   "layers_actor": layers_actor,
+        "layers_feature_matrix": layers_conv,
 
                   # TODO: The following still need to be implemented:
                   "SPLIT_BELL_NO_TARGET_r": True,

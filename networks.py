@@ -206,33 +206,25 @@ class OptimizableNet(nn.Module):
         self.log.add(name + " Weight Norm", weight_norm)
         self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
 
+
 class ProcessState(OptimizableNet):
-    def __init__(self, env, log, device, hyperparameters, matrix_max_val=255, is_target_net=False):
+    def __init__(self, env, log, device, hyperparameters, is_target_net=False):
         super(ProcessState, self).__init__(env, device, log, hyperparameters)
+
+        self.rgb_to_gray = hyperparameters["rgb_to_gray"]
+        self.vector_layers = hyperparameters["layers_feature_vector"]
+        self.matrix_layers = hyperparameters["layers_feature_matrix"]
+        self.normalize_obs = hyperparameters["normalize_obs"]
 
         if is_target_net:
             self.use_target_net = False
         else:
             self.use_target_net = hyperparameters["use_target_net"]
 
-        vector_output_size = 0
-        if self.vector_len is not None:
-            self.vector_normalizer = Normalizer(self.vector_len)
-            vector_layers = hyperparameters["layers_feature_vector"]
-            self.layers_vector, self.act_functs_vector = create_ff_layers(self.vector_len, vector_layers, None)
-            vector_output_size = self.layers_vector[-1].out_features
-
-        # matrix size has format (x_len, y_len, n_channels)
-        matrix_output_size = 0
-        if self.matrix_shape is not None:
-            self.matrix_normalizer = Normalizer(self.matrix_shape, matrix_max_val)
-            matrix_layers = hyperparameters["layers_feature_matrix"]
-            self.layers_matrix, matrix_output_size, self.act_functs_matrix = create_conv_layers(self.matrix_shape,
-                                                                                                matrix_layers)
+        self.processing_list, merge_input_size = self.create_input_layers(env)
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
-        merge_input_size = vector_output_size + matrix_output_size
         self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
 
         # TODO: the following does not work because we still have the weird (vector, matrix) input and matrix cannot be none here
@@ -243,25 +235,79 @@ class ProcessState(OptimizableNet):
 
         self.target_net = self.create_target_net()
 
+    def apply_processing_dict(self, x, proc_dict):
+        normalizer = proc_dict["Normalizer"]
+        layers = proc_dict["Layers"]
+        act_functs = proc_dict["Act_Functs"]
+
+        batch_size = x.shape[0]
+
+        if self.normalize_obs:
+            x = normalizer.normalize(x)
+        x = apply_layers(x, layers, act_functs)
+        return x.view(batch_size, -1)
+
+    def apply_processing_list(self, x, proc_list):
+        outputs = []
+        if isinstance(x, dict):
+            for key, proc_dict in zip(x, proc_list):
+                obs = sample[key]
+                obs = self.apply_processing_dict(obs, proc_dict)
+                outputs.append(obs)
+
+        # If the obs is simply a torch tensor:
+        else:
+            x = self.apply_processing_dict(x, proc_list[0])
+            outputs.append(x)
+        return outputs
+
+    def update_processing_list(self, obs, proc_list):
+        # Create feedforward layers:
+        if len(obs.shape) == 1:
+            layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
+            output_size = layers_vector[-1].out_features
+            vector_normalizer = Normalizer(obs.shape)
+            # TODO: for both normalizers (vector normalizer above too) extract max and min obs value somehow for good normalization
+
+            # Add to lists:
+            layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
+            proc_list.append(layer_dict)
+        # Create conv layers:
+        elif 1 < len(obs.shape) <= 4:
+            layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
+            matrix_normalizer = Normalizer(obs.shape, rgb_to_gray=self.rgb_to_gray)
+            # Add to lists:
+            layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
+            proc_list.append(layer_dict)
+        else:
+            raise NotImplementedError("Four dimensional input data not yet supported.")
+        return output_size
+
+    def create_input_layers(self, env):
+        # Get a sample to assess the shape of the observations easily:
+        obs_space = env.observation_space
+        sample = obs_space.sample()
+
+        processing_list = []
+        merge_input_size = 0
+        # If the obs is a dict:
+        if isinstance(sample, dict):
+            for key in sample:
+                obs = sample[key]
+                output_size = self.update_processing_list(obs, processing_list)
+                merge_input_size += output_size
+        # If the obs is simply a np array:
+        elif isinstance(sample, np.ndarray):
+            output_size = self.update_processing_list(sample, processing_list)
+            merge_input_size += output_size
+
+        return processing_list, merge_input_size
+
     def forward(self, state):
-        # TODO: instead of having two inputs, only have one state to make the function more general.
-        # TODO: to separate the state into matrix and vector, check the number of dimensions of the state
-
-        vector, matrix = self.state2parts(state)
-
-        merged = torch.tensor([], device=self.device)
-        if matrix is not None:
-            batch_size = matrix.size(0)
-            matrix = apply_layers(matrix, self.layers_matrix, self.act_functs_matrix)
-            matrix = matrix.view(batch_size, -1)
-            merged = torch.cat((merged, matrix), 0)
-
-        if vector is not None:
-            vector = apply_layers(vector, self.layers_vector, self.act_functs_vector)
-            merged = torch.cat((merged, vector), 0)
-
-        merged = apply_layers(merged, self.layers_merge, self.act_functs_merge)
-        return merged
+        x = self.apply_processing_list(state, self.processing_list)
+        x = torch.cat(x, 0)
+        x = apply_layers(x, self.layers_merge, self.act_functs_merge)
+        return x
 
     def forward_next_state(self, states):
         if self.use_target_net:
@@ -269,9 +315,10 @@ class ProcessState(OptimizableNet):
         else:
             return self(states)
 
-    def state2parts(self, state):
-        # TODO: adjust this function to be able to deal with vector envs, rgb envs, and mineRL
-        return state, None
+    def freeze_normalizers(self):
+        for network_dict in self.processing_list:
+            normalizer = network_dict["Normalizer"]
+            normalizer.freeze()
 
     def log_nn_data(self, name):
         self.record_nn_data(self.layers_vector, "F_s Vector", extra_name=name)
@@ -282,12 +329,9 @@ class ProcessState(OptimizableNet):
 
     def get_updateable_params(self):
         params = list(self.layers_merge.parameters())
-        if self.vector_len is not None:
-            params += list(self.layers_vector.parameters())
-        if self.matrix_shape is not None:
-            params += list(self.layers_matrix.parameters())
+        for layer in self.processing_list:
+            params += list(layer["Layers"].parameters())
         return params
-
 
 
 class ProcessStateAction(OptimizableNet):
@@ -313,7 +357,7 @@ class ProcessStateAction(OptimizableNet):
         self.target_net = self.create_target_net()
 
     def forward(self, state_features, actions, apply_one_hot_encoding=True):
-        #if not self.use_actor_critic and apply_one_hot_encoding:
+        # if not self.use_actor_critic and apply_one_hot_encoding:
         #    actions = one_hot_encode(actions, self.num_actions)
         actions = apply_layers(actions, self.layers_action, self.act_functs_action)
         x = torch.cat((state_features, actions), 1)
@@ -338,6 +382,7 @@ class ProcessStateAction(OptimizableNet):
         params = list(self.layers_merge.parameters())
         params += list(self.layers_action.parameters())
         return params
+
 
 class TempDiffNet(OptimizableNet):
     def __init__(self, env, device, log, hyperparameters, is_target_net=False):
@@ -405,8 +450,9 @@ class TempDiffNet(OptimizableNet):
     def calculate_updated_value_next_state(self, reward_batch, non_final_next_state_features, non_final_mask,
                                            actor=None, Q=None, V=None):
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        self.predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
-        #self.log.add(self.name + " Prediction_next_state", self.predictions_next_state[0].item())
+        self.predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q,
+                                                              V)
+        # self.log.add(self.name + " Prediction_next_state", self.predictions_next_state[0].item())
         # print("Next state features: ", non_final_next_state_features)
         # print("Prediction next state: ", predictions_next_state)
 
@@ -438,8 +484,8 @@ class TempDiffNet(OptimizableNet):
 
         # Compute the expected values. Do not add the reward, if the critic is split
         expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
-                                                                                 non_final_next_state_features,
-                                                                                 non_final_mask, actor, Q, V)
+                                                                            non_final_next_state_features,
+                                                                            non_final_mask, actor, Q, V)
         # print("Expected value next state: ", self.expected_value_next_state)
         # print()
 
@@ -563,7 +609,7 @@ class Q(TempDiffNet):
         else:
             with torch.no_grad():
                 action = actor(state_features)
-                #if self.discrete_env:
+                # if self.discrete_env:
                 #    action = action.max(1)[1].unsqueeze(1)
                 state_action_features = F_sa(state_features, action)
             # TODO: make sure whether these state-action_features are required somewhere else and store it if that is the case
@@ -630,11 +676,9 @@ class V(TempDiffNet):
         return self.forward_R(state_features), reward_prediction
 
 
-
 class Actor(OptimizableNet):
     def __init__(self, F_s, env, log, device, hyperparameters, is_target_net=False):
         super(Actor, self).__init__(env, device, log, hyperparameters, is_target_net=is_target_net)
-
 
         self.name = "Actor"
 
@@ -696,15 +740,15 @@ class Actor(OptimizableNet):
         if self.sigmoid_idxs:
             x[self.sigmoid_idxs] = torch.sigmoid(x[self.sigmoid_idxs])
         if self.tanh_idxs:
-            #print("first: ", x)
-            #print(self.tanh_idxs)
-            #print(x[:, self.tanh_idxs])
+            # print("first: ", x)
+            # print(self.tanh_idxs)
+            # print(x[:, self.tanh_idxs])
             y = x[:, self.tanh_idxs].tanh()
-            #x[self.tanh_mask] = torch.tanh(x[self.tanh_mask])
-            #print("after: ", y)
+            # x[self.tanh_mask] = torch.tanh(x[self.tanh_mask])
+            # print("after: ", y)
             with torch.no_grad():
                 x[:, self.tanh_idxs] = y
-            #print("inserted: ", x)
+            # print("inserted: ", x)
         return (x * self.scaling) + self.offset
 
     def create_output_act_func(self):
@@ -714,12 +758,12 @@ class Actor(OptimizableNet):
         sigmoid_idxs = []
 
         # Init masks:
-        #self.relu_mask = torch.zeros(self.batch_size, len(self.action_low))
-        #self.relu_mask.scatter_(1, torch.tensor(relu_idxs).long(), 1.)
-        #self.tanh_mask = torch.zeros(self.batch_size, len(self.action_low))
-        #self.tanh_mask.scatter_(1, torch.tensor(tanh_idxs).long(), 1.)
-        #self.sigmoid_mask = torch.zeros(self.batch_size, len(self.action_low))
-        #self.sigmoid_mask.scatter_(1, torch.tensor(sigmoid_idxs).long(), 1.)
+        # self.relu_mask = torch.zeros(self.batch_size, len(self.action_low))
+        # self.relu_mask.scatter_(1, torch.tensor(relu_idxs).long(), 1.)
+        # self.tanh_mask = torch.zeros(self.batch_size, len(self.action_low))
+        # self.tanh_mask.scatter_(1, torch.tensor(tanh_idxs).long(), 1.)
+        # self.sigmoid_mask = torch.zeros(self.batch_size, len(self.action_low))
+        # self.sigmoid_mask.scatter_(1, torch.tensor(sigmoid_idxs).long(), 1.)
 
         if self.discrete_env:
             print("Actor has only sigmoidal activation function")
@@ -734,15 +778,15 @@ class Actor(OptimizableNet):
                 if not (low and high):
                     if low == -math.inf or high == math.inf:
                         relu_idxs.append(i)
-                        #self.relu_mask[i] = 1.0
+                        # self.relu_mask[i] = 1.0
                     else:
                         sigmoid_idxs.append(i)
-                        #self.sigmoid_mask[i] = 1.0
+                        # self.sigmoid_mask[i] = 1.0
                         self.scaling[i] = high + low
                 elif low == high * -1:
                     if low != -math.inf:
                         tanh_idxs.append(i)
-                        #self.tanh_mask[i] = 1.0
+                        # self.tanh_mask[i] = 1.0
                         self.scaling[i] = high
                 else:
                     self.offset[i] = (high - low) / 2
@@ -761,7 +805,7 @@ class Actor(OptimizableNet):
 
     def optimize(self, transitions):
         # Only for debugging:
-        #torch.autograd.set_detect_anomaly(True)
+        # torch.autograd.set_detect_anomaly(True)
 
         state_batch = transitions["state"]
         state_features = transitions["state_features"]
@@ -790,14 +834,13 @@ class Actor(OptimizableNet):
 
             # TODO: investigate why the multiplication by minus one is necessary for sample weights... seems to be for the V.TDE < 0 check. Using all actions with sample weights = TDE also works, but worse in cartpole
             # TODO: also investigate whether scaling by TDE can be beneficial. Both works at least with V.TDE < 0
-            sample_weights = -1 * torch.ones(output.shape)#.unsqueeze(1) #
-            #sample_weights = self.V.TDE[pos_TDE_mask].view(output.shape)
+            sample_weights = -1 * torch.ones(output.shape)  # .unsqueeze(1) #
+            # sample_weights = self.V.TDE[pos_TDE_mask].view(output.shape)
 
-            #print(output)
-            #print(target)
-            #print()
-            #print(sample_weights)
-
+            # print(output)
+            # print(target)
+            # print()
+            # print(sample_weights)
 
         if self.use_CACLA_Q:
             # Calculate mask of pos expected Q minus Q(s, mu(s))
@@ -811,7 +854,7 @@ class Actor(OptimizableNet):
             else:
                 target = action_batch[pos_TDE_mask]
 
-            #sample_weights = -1 * torch.ones(output.shape[0])
+            # sample_weights = -1 * torch.ones(output.shape[0])
             sample_weights = self.Q.TDE[pos_TDE_mask].view(output.shape[0])
 
         # TODO: implement CACLA+Var
@@ -835,21 +878,20 @@ class Actor(OptimizableNet):
             self.log.add("DDPG Action Gradient", gradients.mean())
 
             # Normalize gradients:
-            #gradients = self.normalize_gradients(gradients)
+            # gradients = self.normalize_gradients(gradients)
             # TODO: maybe normalize within the actor optimizer...?
             # TODO Normalize over batch, then scale by inverse TDE (risky thing:what about very small TDEs?
             output = actions_current_state
             target = (actions_current_state.detach().clone() + gradients)
 
-
             # Clip actions
             target = torch.max(torch.min(target, self.action_high), self.action_low)
 
-            #sample_weights = torch.ones(output.shape[0]).unsqueeze(1) / abs(self.Q.TDE)
+            # sample_weights = torch.ones(output.shape[0]).unsqueeze(1) / abs(self.Q.TDE)
 
-            #print(sample_weights)
-            #print(output)
-            #print(gradients)
+            # print(sample_weights)
+            # print(output)
+            # print(gradients)
 
         if self.use_SPG:
             # Calculate mask of Q(s,a) minus Q(s, mu(s))
@@ -858,10 +900,11 @@ class Actor(OptimizableNet):
                 state_features_target = self.F_s.target_net(state_batch)
                 actions_target_net = self.target_net(state_features_target)
                 # print("Actions target net: ", actions_target_net)
-                #if self.discrete_env:
+                # if self.discrete_env:
                 #    actions_current_policy = actions_target_net.argmax(1).unsqueeze(1)
                 state_action_features_sampled_actions = self.Q.F_sa.target_net(state_features_target, action_batch)
-                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target, actions_current_policy,
+                state_action_features_current_policy = self.Q.F_sa.target_net(state_features_target,
+                                                                              actions_current_policy,
                                                                               apply_one_hot_encoding=False)
                 Q_val_sampled_actions = self.Q.target_net(state_action_features_sampled_actions)
                 Q_val_current_policy = self.Q.target_net(state_action_features_current_policy)
@@ -895,11 +938,10 @@ class Actor(OptimizableNet):
 
         # self.optimize_net(actions_current_state, better_actions_current_state, self.optimizer, "actor")
 
-        #print("output", output)
-        #print(target)
-        #if not self.discrete_env:
+        # print("output", output)
+        # print(target)
+        # if not self.discrete_env:
         #    target = target.unsqueeze(1)
-
 
         error = 0
         if len(output) > 0:
@@ -907,8 +949,8 @@ class Actor(OptimizableNet):
             error = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
         else:
             pass
-            #TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
-            #print("No Training for Actor...")
+            # TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
+            # print("No Training for Actor...")
 
         if self.use_CACLA_V or self.use_CACLA_Q or self.use_SPG:
             self.log.add("Actor_actual_train_batch_size", len(output))

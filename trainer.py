@@ -56,6 +56,7 @@ class Trainer:
         # copied from Old class:
         self.state_len = len(self.env.observation_space.high)
         self.normalize_observations = hyperparameters["normalize_obs"]
+        self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
         if self.normalize_observations:
             self.normalizer = Normalizer(self.state_len)
         else:
@@ -158,6 +159,10 @@ class Trainer:
     def run(self, n_steps, verbose=False, render=False, on_server=True):
         # Fill replay buffer with random actions:
         self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
+
+        if self.freeze_normalizer:
+            self.policy.freeze_normalizers()
+        # TODO: Freeze normalizer after experiencing starting actions! might fix the problem of normalizing breaking cartpole training
 
         # Initialize test environment:
         test_env = gym.make(self.env_name).unwrapped

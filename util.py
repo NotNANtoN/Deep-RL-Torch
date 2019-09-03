@@ -18,15 +18,18 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
 class Normalizer():
-    def __init__(self, input_shape, max_val=None):
+    def __init__(self, input_shape, max_val=None, rgb_to_gray=False):
         self.n = 0
         self.mean = torch.zeros(input_shape)
         self.mean_diff = torch.zeros(input_shape)
         self.var = torch.zeros(input_shape)
         self.max_val = max_val
+        self.rgb_to_gray = rgb_to_gray
+        # Enable the normalizer to be frozen at some point s.t. its mean and stds do not change anymore:
+        self.freeze = False
 
     def observe(self, x):
-        if self.max_val:
+        if self.max_val or self.freeze:
             return
 
         x = x.view(-1)
@@ -37,8 +40,12 @@ class Normalizer():
         self.var = torch.clamp(self.mean_diff / self.n, min=1e-2)
 
     def normalize(self, inputs):
+        if self.rgb_to_gray and len(inputs.shape) == 4:  # 4 dims (batch_size, length, width, channels)
+            inputs = inputs.mean(dim=-1)
+
         if self.max_val:
             return inputs / self.max_val
+
 
         obs_std = torch.sqrt(self.var)
         return (inputs - self.mean) / obs_std
@@ -49,6 +56,9 @@ class Normalizer():
 
         obs_std = torch.sqrt(self.var)
         return (inputs * obs_std) + self.mean
+
+    def freeze(self):
+        self.freeze = True
 
 
 class Log(object):

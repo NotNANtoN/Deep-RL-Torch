@@ -116,6 +116,9 @@ class Agent(AgentInterface):
     def display_debug_info(self):
         self.policy.display_debug_info()
 
+    def freeze_normalizers(self):
+        self.policy.freeze_normalizers()
+
 
 class BasePolicy:
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters, normalizer):
@@ -379,11 +382,8 @@ class BasePolicy:
     def optimize_networks(self, transitions):
         raise NotImplementedError
 
-
-
     def display_debug_info(self):
         pass
-
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         return torch.tensor([0])
@@ -409,6 +409,11 @@ class BasePolicy:
             self.F_s.update_targets(n_steps)
         if self.F_sa is not None:
             self.F_sa.update_targets(n_steps)
+
+    def freeze_normalizers(self):
+        self.F_s.freeze_normalizers()
+        if self.F_sa is not None:
+            self.F_sa.freeze_normalizers()
 
     def init_actor(self, Q, V, F_s):
         raise NotImplementedError
