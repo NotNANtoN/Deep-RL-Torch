@@ -112,6 +112,6 @@ if __name__ == "__main__":
 
     # trainer = Trainer(environment_name, device)
 
-    trainer = Trainer(cart, parameters, log=False, log_NNs=True, tb_comment=tensorboard_comment)
+    trainer = Trainer(cart, parameters, log=True, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(50000, render=False, verbose=True)
