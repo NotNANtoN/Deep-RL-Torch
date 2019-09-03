@@ -215,6 +215,7 @@ class ProcessState(OptimizableNet):
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_feature_matrix"]
         self.normalize_obs = hyperparameters["normalize_obs"]
+        self.key2obs = hyperparameters["key2obs"]
 
         self.freeze_normalizer = False
 
@@ -237,7 +238,9 @@ class ProcessState(OptimizableNet):
 
         self.target_net = self.create_target_net()
         # TODO: set normalizers of target net equal to normalizers of current net.
-
+        if self.target_net is not None:
+            for proc_dict, proc_dict_target in zip(self.processing_list, self.target_net.processing_list):
+                proc_dict_target["Normalizer"] = proc_dict["Normalizer"]
 
     def apply_processing_dict(self, x, proc_dict):
         normalizer = proc_dict["Normalizer"]
@@ -246,12 +249,9 @@ class ProcessState(OptimizableNet):
 
         batch_size = x.shape[0]
         if self.normalize_obs:
-            print("Frozen? ", self.freeze_normalizer)
             if not self.freeze_normalizer:
                 normalizer.observe(x)
-            print("normalize!")
             x = normalizer.normalize(x)
-            print()
         x = apply_layers(x, layers, act_functs)
         return x.view(batch_size, -1)
 
@@ -259,7 +259,11 @@ class ProcessState(OptimizableNet):
         outputs = []
         if isinstance(x, dict):
             for key, proc_dict in zip(x, proc_list):
-                obs = sample[key]
+                # For e.g. MineRL we need to extract the obs from the key in-depth:
+                if self.key2obs is not None:
+                    obs = self.key2obs(key, proc_dict)
+                else:
+                    obs = sample[key]
                 obs = self.apply_processing_dict(obs, proc_dict)
                 outputs.append(obs)
         # If the obs is simply a torch tensor:
@@ -324,12 +328,7 @@ class ProcessState(OptimizableNet):
 
     def freeze_normalizers(self):
         self.freeze_normalizer = True
-
-        # for network_dict in self.processing_list:
-        #    normalizer = network_dict["Normalizer"]
-        #    print(normalizer)
-        #    normalizer.freeze()
-        #    print("kaka")
+        self.target_net.freeze_normalizer = True
 
     def log_nn_data(self, name):
         self.record_nn_data(self.layers_vector, "F_s Vector", extra_name=name)

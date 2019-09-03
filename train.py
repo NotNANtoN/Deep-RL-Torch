@@ -3,6 +3,22 @@ import torch
 from RAdam import RAdam
 from trainer import Trainer
 
+
+def one_hot_encode(x, num_actions):
+    y = torch.zeros(x.shape[0], num_actions).float()
+    return y.scatter(1, x, 1)
+
+
+def key2obs_mineRL(key, obs_dict):
+    if key == "equipped_items":
+        lower_lvl_dict = obs_dict[key]["equipped_items"]
+        dmg = lower_lvl_dict["damage"]
+        max_dmg = lower_lvl_dict["maxDamage"]
+        item_type = one_hot_encode(lower_lvl_dict["type"], 9)
+
+
+
+
 if __name__ == "__main__":
     # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
 
@@ -13,8 +29,8 @@ if __name__ == "__main__":
 
     test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
 
-    #standard_hidden_block = test_block
-    #standard_feature_block = test_block
+    # standard_hidden_block = test_block
+    # standard_feature_block = test_block
 
     # TODO: add action-embedding/hidden layer for F_sa
 
@@ -30,52 +46,55 @@ if __name__ == "__main__":
     # TODO: define conv architectures
     layers_conv = standard_hidden_block
 
-    parameters = {# General:
+    parameters = {  # General:
         "use_QV": False, "split_Bellman": False, "gamma": 1,
         "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
         "normalize_obs": True,  # turning this on destroys training on cartpole
         "rgb_to_gray": True, "freeze_normalize_after_initial": True,
-                  "reward_std": 0.0,
-                  # Actor-Critic:
-                  "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
-                  "use_SPG": False, "use_GISPG": False,
-                  # Target-net:
-                  "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau":0.005,
-                  # Replay buffer:
-                  "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
-                  "use_CER": True,
-                  # Exploration:
-                  "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
-                  "n_initial_random_actions": 3000,
-                  # REM:
-                  "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
-                  # NN Training:
-                  "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 32, "optimizer": RAdam,
-                  "max_norm": 1, "network_updates_per_step": 1,
-                  # NN architecture setup:
-                  "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
-                  "layers_action": layers_action,
-                  "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
-                  "layers_V": layers_V,
-                  "layers_actor": layers_actor,
+        "reward_std": 0.0,
+        # Actor-Critic:
+        "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,
+        "use_SPG": False, "use_GISPG": False,
+        # Target-net:
+        "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau": 0.005,
+        # Replay buffer:
+        "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
+        "use_CER": True,
+        # Exploration:
+        "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
+        "n_initial_random_actions": 3000,
+        # REM:
+        "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
+        # NN Training:
+        "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 32, "optimizer": RAdam,
+        "max_norm": 1, "network_updates_per_step": 1,
+        # NN architecture setup:
+        "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
+        "layers_action": layers_action,
+        "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
+        "layers_V": layers_V,
+        "layers_actor": layers_actor,
         "layers_feature_matrix": layers_conv,
 
-                  # TODO: The following still need to be implemented:
-                  "SPLIT_BELL_NO_TARGET_r": True,
-                  "QV_NO_TARGET_Q": False,
+        # Env specific:
+        "key2obs": None,
 
+        # TODO: The following still need to be implemented:
+        "SPLIT_BELL_NO_TARGET_r": True,
+        "QV_NO_TARGET_Q": False,
 
-                  "use_hrl": False, # important
-                  "target_policy_smoothing_noise": 0.1, #  only for ac. can be delayed. can decay, make uniform or clip
-                  "delayed_policy_update_steps": 0, # only for actor critic, can be delayed to implement
-                  "use_double_Q": False, # also implement for REM: sample a random other Q net that serves as target
-                  "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
-                  "use_world_model": False,
-                  "TDEC_episodic": True,
-                  "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
-                  "TDEC_ACT_FUNC": "abs",
-                  "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
-                  }
+        "use_hrl": False,  # important
+        "target_policy_smoothing_noise": 0.1,  # only for ac. can be delayed. can decay, make uniform or clip
+        "delayed_policy_update_steps": 0,  # only for actor critic, can be delayed to implement
+        "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
+        "use_clipped_double_Q": False,
+        # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
+        "use_world_model": False,
+        "TDEC_episodic": True,
+        "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
+        "TDEC_ACT_FUNC": "abs",
+        "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
+    }
     tensorboard_comment = ""
 
     # TODO: why does normalize_obs destroy the whole training for cartpole????

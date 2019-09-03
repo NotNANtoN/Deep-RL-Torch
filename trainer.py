@@ -86,8 +86,14 @@ class Trainer:
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in range(n_actions):
+
+            # To initialize the normalizer:
+            if self.normalize_observations:
+                self.policy.F_s(state)
+
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
                                                          explore=True, fully_random=True)
+
             state = next_state
             if done:
                 state = self.env.reset()
@@ -159,7 +165,6 @@ class Trainer:
 
         if self.freeze_normalizer:
             self.policy.freeze_normalizers()
-        # TODO: Freeze normalizer after experiencing starting actions! might fix the problem of normalizing breaking cartpole training
 
         # Initialize test environment:
         test_env = gym.make(self.env_name).unwrapped
