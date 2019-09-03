@@ -22,7 +22,7 @@ class Normalizer():
         self.n = 0
         self.mean = torch.zeros(input_shape)
         self.mean_diff = torch.zeros(input_shape)
-        self.var = torch.zeros(input_shape)
+        self.var = torch.ones(input_shape)
         self.max_val = max_val
         self.rgb_to_gray = rgb_to_gray
 
@@ -38,13 +38,11 @@ class Normalizer():
         self.var = torch.clamp(self.mean_diff / self.n, min=1e-2)
 
     def normalize(self, inputs):
-        print(self.mean)
         if self.rgb_to_gray and len(inputs.shape) == 4:  # 4 dims (batch_size, length, width, channels)
             inputs = inputs.mean(dim=-1)
 
         if self.max_val:
             return inputs / self.max_val
-
 
         obs_std = torch.sqrt(self.var)
         return (inputs - self.mean) / obs_std
