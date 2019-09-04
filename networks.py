@@ -261,7 +261,7 @@ class ProcessState(OptimizableNet):
             for key, proc_dict in zip(x, proc_list):
                 # For e.g. MineRL we need to extract the obs from the key in-depth:
                 if self.key2obs is not None:
-                    obs = self.key2obs(key, proc_dict)
+                    obs = self.key2obs(key, proc_dict, self.device)
                 else:
                     obs = sample[key]
                 obs = self.apply_processing_dict(obs, proc_dict)

@@ -358,15 +358,30 @@ class BasePolicy:
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                 batch.next_state)), device=self.device, dtype=torch.bool)
 
-        non_final_next_states = [s for s in batch.next_state if s is not None]
-        if non_final_next_states != []:
-            non_final_next_states = torch.cat(non_final_next_states)
+        # Create state batch:
+        if isinstance(batch.state[0], dict):
+            # Concat the states per key:
+            state_batch = {key: [x[key] for x in batch.state] for key in batch.state[0]}
+        else:
+            state_batch = torch.cat(batch.state)
+
+        # Create next state batch:
+        non_final_next_states = batch.next_state[non_final_mask]
+        # TODO: the upper line is a test replacement for the lower one
+        # non_final_next_states = [s for s in batch.next_state if s is not None]
+        if non_final_next_states:
+            if isinstance(non_final_next_states[0], dict):
+                non_final_next_states = {key: [x[key] for x in non_final_next_states] for key in
+                                         non_final_next_states[0]}
+            else:
+                non_final_next_states = torch.cat(non_final_next_states)
         else:
             non_final_next_states = None
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.cat(batch.action)#.unsqueeze(1)
-        #if self.discrete_env:
-        #    action_batch = action_batch.long()
+
+        # Create action batch:
+        action_batch = torch.cat(batch.action)
+
+        # Create Reward batch:
         reward_batch = torch.cat(batch.reward).unsqueeze(1)
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,

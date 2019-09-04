@@ -9,12 +9,28 @@ def one_hot_encode(x, num_actions):
     return y.scatter(1, x, 1)
 
 
-def key2obs_mineRL(key, obs_dict):
+def process_equipped(equip_dict):
+    dmg = (equip_dict["damage"])
+    max_dmg = float(equip_dict["maxDamage"])
+    item_type = one_hot_encode(equip_dict["type"], 9)
+    dmg_tensor = torch.tensor([dmg, max_dmg], dtype=torch.float)
+    return torch.cat([dmg_tensor, item_type]).unsqueeze(0)
+
+
+def process_inv(inv_dict):
+    return torch.cat([float(inv_dict[key]) for key in inv_dict]).unsqueeze(0)
+
+
+def key2obs_mineRL(key, obs_dict, device):
     if key == "equipped_items":
-        lower_lvl_dict = obs_dict[key]["equipped_items"]
-        dmg = lower_lvl_dict["damage"]
-        max_dmg = lower_lvl_dict["maxDamage"]
-        item_type = one_hot_encode(lower_lvl_dict["type"], 9)
+        equip_dict_list = obs_dict[key]
+        obs = torch.cat([process_equipped(equip_dict["mainhand"]) for equip_dict in equip_dict_list])
+    elif key == "inventory":
+        inv_dict_list = obs_dict[key]
+        obs = torch.cat([process_inv(inv_dict) for inv_dict in inv_dict_list])
+    else:
+        obs = torch.cat(obs_dict[key])
+    return obs.to(device)
 
 
 
