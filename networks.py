@@ -61,12 +61,15 @@ def create_ff_layers(input_size, layer_dict, output_size):
 
 
 # Create a module list of conv layers specified in layer_dict
-def create_conv_layers(input_matrix_shape, layer_dict):
+def create_conv_layers(input_matrix_shape, layer_dict, grayscale=False):
     # format for entry in matrix_layers: ("conv", channels_in, channels_out, kernel_size, stride) if conv or
     #  ("batchnorm") for batchnorm
     matrix_width = input_matrix_shape[0]
     matrix_height = input_matrix_shape[1]
     channel_last_layer = input_matrix_shape[2]
+
+    if grayscale:
+        channel_last_layer = 1
 
     act_functs = []
     layers = nn.ModuleList()
@@ -215,6 +218,7 @@ class ProcessState(OptimizableNet):
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_feature_matrix"]
         self.normalize_obs = hyperparameters["normalize_obs"]
+        self.matrix_max_val = hyperparameters["matrix_max_val"]
         self.key2obs = hyperparameters["key2obs"]
 
         self.freeze_normalizer = False
@@ -285,8 +289,9 @@ class ProcessState(OptimizableNet):
             proc_list.append(layer_dict)
         # Create conv layers:
         elif 1 < len(obs.shape) <= 4:
-            layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
-            matrix_normalizer = Normalizer(np.expand_dims(obs.shape, 0), rgb_to_gray=self.rgb_to_gray)
+            layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers,
+                                                                               grayscale=self.rgb_to_gray)
+            matrix_normalizer = Normalizer(obs.shape, rgb_to_gray=self.rgb_to_gray, max_val=self.matrix_max_val)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
             proc_list.append(layer_dict)
@@ -349,11 +354,13 @@ class ProcessStateAction(OptimizableNet):
         super(ProcessStateAction, self).__init__(env, device, log, hyperparameters, is_target_net)
 
         self.state_features_len = state_features_len
+        self.freeze_normalizer = False
 
         # Create layers:
         # Action Embedding
         layers_action = hyperparameters["layers_action"]
         self.layers_action, self.act_functs_action = create_ff_layers(self.num_actions, layers_action, None)
+
         # State features and Action features concat:
         input_size = state_features_len + self.layers_action[-1].out_features
         layers = hyperparameters["layers_state_action_merge"]
@@ -392,6 +399,10 @@ class ProcessStateAction(OptimizableNet):
         params = list(self.layers_merge.parameters())
         params += list(self.layers_action.parameters())
         return params
+
+    def freeze_normalizers(self):
+        self.freeze_normalizer = True
+        self.target_net.freeze_normalizer = True
 
 
 class TempDiffNet(OptimizableNet):
@@ -741,14 +752,20 @@ class Actor(OptimizableNet):
             loss = F.smooth_l1_loss(output, target, reduction='none')
 
         if sample_weights is not None:
-            loss *= sample_weights
+            loss *= sample_weights.squeeze()
         return loss.mean()
 
     def output_function_continuous(self, x):
         if self.relu_idxs:
-            x[self.relu_idxs] = F.relu(x[self.relu_idxs])
+            # x[self.relu_idxs] = F.relu(x[self.relu_idxs])
+            y = F.relu(x[:, self.relu_idxs])
+            with torch.no_grad():
+                x[:, self.relu_idxs] = y
         if self.sigmoid_idxs:
-            x[self.sigmoid_idxs] = torch.sigmoid(x[self.sigmoid_idxs])
+            # x[self.sigmoid_idxs] = torch.sigmoid(x[self.sigmoid_idxs])
+            y = x[:, self.sigmoid_idxs].sigmoid()
+            with torch.no_grad():
+                x[:, self.sigmoid_idxs] = y
         if self.tanh_idxs:
             # print("first: ", x)
             # print(self.tanh_idxs)
@@ -759,6 +776,7 @@ class Actor(OptimizableNet):
             with torch.no_grad():
                 x[:, self.tanh_idxs] = y
             # print("inserted: ", x)
+        #print("Action: ", x)
         return (x * self.scaling) + self.offset
 
     def create_output_act_func(self):
@@ -810,6 +828,8 @@ class Actor(OptimizableNet):
             print()
 
         self.tanh_idxs = tanh_idxs
+        self.relu_idxs = relu_idxs
+        self.sigmoid_idxs = sigmoid_idxs
 
         return self.output_function_continuous
 
@@ -844,7 +864,7 @@ class Actor(OptimizableNet):
 
             # TODO: investigate why the multiplication by minus one is necessary for sample weights... seems to be for the V.TDE < 0 check. Using all actions with sample weights = TDE also works, but worse in cartpole
             # TODO: also investigate whether scaling by TDE can be beneficial. Both works at least with V.TDE < 0
-            sample_weights = -1 * torch.ones(output.shape)  # .unsqueeze(1) #
+            sample_weights = -1 * torch.ones(target.shape)  # .unsqueeze(1) #
             # sample_weights = self.V.TDE[pos_TDE_mask].view(output.shape)
 
             # print(output)
@@ -865,7 +885,7 @@ class Actor(OptimizableNet):
                 target = action_batch[pos_TDE_mask]
 
             # sample_weights = -1 * torch.ones(output.shape[0])
-            sample_weights = self.Q.TDE[pos_TDE_mask].view(output.shape[0])
+            sample_weights = self.Q.TDE[pos_TDE_mask].view(target.shape[0])
 
         # TODO: implement CACLA+Var
 
@@ -897,7 +917,7 @@ class Actor(OptimizableNet):
             # Clip actions
             target = torch.max(torch.min(target, self.action_high), self.action_low)
 
-            # sample_weights = torch.ones(output.shape[0]).unsqueeze(1) / abs(self.Q.TDE)
+            # sample_weights = torch.ones(target.shape[0]).unsqueeze(1) / abs(self.Q.TDE)
 
             # print(sample_weights)
             # print(output)

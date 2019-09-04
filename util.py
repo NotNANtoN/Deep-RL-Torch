@@ -20,6 +20,7 @@ Transition = namedtuple('Transition',
 class Normalizer():
     def __init__(self, input_shape, max_val=None, rgb_to_gray=False):
         self.n = 0
+        print("Normalizer shape: ", input_shape)
         self.mean = torch.zeros(input_shape)
         self.mean_diff = torch.zeros(input_shape)
         self.var = torch.ones(input_shape)
@@ -39,7 +40,10 @@ class Normalizer():
 
     def normalize(self, inputs):
         if self.rgb_to_gray and len(inputs.shape) == 4:  # 4 dims (batch_size, length, width, channels)
-            inputs = inputs.mean(dim=-1)
+            inputs = inputs.mean(dim=-1).unsqueeze(1)  # unsqueeze to bring to (batch_size, channels, length, width)
+        else:
+            if len(inputs.shape) == 4:
+                inputs = inputs.permute(0, 3, 1, 2)
 
         if self.max_val:
             return inputs / self.max_val

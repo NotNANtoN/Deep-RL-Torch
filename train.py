@@ -29,7 +29,7 @@ def key2obs_mineRL(key, obs_dict, device):
         inv_dict_list = obs_dict[key]
         obs = torch.cat([process_inv(inv_dict) for inv_dict in inv_dict_list])
     elif key == "pov":
-        obs = torch.cat(obs_dict[key]) / 255.0
+        obs = torch.cat(obs_dict[key])
     return obs.to(device)
 
 
@@ -81,8 +81,8 @@ if __name__ == "__main__":
     parameters = {  # General:
         "use_QV": False, "split_Bellman": False, "gamma": 1,
         "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
-        "normalize_obs": True,  # turning this on destroys training on cartpole
-        "rgb_to_gray": True, "freeze_normalize_after_initial": True,
+        "normalize_obs": True, "freeze_normalize_after_initial": True,
+        "rgb_to_gray": True, "matrix_max_val": 255,
         "reward_std": 0.0,
         # Actor-Critic:
         "use_actor_critic": False, "use_CACLA_V": False, "use_CACLA_Q": False, "use_DDPG": False,

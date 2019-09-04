@@ -186,7 +186,7 @@ class BasePolicy:
         self.F_sa = F_sa
         self.state_feature_len = F_s.layers_merge[-1].out_features
         if F_sa is not None:
-            self.state_action_feature_len = F_sa.layers[-1].out_features
+            self.state_action_feature_len = F_sa.layers_merge[-1].out_features
 
         # Set up Networks:
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
@@ -239,7 +239,7 @@ class BasePolicy:
         if self.discrete_env:
             action = self.explore_discrete_actions(raw_action)
         else:
-            action = raw_action
+            action = raw_action[0].numpy()
 
         return action, raw_action
 
@@ -264,7 +264,7 @@ class BasePolicy:
         # TODO: differentiate between DQN critic and AC critic by checking in Q __init__ for use_actor_critic
 
         if self.use_actor_critic:
-            self.state_action_feature_len = F_sa.layers[-1].out_features
+            self.state_action_feature_len = F_sa.layers_merge[-1].out_features
             input_size = self.state_action_feature_len
         else:
             self.state_feature_len = F_s.layers_merge[-1].out_features
@@ -366,9 +366,9 @@ class BasePolicy:
             state_batch = torch.cat(batch.state)
 
         # Create next state batch:
-        non_final_next_states = batch.next_state[non_final_mask]
+        # non_final_next_states = batch.next_state[non_final_mask]
         # TODO: the upper line is a test replacement for the lower one
-        # non_final_next_states = [s for s in batch.next_state if s is not None]
+        non_final_next_states = [s for s in batch.next_state if s is not None]
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
                 non_final_next_states = {key: [x[key] for x in non_final_next_states] for key in
