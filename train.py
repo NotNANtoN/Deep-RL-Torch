@@ -28,15 +28,14 @@ def key2obs_mineRL(key, obs_dict, device):
     elif key == "inventory":
         inv_dict_list = obs_dict[key]
         obs = torch.cat([process_inv(inv_dict) for inv_dict in inv_dict_list])
-    else:
-        obs = torch.cat(obs_dict[key])
+    elif key == "pov":
+        obs = torch.cat(obs_dict[key]) / 255.0
     return obs.to(device)
 
 
 
 
 if __name__ == "__main__":
-    # TODO: here we could declare functions for certain events that we pass as parameters. For MineRL we could define how the observation is split into matrix and vector and how to deal with the action space
 
     standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
                               {"name": "linear", "neurons": 128}]
@@ -60,6 +59,23 @@ if __name__ == "__main__":
     layers_actor = standard_hidden_block
 
     # TODO: define conv architectures
+    conv_mnhi_early = [{"name": "conv", "filters": 32, "kernel_size": 8, "stride": 4, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 4, "stride": 2, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 2, "stride": 1, "act_func": "relu"}
+                       ]
+    conv_mnhi_later = [{"name": "conv", "filters": 32, "kernel_size": 8, "stride": 4, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 4, "stride": 2, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                       ]
+
+    conv_vizdoom_winner = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                           {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                           {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                           {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                           {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 2, "act_func": "relu"}
+                           ]
+
+
     layers_conv = standard_hidden_block
 
     parameters = {  # General:
@@ -90,7 +106,7 @@ if __name__ == "__main__":
         "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
         "layers_V": layers_V,
         "layers_actor": layers_actor,
-        "layers_feature_matrix": layers_conv,
+        "layers_feature_matrix": conv_mnhi_later,
 
         # Env specific:
         "key2obs": None,

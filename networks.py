@@ -75,7 +75,7 @@ def create_conv_layers(input_matrix_shape, layer_dict):
         if layer["name"] == "batchnorm":
             layers.append(nn.BatchNorm2d(channel_last_layer))
         elif layer["name"] == "conv":
-            this_layer_channels = layer["channels_out"]
+            this_layer_channels = layer["filters"]
             layers.append(nn.Conv2d(channel_last_layer, this_layer_channels, layer["kernel_size"],
                                     layer["stride"]))
             matrix_width = conv2d_size_out(matrix_width, layer["kernel_size"], layer["stride"])
