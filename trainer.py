@@ -3,26 +3,25 @@ import gym
 gym.logger.set_level(40)
 import math
 import itertools
+from itertools import count
 import random
 import numpy as np
 
 from collections import namedtuple
-from itertools import count
-from PIL import Image
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import torchvision.transforms as T
-import tracemalloc
+
 import os
 import time
-import linecache
 
 from util import *
 from networks import *
 from policies import Agent
+from env_wrappers import FrameSkip
+
 
 
 class Trainer:
@@ -31,10 +30,25 @@ class Trainer:
         self.path = os.getcwd()
         self.log = Log(self.path + '/tb_log', log, tb_comment, log_NNs)
         self.steps_done = 0
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.max_val = hyperparameters["matrix_max_val"]
+        self.rgb2gray = hyperparameters["rgb_to_gray"]
 
         # Init env:
         self.env_name = env_name
         self.env = gym.make(env_name)
+        # Apply Wrappers:
+        if hyperparameters["frameskip"] > 1:
+            self.env = FrameSkip(self.env, skip=hyperparameters["frameskip"])
+        if hyperparameters["convert_2_torch_wrapper"]:
+            wrapper = hyperparameters["convert_2_torch_wrapper"]
+            self.env = wrapper(self.env, self.device, self.max_val, self.rgb2gray)
+
+        if hyperparameters["action_wrapper"]:
+            always_keys = hyperparameters["always_keys"]
+            exclude_keys = hyperparameters["exclude_keys"]
+            action_wrapper = hyperparameters["action_wrapper"]
+            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys)
         # Extract relevant hyperparameters:
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]
@@ -54,7 +68,6 @@ class Trainer:
         self.updates_per_step = hyperparameters["network_updates_per_step"]
 
         # copied from Old class:
-        self.state_len = len(self.env.observation_space.high)
         self.normalize_observations = hyperparameters["normalize_obs"]
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
         # if self.normalize_observations:
@@ -63,7 +76,6 @@ class Trainer:
         #    self.normalizer = None
 
         # Init Policy:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.policy = Agent(self.env, self.device, self.log, hyperparameters)
 
     def reset(self):
@@ -82,7 +94,8 @@ class Trainer:
 
     def fill_replay_buffer(self, n_actions):
         state = self.env.reset()
-        state = torch.tensor([state], device=self.device).float()
+        if not isinstance(state, dict):
+            state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in range(n_actions):
@@ -97,7 +110,8 @@ class Trainer:
             state = next_state
             if done:
                 state = self.env.reset()
-                state = torch.tensor([state], device=self.device).float()
+                if not isinstance(state, dict):
+                    state = torch.tensor([state], device=self.device).float()
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
         # Select an action
@@ -115,7 +129,8 @@ class Trainer:
         if done:
             next_state = None
         else:
-            next_state = torch.tensor([next_state], device=self.device).float()
+            if not isinstance(next_state, dict):
+                next_state = torch.tensor([next_state], device=self.device).float()
             #next_state = torch.tensor([next_state], device=self.device).float()
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
@@ -167,9 +182,9 @@ class Trainer:
             self.policy.freeze_normalizers()
 
         # Initialize test environment:
-        test_env = gym.make(self.env_name).unwrapped
-        test_state = test_env.reset()
-        test_state = torch.tensor([test_state], device=self.device).float()
+        # test_env = gym.make(self.env_name).unwrapped
+        # test_state = test_env.reset()
+        # test_state = torch.tensor([test_state], device=self.device).float()
 
         # Do the actual training:
         time_after_optimize = None
@@ -178,7 +193,8 @@ class Trainer:
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
-            state = torch.tensor([state], device=self.device).float()
+            if not isinstance(state, dict):
+                state = torch.tensor([state], device=self.device).float()
 
             for t in count():
                 self.steps_done += 1

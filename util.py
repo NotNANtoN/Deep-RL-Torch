@@ -18,20 +18,15 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
 class Normalizer():
-    def __init__(self, input_shape, max_val=None, rgb_to_gray=False):
+    def __init__(self, input_shape):
         self.n = 0
         print("Normalizer shape: ", input_shape)
         self.mean = torch.zeros(input_shape)
         self.mean_diff = torch.zeros(input_shape)
         self.var = torch.ones(input_shape)
-        self.max_val = max_val
-        self.rgb_to_gray = rgb_to_gray
 
 
     def observe(self, x):
-        if self.max_val:
-            return
-
         self.n += 1.
         last_mean = self.mean.clone()
         self.mean += (x - self.mean).mean(dim=0) / self.n
@@ -39,22 +34,10 @@ class Normalizer():
         self.var = torch.clamp(self.mean_diff / self.n, min=1e-2)
 
     def normalize(self, inputs):
-        if self.rgb_to_gray and len(inputs.shape) == 4:  # 4 dims (batch_size, length, width, channels)
-            inputs = inputs.mean(dim=-1).unsqueeze(1)  # unsqueeze to bring to (batch_size, channels, length, width)
-        else:
-            if len(inputs.shape) == 4:
-                inputs = inputs.permute(0, 3, 1, 2)
-
-        if self.max_val:
-            return inputs / self.max_val
-
         obs_std = torch.sqrt(self.var)
         return (inputs - self.mean) / obs_std
 
     def denormalize(self, inputs):
-        if self.max_val:
-            return inputs * self.max_val
-
         obs_std = torch.sqrt(self.var)
         return (inputs * obs_std) + self.mean
 

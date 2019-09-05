@@ -1,41 +1,44 @@
+import minerl
 import torch
 
 from RAdam import RAdam
+from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper
 from trainer import Trainer
 
-
-def one_hot_encode(x, num_actions):
-    y = torch.zeros(x.shape[0], num_actions).float()
-    return y.scatter(1, x, 1)
-
-
-def process_equipped(equip_dict):
-    dmg = (equip_dict["damage"])
-    max_dmg = float(equip_dict["maxDamage"])
-    item_type = one_hot_encode(equip_dict["type"], 9)
-    dmg_tensor = torch.tensor([dmg, max_dmg], dtype=torch.float)
-    return torch.cat([dmg_tensor, item_type]).unsqueeze(0)
-
-
-def process_inv(inv_dict):
-    return torch.cat([float(inv_dict[key]) for key in inv_dict]).unsqueeze(0)
-
-
-def key2obs_mineRL(key, obs_dict, device):
-    if key == "equipped_items":
-        equip_dict_list = obs_dict[key]
-        obs = torch.cat([process_equipped(equip_dict["mainhand"]) for equip_dict in equip_dict_list])
-    elif key == "inventory":
-        inv_dict_list = obs_dict[key]
-        obs = torch.cat([process_inv(inv_dict) for inv_dict in inv_dict_list])
-    elif key == "pov":
-        obs = torch.cat(obs_dict[key])
-    return obs.to(device)
-
-
-
-
 if __name__ == "__main__":
+    # Basic Discrete:
+    lunar = "LunarLander-v2"
+    cart = "CartPole-v1"
+    acro = "Acrobot-v1"
+    mountain = "MountainCar-v0"
+    # Continuous:
+    pendulum = "Pendulum-v0"
+    mountain_cont = "MountainCarContinuous-v0"
+    # Box2d Continuous:
+    lunar_cont = "LunarLanderContinuous-v2"
+    car_race = "CarRacing-v0"
+    biped = "BipedalWalker-v2"
+    biped_hard = "BipedalWalkerHardcore-v2"
+    # Mujoco:
+    inv_double_pend = "InvertedDoublePendulum-v2"
+    hopper = "Hopper-v2"
+    ant = "Ant-v2"
+    cheetah = "HalfCheetah-v2"
+    human = "Humanoid-v2"
+    human_stand = "HumanoidStandup-v2"
+
+    # MineRL:
+    tree = "MineRLTreechop-v0"
+    nav_dense = "MineRLNavigateDense-v0"
+    nav = "MineRLNavigate-v0"
+    nav_extreme_dense = "MineRLNavigateExtremeDense-v0"
+    nav_extreme = "MineRLNavigateExtreme-v0"
+    pickaxe = "MineRLObtainIronPickaxe-v0"
+    pickaxe_denes = "MineRLObtainIronPickaxeDense-v0"
+    diamond = "MineRLObtainDiamond-v0"
+    diamond_dense = "MineRLObtainDiamondDense-v0"
+
+    # NN architectures:
 
     standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
                               {"name": "linear", "neurons": 128}]
@@ -75,12 +78,13 @@ if __name__ == "__main__":
                            {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 2, "act_func": "relu"}
                            ]
 
-
     layers_conv = standard_hidden_block
 
-    parameters = {  # General:
-        "use_QV": False, "split_Bellman": False, "gamma": 1,
-        "use_QVMAX": False, "use_target_net": True, "max_episode_steps": 0,
+    parameters = {
+        # General:
+        "use_target_net": True, "max_episode_steps": 0, "gamma": 1, "frameskip": 0,
+        "use_QV": False, "split_Bellman": True,
+        "use_QVMAX": False,
         "normalize_obs": True, "freeze_normalize_after_initial": True,
         "rgb_to_gray": True, "matrix_max_val": 255,
         "reward_std": 0.0,
@@ -93,8 +97,8 @@ if __name__ == "__main__":
         "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
         "use_CER": True,
         # Exploration:
-        "epsilon": 0.1, "epsilon_decay": 0, "action_sigma": 0, "epsilon_mid": 0.1, "boltzmann_temp": 0,
-        "n_initial_random_actions": 3000,
+        "epsilon": 0.1, "action_sigma": 0,
+        "n_initial_random_actions": 10,
         # REM:
         "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
         # NN Training:
@@ -109,17 +113,24 @@ if __name__ == "__main__":
         "layers_feature_matrix": conv_mnhi_later,
 
         # Env specific:
-        "key2obs": None,
+        "convert_2_torch_wrapper": None,
+        "action_wrapper": None,
+        "always_keys": ["sprint"], "exclude_keys": ["sneak"],
 
         # TODO: The following still need to be implemented:
-        "SPLIT_BELL_NO_TARGET_r": True,
-        "QV_NO_TARGET_Q": False,
+        "epsilon_mid": 0.1, "boltzmann_temp": 0,
+        "epsilon_decay": 0,
+        "PER_anneal_beta": False,
+
+        "QV_NO_TARGET_Q": False,  # does it make sense to do??
 
         "use_hrl": False,  # important
-        "target_policy_smoothing_noise": 0.1,  # only for ac. can be delayed. can decay, make uniform or clip
-        "delayed_policy_update_steps": 0,  # only for actor critic, can be delayed to implement
         "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
         "use_clipped_double_Q": False,
+
+        "target_policy_smoothing_noise": 0.1,  # only for ac. can be delayed. can decay, make uniform or clip
+        "delayed_policy_update_steps": 0,  # only for actor critic, can be delayed to implement
+
         # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
         "use_world_model": False,
         "TDEC_episodic": True,
@@ -127,42 +138,19 @@ if __name__ == "__main__":
         "TDEC_ACT_FUNC": "abs",
         "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
     }
-    tensorboard_comment = ""
 
-    # TODO: why does normalize_obs destroy the whole training for cartpole????
-
-    # TODO: investigate the hyperparameter 'eps' of Adam and RAdam. For Deep RL it is usually set at 0.01 instead of 1e-8 -- see https://medium.com/autonomous-learning-library/radam-a-new-state-of-the-art-optimizer-for-rl-442c1e830564
-
-    # TODO: Introduce lr schedule - cosine anneal
+    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr?
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Basic Discrete:
-    lunar = "LunarLander-v2"
-    cart = "CartPole-v1"
-    acro = "Acrobot-v1"
-    mountain = "MountainCar-v0"
-    # Continuous:
-    pendulum = "Pendulum-v0"
-    mountain_cont = "MountainCarContinuous-v0"
-    # Box2d Continuous:
-    lunar_cont = "LunarLanderContinuous-v2"
-    car_race = "CarRacing-v0"
-    biped = "BipedalWalker-v2"
-    biped_hard = "BipedalWalkerHardcore-v2"
-    # Mujoco:
-    inv_double_pend = "InvertedDoublePendulum-v2"
-    hopper = "Hopper-v2"
-    ant = "Ant-v2"
-    cheetah = "HalfCheetah-v2"
-    human = "Humanoid-v2"
-    human_stand = "HumanoidStandup-v2"
+    # Decide on env here:
+    tensorboard_comment = ""
+    env = diamond
+    if "MineRL" in env:
+        print("MineRL env!")
+        parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
+        parameters["action_wrapper"] = SerialDiscreteActionWrapper
 
-    # print("Action space: ", env.action_space)
-    # print("Observation space: ", env.observation_space)
-
-    # trainer = Trainer(environment_name, device)
-
-    trainer = Trainer(cart, parameters, log=True, log_NNs=False, tb_comment=tensorboard_comment)
+    trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(50000, render=False, verbose=True)

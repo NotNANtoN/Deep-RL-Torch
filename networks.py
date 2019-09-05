@@ -61,15 +61,12 @@ def create_ff_layers(input_size, layer_dict, output_size):
 
 
 # Create a module list of conv layers specified in layer_dict
-def create_conv_layers(input_matrix_shape, layer_dict, grayscale=False):
+def create_conv_layers(input_matrix_shape, layer_dict):
     # format for entry in matrix_layers: ("conv", channels_in, channels_out, kernel_size, stride) if conv or
     #  ("batchnorm") for batchnorm
-    matrix_width = input_matrix_shape[0]
-    matrix_height = input_matrix_shape[1]
-    channel_last_layer = input_matrix_shape[2]
-
-    if grayscale:
-        channel_last_layer = 1
+    channel_last_layer = input_matrix_shape[0]
+    matrix_width = input_matrix_shape[1]
+    matrix_height = input_matrix_shape[2]
 
     act_functs = []
     layers = nn.ModuleList()
@@ -128,9 +125,6 @@ class OptimizableNet(nn.Module):
             self.num_actions = len(env.action_space.low)
             self.action_low = torch.tensor(env.action_space.low)
             self.action_high = torch.tensor(env.action_space.high)
-        # Env Obs Space:
-        self.vector_len = len(self.env.observation_space.high)
-        self.matrix_shape = None
 
         # Load hyperparameters:
         if is_target_net:
@@ -214,12 +208,9 @@ class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, is_target_net=False):
         super(ProcessState, self).__init__(env, device, log, hyperparameters)
 
-        self.rgb_to_gray = hyperparameters["rgb_to_gray"]
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_feature_matrix"]
         self.normalize_obs = hyperparameters["normalize_obs"]
-        self.matrix_max_val = hyperparameters["matrix_max_val"]
-        self.key2obs = hyperparameters["key2obs"]
 
         self.freeze_normalizer = False
 
@@ -264,10 +255,7 @@ class ProcessState(OptimizableNet):
         if isinstance(x, dict):
             for key, proc_dict in zip(x, proc_list):
                 # For e.g. MineRL we need to extract the obs from the key in-depth:
-                if self.key2obs is not None:
-                    obs = self.key2obs(key, proc_dict, self.device)
-                else:
-                    obs = sample[key]
+                obs = x[key]
                 obs = self.apply_processing_dict(obs, proc_dict)
                 outputs.append(obs)
         # If the obs is simply a torch tensor:
@@ -278,7 +266,7 @@ class ProcessState(OptimizableNet):
 
     def update_processing_list(self, obs, proc_list):
         # Create feedforward layers:
-        if len(obs.shape) == 1:
+        if len(obs.shape) <= 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             output_size = layers_vector[-1].out_features
             vector_normalizer = Normalizer(np.expand_dims(obs, 0).shape)
@@ -289,9 +277,8 @@ class ProcessState(OptimizableNet):
             proc_list.append(layer_dict)
         # Create conv layers:
         elif 1 < len(obs.shape) <= 4:
-            layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers,
-                                                                               grayscale=self.rgb_to_gray)
-            matrix_normalizer = Normalizer(obs.shape, rgb_to_gray=self.rgb_to_gray, max_val=self.matrix_max_val)
+            layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
+            matrix_normalizer = Normalizer(obs.shape)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
             proc_list.append(layer_dict)
@@ -303,13 +290,15 @@ class ProcessState(OptimizableNet):
         # Get a sample to assess the shape of the observations easily:
         obs_space = env.observation_space
         sample = obs_space.sample()
+        if isinstance(sample, dict):
+            sample = self.env.observation(sample)
 
         processing_list = []
         merge_input_size = 0
         # If the obs is a dict:
         if isinstance(sample, dict):
             for key in sample:
-                obs = sample[key]
+                obs = sample[key][0]
                 output_size = self.update_processing_list(obs, processing_list)
                 merge_input_size += output_size
         # If the obs is simply a np array:
@@ -321,7 +310,7 @@ class ProcessState(OptimizableNet):
 
     def forward(self, state):
         x = self.apply_processing_list(state, self.processing_list)
-        x = torch.cat(x, 0)
+        x = torch.cat(x, dim=1)
         x = apply_layers(x, self.layers_merge, self.act_functs_merge)
         return x
 
@@ -416,9 +405,6 @@ class TempDiffNet(OptimizableNet):
 
         self.current_reward_prediction = None
 
-    def get_updateable_params(self):
-        return self.layers_TD.parameters()
-
     def create_split_net(self, input_size, updateable_parameters, device, hyperparameters):
         if self.split:
             self.lr_r = hyperparameters["lr_r"]
@@ -449,22 +435,13 @@ class TempDiffNet(OptimizableNet):
     def forward_R(self, x):
         return apply_layers(x, self.layers_TD, self.act_functs_TD)
 
-    def weights_init(self, m):
-        # if isinstance(m, nn.Conv2d):
-        torch.nn.init.xavier_uniform(m.weight.data)
-
-    def predict_current_state(self, state_features, state_action_features, actions):
-        raise NotImplementedError
-
     def calculate_next_state_values(self, non_final_next_state_features, non_final_mask, actor=None):
-        next_state_values = torch.zeros(self.batch_size, 1, device=self.device)
+        next_state_values = torch.zeros(len(non_final_mask), 1, device=self.device)
         if non_final_next_state_features is None:
             return next_state_values
         with torch.no_grad():
             next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features, self.F_sa,
                                                                          actor)
-        # print(next_state_values[non_final_mask])
-        # print(next_state_predictions)
         next_state_values[non_final_mask] = next_state_predictions  # [0] #TODO: why [0]?
         return next_state_values
 
@@ -551,6 +528,16 @@ class TempDiffNet(OptimizableNet):
         if self.F_sa is not None:
             self.F_sa.log_nn_data(self.name)
 
+    def get_updateable_params(self):
+        return self.layers_TD.parameters()
+
+    def weights_init(self, m):
+        # if isinstance(m, nn.Conv2d):
+        torch.nn.init.xavier_uniform(m.weight.data)
+
+    def predict_current_state(self, state_features, state_action_features, actions):
+        raise NotImplementedError
+
 
 class Q(TempDiffNet):
     def __init__(self, input_size, env, F_s, F_sa, device, log, hyperparameters, is_target_net=False):
@@ -595,6 +582,9 @@ class Q(TempDiffNet):
         self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
+        if self.target_net:
+            self.target_net.layers_r = self.layers_r
+
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask, actor=None, Q=None, V=None):
         if self.use_QVMAX:
@@ -679,6 +669,9 @@ class V(TempDiffNet):
 
         # Create target net
         self.target_net = self.create_target_net()
+        if self.target_net:
+            self.target_net.layers_r = self.layers_r
+
 
     def predict_next_state(self, non_final_next_states, non_final_mask, actor=None, Q=None, V=None):
         if self.use_QVMAX:
