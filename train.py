@@ -84,7 +84,7 @@ if __name__ == "__main__":
         # General:
         "use_target_net": True, "max_episode_steps": 0, "gamma": 1, "frameskip": 0,
         "use_QV": False, "split_Bellman": True,
-        "use_QVMAX": False,
+        "use_QVMAX": True,
         "normalize_obs": True, "freeze_normalize_after_initial": True,
         "rgb_to_gray": True, "matrix_max_val": 255,
         "reward_std": 0.0,
@@ -94,15 +94,15 @@ if __name__ == "__main__":
         # Target-net:
         "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau": 0.005,
         # Replay buffer:
-        "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
+        "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
         "use_CER": True,
         # Exploration:
         "epsilon": 0.1, "action_sigma": 0,
-        "n_initial_random_actions": 10,
+        "n_initial_random_actions": 1000,
         # REM:
-        "use_REM": False, "REM_num_heads": 20, "REM_num_samples": 5,
+        "use_REM": True, "REM_num_heads": 5, "REM_num_samples": 2,
         # NN Training:
-        "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 32, "optimizer": RAdam,
+        "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 64, "optimizer": RAdam,
         "max_norm": 1, "network_updates_per_step": 1,
         # NN architecture setup:
         "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
     # Decide on env here:
     tensorboard_comment = ""
-    env = diamond
+    env = nav_dense
     if "MineRL" in env:
         print("MineRL env!")
         parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
