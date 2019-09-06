@@ -1,6 +1,5 @@
-import logging
-
-logging.basicConfig(level=logging.DEBUG)
+#import logging
+#logging.basicConfig(level=logging.DEBUG)
 
 import torch
 
@@ -97,13 +96,13 @@ if __name__ == "__main__":
         # Target-net:
         "target_network_hard_steps": 250, "use_polyak_averaging": True, "polyak_averaging_tau": 0.005,
         # Replay buffer:
-        "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": True, "PER_alpha": 0.6, "PER_beta": 0.4,
+        "use_exp_rep": True, "replay_buffer_size": 50000, "use_PER": False, "PER_alpha": 0.6, "PER_beta": 0.4,
         "use_CER": True,
         # Exploration:
         "epsilon": 0.1, "action_sigma": 0,
         "n_initial_random_actions": 100,
         # REM:
-        "use_REM": False, "REM_num_heads": 5, "REM_num_samples": 2,
+        "use_REM": True, "REM_num_heads": 5, "REM_num_samples": 2,
         # NN Training:
         "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 64, "optimizer": RAdam,
         "max_norm": 1, "network_updates_per_step": 1,
@@ -157,7 +156,7 @@ if __name__ == "__main__":
         parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
         parameters["action_wrapper"] = SerialDiscreteActionWrapper
         if "Pickaxe" or "Diamond" in env:
-            parameters["use_MineRL_policy"] = False
+            parameters["use_MineRL_policy"] = True
 
     trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc

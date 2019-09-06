@@ -460,10 +460,11 @@ class TempDiffNet(OptimizableNet):
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None):
         state_features = transitions["state_features"]
         state_action_features = transitions["state_action_features"]
-        action_batch = transitions["action"]
+        action_batch = transitions["action_argmax"]
         reward_batch = transitions["reward"]
         non_final_next_state_features = transitions["non_final_next_state_features"]
         non_final_mask = transitions["non_final_mask"]
+
 
         # Compute V(s_t) or Q(s_t, a_t)
         predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
@@ -598,7 +599,6 @@ class Q(TempDiffNet):
     def predict_current_state(self, state_features, state_action_features, actions):
         if not self.use_actor_critic:
             input_features = state_features
-            actions = torch.argmax(actions, 1).unsqueeze(1)
             if self.split:
                 reward_prediction = self.forward_r(input_features).gather(1, actions)
             else:

@@ -1,5 +1,4 @@
 import minerl
-# push
 import gym
 
 gym.logger.set_level(40)

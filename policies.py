@@ -398,6 +398,7 @@ class BasePolicy:
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
                        "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None}
+        transitions["action_argmax"] = torch.argmax(action_batch, 1).unsqueeze(1)
 
         return transitions
 
@@ -513,6 +514,8 @@ class REM(BasePolicy):
         # TODO: maybe let all the critics of the ground policy share their reward nets if they are split
         self.policy_heads = [ground_policy(None, F_s, F_sa, env, device, log, hyperparameters)
                              for _ in range(self.num_heads)]
+        for head in self.policy_heads:
+            head.set_retain_graph(True)
 
     def init_actor(self, Q, V, F_s):
         return None
@@ -526,15 +529,16 @@ class REM(BasePolicy):
         error = 0
         for idx in idxes:
             current_policy = self.policy_heads[idx]
-            is_last =  (idx == idxes[-1])
-            current_policy.set_retain_graph(not is_last)
             # TODO: here we might bootstrap over our batch to have slightly different training data per policy!
             error += current_policy.optimize_networks(transitions)
         return error / self.num_samples
 
-    def choose_action(self, state):
+    def choose_action(self, state, calc_state_features=True):
         # Preprocess:
-        state_features = self.F_s(state)
+        if calc_state_features:
+            state_features = self.F_s(state)
+        else:
+            state_features = state
         # Select random subset to output action:
         idxes = random.sample(range(self.num_heads), self.num_samples)
         summed_action = None
@@ -592,6 +596,7 @@ class MineRLObtainPolicy(BasePolicy):
         env.action_space = action_space
         new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, env, self.device, self.log,
                                       self.hyperparameters)
+        new_policy.set_retain_graph(True)
         new_policy.shift = shift
         action_mapping.extend([counter for _ in range(num_actions)])
         return new_policy, shift + num_actions
@@ -611,8 +616,8 @@ class MineRLObtainPolicy(BasePolicy):
             low_lvl_action = action - self.lower_level_policies[high_lvl_action].shift
             high_lvl.append(high_lvl_action)
             low_lvl.append(low_lvl_action)
-        high_lvl = torch.tensor(high_lvl, dtype=torch.float).unsqueeze(0)
-        low_lvl = torch.tensor(low_lvl, dtype=torch.float).unsqueeze(0)
+        high_lvl = torch.tensor(high_lvl).unsqueeze(1)
+        low_lvl = torch.tensor(low_lvl).unsqueeze(1)
         return high_lvl, low_lvl
 
     def get_masks(self, actions, num_low_lvl=6):
@@ -625,28 +630,25 @@ class MineRLObtainPolicy(BasePolicy):
     def optimize_networks(self, transitions):
         error = 0
         # Save actions:
-        original_actions = transitions["action"].clone()
-        actions = torch.argmax(original_actions, 1)
-
+        original_actions = transitions["action_argmax"].clone()
         # Transform action idx such as 34 into e.g. ([3], [8])
-        print("actions:", actions)
-        high_level_actions, low_level_actions = self.action2high_low_level(actions)
-        print("hihg level: ", high_level_actions)
-        print("low level: ", low_level_actions)
+        high_level_actions, low_level_actions = self.action2high_low_level(original_actions)
         # Train high-level policy:
-        transitions["action"] = high_level_actions
+        transitions["action_argmax"] = high_level_actions
         error += self.decider.optimize_networks(transitions)
         # Get mask of which low-level policy trains on which part of the transitions:
         mask_list = self.get_masks(high_level_actions)
         # Train low-level policies:
-        for policy_idx, mask in enumerate(mask_list):
-            if not mask:
+        for policy_idx, idx_mask in enumerate(mask_list):
+            if not idx_mask:
                 continue
-            transitions["action"][mask] = low_level_actions[mask]
-            train_on = transitions[mask]
-            error += self.lower_level_policies[policy_idx].optimize_networks(train_on)
+            transitions["action_argmax"][idx_mask] = low_level_actions[idx_mask]
+            # Apply mask to transition dict and dicts within dict:
+            partial_transitions = {key: None if transitions[key] is None else transitions[key] if isinstance(transitions[key], list) else {sub_key: transitions[key][sub_key][idx_mask] for sub_key in transitions[key]} if isinstance(transitions[key], dict) else transitions[key][idx_mask] for key in transitions}
+            policy = self.lower_level_policies[policy_idx]
+            error[idx_mask] += policy.optimize_networks(partial_transitions)
         # Reset actions just in case:
-        transitions["action"] = original_actions
+        transitions["action_argmax"] = original_actions
         return error
 
     def apply_lower_level_policy(self, policy, state):
