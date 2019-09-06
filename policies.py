@@ -1,11 +1,12 @@
-import numpy as np
-import random
+# External imports:
+import gym
 import torch
+from gym.spaces import Discrete
 
+# Internal Imports:
 from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
-from networks import Q, V, Actor, ProcessState, ProcessStateAction, create_ff_layers
+from networks import Q, V, Actor, ProcessState, ProcessStateAction
 from util import *
-from util import calc_gradient_norm, calc_norm
 
 
 # This is the interface for the agent being trained by a Trainer instance
@@ -80,13 +81,19 @@ class Agent(AgentInterface):
             base_policy = REM
         else:
             ground_policy = None
+
         # Decide whether to use Hierarchical Reinforcement Learning:
         if self.hyperparameters["use_hrl"]:
             policy = HierarchicalPolicy(base_policy, ground_policy, self.log, self.hyperparameters)
         else:
             print("Base Policy (will act concretely): ", base_policy)
             print("Ground Policy (will use base policy): ", ground_policy)
-            policy = base_policy(ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
+            if self.hyperparameters["use_MineRL_policy"]:
+                print("Use Hierarchical MineRL policy!")
+                policy = MineRLObtainPolicy(ground_policy, base_policy, self.F_s, self.F_sa, self.env, self.device,
+                                            self.log, self.hyperparameters)
+            else:
+                policy = base_policy(ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
                                  self.hyperparameters)
         return policy
 
@@ -134,12 +141,13 @@ class BasePolicy:
             self.num_actions = self.env.action_space.n
             self.action_low = torch.zeros(self.num_actions, device=self.device)
             self.action_high = torch.ones(self.num_actions, device=self.device)
+            print("Num actions: ", self.num_actions)
         else:
             self.num_actions = len(self.env.action_space.high)
             self.action_low = torch.tensor(env.action_space.low, device=self.device)
             self.action_high = torch.tensor(env.action_space.high, device=self.device)
-        print("Env action low: ", self.action_low)
-        print("Env action high: ", self.action_high)
+            print("Env action low: ", self.action_low)
+            print("Env action high: ", self.action_high)
 
 
         # Set up parameters:
@@ -217,9 +225,12 @@ class BasePolicy:
             action = np.clip(action, self.action_low, self.action_high)
         return action
 
-    def choose_action(self, state):
+    def choose_action(self, state, calc_state_features=True):
         with torch.no_grad():
-            state_features = self.F_s(state)
+            if calc_state_features:
+                state_features = self.F_s(state)
+            else:
+                state_features = state
             action = self.actor(state_features)
         return action
 
@@ -529,7 +540,8 @@ class REM(BasePolicy):
         summed_action = None
         for idx in idxes:
             current_policy = self.policy_heads[idx]
-            action = current_policy.actor(state_features).detach()
+            with torch.no_grad():
+                action = current_policy.actor(state_features)
             if summed_action is None:
                 summed_action = action
             else:
@@ -545,6 +557,140 @@ class REM(BasePolicy):
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         # TOOD: implement
+        return torch.tensor([0])
+
+    def display_debug_info(self):
+        pass
+
+
+class MineRLObtainPolicy(BasePolicy):
+    def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(MineRLObtainPolicy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
+
+        self.base_policy = base_policy
+
+        # Create policies:
+        print("Creating high-level policy:")
+        self.decider, _ = self.create_adjusted_action_policy(6, 0, [], 0)
+        shift = 0
+        self.action_mapping = []
+        print("Creating low-level policies:")
+        self.mover, shift = self.create_adjusted_action_policy(9, shift, self.action_mapping, 0)
+        self.placer, shift = self.create_adjusted_action_policy(6, shift, self.action_mapping, 1)
+        self.equipper, shift = self.create_adjusted_action_policy(7, shift, self.action_mapping, 2)
+        self.crafter, shift = self.create_adjusted_action_policy(4, shift, self.action_mapping, 3)
+        self.nearby_crafter, shift = self.create_adjusted_action_policy(7, shift, self.action_mapping, 4)
+        self.nearby_smelter, shift = self.create_adjusted_action_policy(2, shift, self.action_mapping, 5)
+        print()
+
+        self.lower_level_policies = (self.mover, self.placer, self.equipper, self.crafter, self.nearby_crafter,
+                                     self.nearby_smelter)
+
+    def create_adjusted_action_policy(self, num_actions, shift, action_mapping, counter):
+        action_space = Discrete(num_actions)
+        env = gym.Env()
+        env.action_space = action_space
+        new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, env, self.device, self.log,
+                                      self.hyperparameters)
+        new_policy.shift = shift
+        action_mapping.extend([counter for _ in range(num_actions)])
+        return new_policy, shift + num_actions
+
+    def init_actor(self, Q, V, F_s):
+        return None
+
+    def init_critic(self, F_s, F_sa):
+        return None, None
+
+    def action2high_low_level(self, actions):
+        high_lvl = []
+        low_lvl = []
+        for action in actions:
+            action = action.item()
+            high_lvl_action = self.action_mapping[action]
+            low_lvl_action = action - self.lower_level_policies[high_lvl_action].shift
+            high_lvl.append(high_lvl_action)
+            low_lvl.append(low_lvl_action)
+        high_lvl = torch.tensor(high_lvl, dtype=torch.float).unsqueeze(0)
+        low_lvl = torch.tensor(low_lvl, dtype=torch.float).unsqueeze(0)
+        return high_lvl, low_lvl
+
+    def get_masks(self, actions, num_low_lvl=6):
+        # Aggregate idxs for lower-level policies to operate on:
+        idxs = [[] for _ in range(num_low_lvl)]
+        for idx, action in enumerate(actions):
+            idxs[action.item()].append(idx)
+        return idxs
+
+    def optimize_networks(self, transitions):
+        error = 0
+        # Save actions:
+        original_actions = transitions["action"].clone()
+        actions = torch.argmax(original_actions, 1)
+
+        # Transform action idx such as 34 into e.g. ([3], [8])
+        print("actions:", actions)
+        high_level_actions, low_level_actions = self.action2high_low_level(actions)
+        print("hihg level: ", high_level_actions)
+        print("low level: ", low_level_actions)
+        # Train high-level policy:
+        transitions["action"] = high_level_actions
+        error += self.decider.optimize_networks(transitions)
+        # Get mask of which low-level policy trains on which part of the transitions:
+        mask_list = self.get_masks(high_level_actions)
+        # Train low-level policies:
+        for policy_idx, mask in enumerate(mask_list):
+            if not mask:
+                continue
+            transitions["action"][mask] = low_level_actions[mask]
+            train_on = transitions[mask]
+            error += self.lower_level_policies[policy_idx].optimize_networks(train_on)
+        # Reset actions just in case:
+        transitions["action"] = original_actions
+        return error
+
+    def apply_lower_level_policy(self, policy, state):
+        with torch.no_grad():
+            actions_vals = policy(state)
+        action_idxs = torch.argmax(actions_vals, dim=1) + policy.shift
+        return action_idxs
+
+    def choose_action(self, state):
+        # Preprocess:
+        state_features = self.F_s(state)
+        # Preprocess:
+        action_q_vals = torch.zeros(state_features.shape[0], self.num_actions)
+        # Apply high-level policy:
+        with torch.no_grad():
+            action = self.decider.choose_action(state_features, calc_state_features=False)
+        high_level_actions = torch.argmax(action, dim=1)
+        # print("High level actions: ", high_level_actions)
+        masks = self.get_masks(high_level_actions)
+        # print("Masks: ", masks)
+        # Apply lower-level policies:
+        for policy_idx, mask in enumerate(masks):
+            if not mask:
+                continue
+            # print("Mask: ", mask)
+            # print("state shape: ", state_features.shape)
+            # print("action q vals masked shape: ", action_q_vals[mask].shape)
+            # print("action q vals masked: ", action_q_vals[mask])
+            # print("state masked shape: ", state_features[mask].shape)
+            policy = self.lower_level_policies[policy_idx]
+            shift = policy.shift
+            low_lvl_action = policy.choose_action(state_features, calc_state_features=False)
+            # print("low level action shape: ", low_lvl_action.shape)
+            # print("low level action: ", low_lvl_action)
+            action_q_vals[0][shift: shift + len(low_lvl_action[0])] = low_lvl_action[0]
+        return action_q_vals
+
+    def update_targets(self, n_steps):
+        self.decider.update_targets(n_steps)
+        for policy in self.lower_level_policies:
+            policy.update_targets(n_steps)
+
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        # TODO: implement
         return torch.tensor([0])
 
     def display_debug_info(self):

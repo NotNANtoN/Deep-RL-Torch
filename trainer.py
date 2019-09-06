@@ -1,23 +1,12 @@
 import gym
 
 gym.logger.set_level(40)
-import math
-import itertools
 from itertools import count
-import random
-import numpy as np
-
-from collections import namedtuple
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 
-import os
 import time
 
-from util import *
 from networks import *
 from policies import Agent
 from env_wrappers import FrameSkip
@@ -48,7 +37,9 @@ class Trainer:
             always_keys = hyperparameters["always_keys"]
             exclude_keys = hyperparameters["exclude_keys"]
             action_wrapper = hyperparameters["action_wrapper"]
-            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys)
+            forward_when_jump = hyperparameters["forward_when_jump"]
+            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys,
+                                      forward_when_jump=forward_when_jump)
         # Extract relevant hyperparameters:
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]

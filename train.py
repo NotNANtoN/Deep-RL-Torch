@@ -1,4 +1,7 @@
-import minerl
+import logging
+
+logging.basicConfig(level=logging.DEBUG)
+
 import torch
 
 from RAdam import RAdam
@@ -98,9 +101,9 @@ if __name__ == "__main__":
         "use_CER": True,
         # Exploration:
         "epsilon": 0.1, "action_sigma": 0,
-        "n_initial_random_actions": 1000,
+        "n_initial_random_actions": 100,
         # REM:
-        "use_REM": True, "REM_num_heads": 5, "REM_num_samples": 2,
+        "use_REM": False, "REM_num_heads": 5, "REM_num_samples": 2,
         # NN Training:
         "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 64, "optimizer": RAdam,
         "max_norm": 1, "network_updates_per_step": 1,
@@ -116,6 +119,8 @@ if __name__ == "__main__":
         "convert_2_torch_wrapper": None,
         "action_wrapper": None,
         "always_keys": ["sprint"], "exclude_keys": ["sneak"],
+        "use_MineRL_policy": False,
+        "forward_when_jump": True,
 
         # TODO: The following still need to be implemented:
         "epsilon_mid": 0.1, "boltzmann_temp": 0,
@@ -145,11 +150,14 @@ if __name__ == "__main__":
 
     # Decide on env here:
     tensorboard_comment = ""
-    env = nav_dense
+    env = pickaxe
+    print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
         parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
         parameters["action_wrapper"] = SerialDiscreteActionWrapper
+        if "Pickaxe" or "Diamond" in env:
+            parameters["use_MineRL_policy"] = False
 
     trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc

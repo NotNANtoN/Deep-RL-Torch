@@ -1,13 +1,14 @@
 import copy
+import time
+from collections import OrderedDict
+from logging import getLogger
+
 import cv2
 import gym
 import numpy as np
-import time
 import torch
-from collections import OrderedDict
 from gym.wrappers import Monitor
 from gym.wrappers.monitoring.stats_recorder import StatsRecorder
-from logging import getLogger
 
 cv2.ocl.setUseOpenCL(False)
 logger = getLogger(__name__)
@@ -276,7 +277,8 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
 
     BINARY_KEYS = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'attack']
 
-    def __init__(self, env, always_keys=None, reverse_keys=None, exclude_keys=None, exclude_noop=False):
+    def __init__(self, env, always_keys=None, reverse_keys=None, exclude_keys=None, exclude_noop=False,
+                 forward_when_jump=False):
         super().__init__(env)
 
         self.always_keys = [] if always_keys is None else always_keys
@@ -350,6 +352,8 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
                     op[key] = 0
                 else:
                     op[key] = 1
+                if key == "jump" and forward_when_jump:
+                    op["forward"] = 1
                 self._actions.append(op)
             elif key == 'camera':
                 # action candidate : {[0, -10], [0, 10]}
@@ -365,9 +369,9 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
                     op = copy.deepcopy(self.noop)
                     op[key] = a
                     self._actions.append(op)
+            print(key, op[key])
         if self.exclude_noop:
             del self._actions[0]
-
         n = len(self._actions)
         self.action_space = gym.spaces.Discrete(n)
         logger.info('{} is converted to {}.'.format(self.wrapping_action_space, self.action_space))
