@@ -1,7 +1,9 @@
+import minerl
 import gym
 
 gym.logger.set_level(40)
 from itertools import count
+
 
 import torch
 
