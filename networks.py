@@ -585,7 +585,7 @@ class Q(TempDiffNet):
         self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
-        if self.target_net:
+        if self.target_net and self.split:
             self.target_net.layers_r = self.layers_r
 
 
@@ -671,7 +671,7 @@ class V(TempDiffNet):
 
         # Create target net
         self.target_net = self.create_target_net()
-        if self.target_net:
+        if self.target_net and self.split:
             self.target_net.layers_r = self.layers_r
 
 
