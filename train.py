@@ -84,9 +84,9 @@ if __name__ == "__main__":
 
     parameters = {
         # General:
-        "use_target_net": True, "max_episode_steps": 0, "gamma": 1, "frameskip": 0,
-        "use_QV": False, "split_Bellman": True,
-        "use_QVMAX": True,
+        "use_target_net": True, "max_episode_steps": 0, "gamma": 0.99, "frameskip": 0,
+        "use_QV": False, "split_Bellman": False,
+        "use_QVMAX": False,
         "normalize_obs": True, "freeze_normalize_after_initial": True,
         "rgb_to_gray": True, "matrix_max_val": 255,
         "reward_std": 0.0,
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         # REM:
         "use_REM": False, "REM_num_heads": 5, "REM_num_samples": 2,
         # NN Training:
-        "lr_Q": 0.001, "lr_r": 0.001, "lr_V": 0.001, "lr_actor": 0.0005, "batch_size": 64, "optimizer": RAdam,
+        "lr_Q": 0.0001, "lr_r": 0.00005, "lr_V": 0.0001, "lr_actor": 0.0005, "batch_size": 64, "optimizer": RAdam,
         "max_norm": 1, "network_updates_per_step": 1,
         # NN architecture setup:
         "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
@@ -117,7 +117,7 @@ if __name__ == "__main__":
         # Env specific:
         "convert_2_torch_wrapper": None,
         "action_wrapper": None,
-        "always_keys": ["sprint"], "exclude_keys": ["sneak"],
+        "always_keys": ["sprint"], "exclude_keys": ["sneak"], "reverse_keys": ["forward"],
         "use_MineRL_policy": False,
         "forward_when_jump": True,
 
@@ -125,8 +125,10 @@ if __name__ == "__main__":
         "epsilon_mid": 0.1, "boltzmann_temp": 0,
         "epsilon_decay": 0,
         "PER_anneal_beta": False,
+        "normalize_reward_magnitude": False,
+        "lambda": 0,
 
-        "QV_NO_TARGET_Q": False,  # does it make sense to do??
+        "QV_NO_TARGET_Q": False,  # does it even make sense to do??
 
         "use_hrl": False,  # important
         "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
@@ -160,4 +162,4 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=True, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    trainer.run(50000, render=False, verbose=True)
+    trainer.run(400000, render=False, verbose=True)
