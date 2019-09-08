@@ -18,12 +18,12 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
 class Normalizer():
-    def __init__(self, input_shape):
+    def __init__(self, input_shape, device):
         self.n = 0
         print("Normalizer shape: ", input_shape)
-        self.mean = torch.zeros(input_shape)
-        self.mean_diff = torch.zeros(input_shape)
-        self.var = torch.ones(input_shape)
+        self.mean = torch.zeros(input_shape, device=device)
+        self.mean_diff = torch.zeros(input_shape, device=device)
+        self.var = torch.ones(input_shape, device=device)
 
 
     def observe(self, x):
