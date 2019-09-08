@@ -269,7 +269,7 @@ class ProcessState(OptimizableNet):
         if len(obs.shape) <= 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             output_size = layers_vector[-1].out_features
-            vector_normalizer = Normalizer(np.expand_dims(obs, 0).shape)
+            vector_normalizer = Normalizer(obs.shape)
             # TODO: for both normalizers (vector normalizer above too) extract max and min obs value somehow for good normalization
 
             # Add to lists:
