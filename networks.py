@@ -268,6 +268,7 @@ class ProcessState(OptimizableNet):
         # Create feedforward layers:
         if len(obs.shape) <= 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
+            layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
             vector_normalizer = Normalizer(obs.shape, self.device)
             # TODO: for both normalizers (vector normalizer above too) extract max and min obs value somehow for good normalization
@@ -278,6 +279,7 @@ class ProcessState(OptimizableNet):
         # Create conv layers:
         elif 1 < len(obs.shape) <= 4:
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
+            layers_matrix.to(self.device)
             matrix_normalizer = Normalizer(obs.shape, self.device)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
