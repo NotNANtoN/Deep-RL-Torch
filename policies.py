@@ -349,6 +349,8 @@ class BasePolicy:
             if not isinstance(importance_weights, np.ndarray):
                 print("imporatnce weights (not ndarray): ", importance_weights)
                 logging.warning("Importance weights are not an ndarray!")
+            else:
+                print("importance weights: ", importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()
         else:
             transitions = self.memory.sample(sampling_size)
