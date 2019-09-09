@@ -215,8 +215,8 @@ class Trainer:
                 if time_after_optimize is not None:
                     self.log.add("Non-Optimize Time", time_before_optimize - time_after_optimize)
 
-                num_updates = self.updates_per_step if self.updates_per_step >= 1\
-                                                    else n_steps % (1 / self.updates_per_step) == 0
+                num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
+                                                    else n_steps % int(1 / self.updates_per_step) == 0
                 for _ in range(num_updates):
                     # Perform one step of the optimization (on the target network)
                     self.policy.optimize()
