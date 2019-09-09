@@ -153,8 +153,8 @@ class Trainer:
 
     def _display_debug_info(self, i_episode):
         episode_return = self.log.get_episodic("Return")
-        optimize_time = self.log.get_episodic("Optimize Time")
-        non_optimize_time = self.log.get_episodic("Non-Optimize Time")
+        optimize_time = self.log.get_episodic("Optimize_Time")
+        non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
         print("#Episode ", i_episode)
         print("#Steps: ", self.steps_done)
         print(" Return:", episode_return[0])
@@ -228,8 +228,8 @@ class Trainer:
                 time_after_optimize = time.time()
 
                 # Log reward and time:
-                self.log.add("Train Reward", reward.item())
-                self.log.add("Train Cum. Episode Reward", np.sum(self.log.get_episodic("Train Reward")))
+                self.log.add("Train_Reward", reward.item())
+                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")))
                 self.log.add("Optimize Time", time_after_optimize - time_before_optimize)
 
                 if render:
@@ -238,7 +238,7 @@ class Trainer:
                 self.log.step()
                 if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode) \
                         or self.steps_done >= n_steps:
-                    self.log.add("Return", np.sum(self.log.get_episodic("Train Reward")), steps=i_episode)
+                    self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode)
                     if verbose:
                         self._display_debug_info(i_episode)
                     self.log.flush_episodic()
