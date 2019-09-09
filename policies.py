@@ -306,7 +306,8 @@ class BasePolicy:
 
         TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
 
-        return TDE
+        TDE_abs = abs(TDE)
+        return TDE_abs
 
 
     def optimize(self):
@@ -329,8 +330,9 @@ class BasePolicy:
         error = self.optimize_networks(transitions)
 
         error = abs(error) + 0.0001
+        error_np = error.cpu().detach().numpy()
         if self.use_PER:
-            self.memory.update_priorities(transitions["PER_idxs"], error)
+            self.memory.update_priorities(transitions["PER_idxs"], error_np)
 
         self.display_debug_info()
 
@@ -346,11 +348,6 @@ class BasePolicy:
         if self.use_PER:
             transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
             #print(importance_weights)
-            if not isinstance(importance_weights, np.ndarray):
-                print("imporatnce weights (not ndarray): ", importance_weights)
-                logging.warning("Importance weights are not an ndarray!")
-            else:
-                print("importance weights: ", importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()
         else:
             transitions = self.memory.sample(sampling_size)
@@ -404,8 +401,8 @@ class BasePolicy:
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
-                       "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None}
-        transitions["action_argmax"] = torch.argmax(action_batch, 1).unsqueeze(1)
+                       "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None,
+                       "action_argmax": torch.argmax(action_batch, 1).unsqueeze(1)}
 
         return transitions
 
@@ -474,7 +471,7 @@ class ActorCritic(BasePolicy):
 
         error = self.train_actor(transitions)
 
-        return abs(TDE) + abs(error)
+        return TDE + error
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
@@ -487,7 +484,7 @@ class ActorCritic(BasePolicy):
 
     def train_actor(self, transitions):
         error = self.actor.optimize(transitions)
-        return error
+        return abs(error)
 
 
 
