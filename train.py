@@ -3,6 +3,7 @@ import logging
 import torch
 import argparse
 import sys
+import os
 
 from RAdam import RAdam
 from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper
@@ -221,6 +222,8 @@ if __name__ == "__main__":
             parameters["use_MineRL_policy"] = True
 
     # Set up logging:
+    if not os.path.exists("logs"):
+        os.mkdir("logs")
     log_setup =  parameters["log"]
     if log_setup:
         logging.basicConfig(filename="logs/" + tensorboard_comment + ".log", filemode='w', level=logging.DEBUG)
