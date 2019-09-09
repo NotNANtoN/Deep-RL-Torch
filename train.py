@@ -213,7 +213,7 @@ if __name__ == "__main__":
     # Decide on env here:
     tensorboard_comment = "" + "_".join([argument if idx % 2 == 1 else argument[2:] for idx, argument in enumerate(sys.argv[1:])])
     print("Tensorboard comment: ", tensorboard_comment)
-    env = cart
+    env = nav_dense
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
