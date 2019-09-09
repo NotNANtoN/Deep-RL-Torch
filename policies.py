@@ -1,4 +1,5 @@
 # External imports:
+import logging
 import gym
 import torch
 from gym.spaces import Discrete
@@ -345,7 +346,10 @@ class BasePolicy:
         if self.use_PER:
             transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
             #print(importance_weights)
-            importance_weights = torch.from_numpy(importance_weights).float()
+            if not isinstance(importance_weights, np.ndarray):
+                print("imporatnce weights (not ndarray): ", importance_weights)
+                logging.warning("Importance weights are not an ndarray!")
+            importance_weights = torch.tensor(importance_weights, device=self.device).float()
         else:
             transitions = self.memory.sample(sampling_size)
             PER_idxs = None
