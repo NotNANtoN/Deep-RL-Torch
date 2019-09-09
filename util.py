@@ -55,7 +55,7 @@ class Log(object):
         self.storage = {}
         self.global_step = 0
         self.tb_path = 'runs'
-        self.run_tb()
+        #self.run_tb()
 
     def flush_episodic(self):
         self.episodic_storage = {}

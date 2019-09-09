@@ -173,7 +173,9 @@ class Trainer:
         # Fill replay buffer with random actions:
         self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
 
+        print("Done with initial random actions.")
         if self.freeze_normalizer:
+            print("Freeze observation Normalizer.")
             self.policy.freeze_normalizers()
 
         # Initialize test environment:

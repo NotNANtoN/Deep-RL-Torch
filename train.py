@@ -57,12 +57,10 @@ def create_parser():
     parser.add_argument("--lr_V", type=float, default=0.0002)
     parser.add_argument("--lr_r", type=float, default=0.0001)
     parser.add_argument("--lr_actor", type=float, default=0.00005)
-
     # REM:
     parser.add_argument("--use_REM", type=int, default=0)
     parser.add_argument("--REM_num_heads", type=int, default=5)
     parser.add_argument("--REM_num_samples", type=int, default=2)
-
     # AC:
     parser.add_argument("--use_actor_critic", action="store_true", default=0)
     group_AC = parser.add_mutually_exclusive_group()

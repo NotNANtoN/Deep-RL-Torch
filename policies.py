@@ -344,6 +344,7 @@ class BasePolicy:
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
             transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
+            #print(importance_weights)
             importance_weights = torch.from_numpy(importance_weights).float()
         else:
             transitions = self.memory.sample(sampling_size)
