@@ -47,7 +47,7 @@ def create_parser():
     parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
                         default=255)
     # NN Architecture:
-    parser.add_argument("--layers_feature_matrix", default="mnhi_later")
+    parser.add_argument("--layers_conv", default="mnhi_later")
     # NN Training:
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--optimizer", default="RAdam")
@@ -199,12 +199,12 @@ if __name__ == "__main__":
     elif parameters["optimizer"] == "Adam":
         parameters["optimizer"] = torch.optim.Adam
     # Conv layers:
-    if parameters["layers_feature_matrix"] == "mnhi_early":
-        parameters["layers_feature_matrix"] = mnhi_early
-    elif parameters["layers_feature_matrix"] == "mnhi_later":
-        parameters["layers_feature_matrix"] = mnhi_later
-    elif parameters["layers_feature_matrix"] == "vizdoom_winner":
-        parameters["layers_feature_matrix"] = vizdoom_winner
+    if parameters["layers_conv"] == "mnhi_early":
+        parameters["layers_conv"] = mnhi_early
+    elif parameters["layers_conv"] == "mnhi_later":
+        parameters["layers_conv"] = mnhi_later
+    elif parameters["layers_conv"] == "vizdoom_winner":
+        parameters["layers_conv"] = vizdoom_winner
 
     # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr?
 
