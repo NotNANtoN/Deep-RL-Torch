@@ -132,7 +132,7 @@ class Trainer:
             self.policy.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
         TDE = self.policy.calculate_TDE(state, raw_action, next_state, reward, done)
-        self.log.add("TDE live", TDE.item())
+        self.log.add("TDE_live", TDE.item())
         # Render:
         if render:
             self.env.render()
@@ -246,7 +246,7 @@ class Trainer:
 
         print('Done.')
         self.env.close()
-        return i_episode, rewards, self.log.storage
+        return i_episode, self.log.storage
 
 
 

@@ -1,5 +1,4 @@
-#import logging
-#logging.basicConfig(level=logging.DEBUG)
+import logging
 
 import torch
 import argparse
@@ -14,6 +13,7 @@ def create_parser():
     # General:
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
+    parser.add_argument("--log", action="store_true", default=0)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=1)
     parser.add_argument("--max_episode_steps", type=int, help="Limit the length of episodes", default=0)
@@ -219,6 +219,11 @@ if __name__ == "__main__":
         parameters["action_wrapper"] = SerialDiscreteActionWrapper
         if "Pickaxe" in env or "Diamond" in env:
             parameters["use_MineRL_policy"] = True
+
+    # Set up logging:
+    log_setup =  parameters["log"]
+    if log_setup:
+        logging.basicConfig(filename="logs/" + tensorboard_comment + ".log", filemode='w', level=logging.DEBUG)
 
     trainer = Trainer(env, parameters, log=True, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
