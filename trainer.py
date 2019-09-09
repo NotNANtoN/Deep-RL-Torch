@@ -215,7 +215,7 @@ class Trainer:
                 time_before_optimize = time.time()
                 # Log time between optimizations:
                 if time_after_optimize is not None:
-                    self.log.add("Non-Optimize Time", time_before_optimize - time_after_optimize)
+                    self.log.add("Non-Optimize_Time", time_before_optimize - time_after_optimize)
 
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else n_steps % int(1 / self.updates_per_step) == 0
@@ -230,7 +230,7 @@ class Trainer:
                 # Log reward and time:
                 self.log.add("Train_Reward", reward.item())
                 self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")))
-                self.log.add("Optimize Time", time_after_optimize - time_before_optimize)
+                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize)
 
                 if render:
                     self.env.render()
