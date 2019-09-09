@@ -209,7 +209,7 @@ class ProcessState(OptimizableNet):
         super(ProcessState, self).__init__(env, device, log, hyperparameters)
 
         self.vector_layers = hyperparameters["layers_feature_vector"]
-        self.matrix_layers = hyperparameters["layers_feature_matrix"]
+        self.matrix_layers = hyperparameters["layers_conv"]
         self.normalize_obs = hyperparameters["normalize_obs"]
 
         self.freeze_normalizer = False
