@@ -38,12 +38,10 @@ class Trainer:
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
             exclude_keys = hyperparameters["exclude_keys"]
-            reverse_keys = hyperparameters["reverse_keys"]
             action_wrapper = hyperparameters["action_wrapper"]
 
-            forward_when_jump = hyperparameters["forward_when_jump"]
-            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys,
-                                      reverse_keys=reverse_keys, forward_when_jump=forward_when_jump)
+            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys)
+            print("Num actions after wrapping: ", self.env.action_space.n)
         # Extract relevant hyperparameters:
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]

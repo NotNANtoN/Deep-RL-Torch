@@ -14,6 +14,212 @@ cv2.ocl.setUseOpenCL(False)
 logger = getLogger(__name__)
 
 
+def add_to_set_in_dict(dict_to_add, name, val):
+    try:
+        dict_to_add[name].add(val)
+    except KeyError:
+        dict_to_add[name] = {val}
+
+def map2closest_val(val, number_list):
+    return min(number_list, key=lambda x: abs(x - val))
+
+class HierarchicalActionWrapper(gym.ActionWrapper):
+    """Convert MineRL env's `Dict` action space as a serial discrete action space.
+
+    The term "serial" means that this wrapper can only push one key at each step.
+    "attack" action will be alwarys triggered.
+
+    Parameters
+    ----------
+    env
+        Wrapping gym environment.
+    always_keys
+        List of action keys, which should be always pressed throughout interaction with environment.
+        If specified, the "noop" action is also affected.
+    reverse_keys
+        List of action keys, which should be always pressed but can be turn off via action.
+        If specified, the "noop" action is also affected.
+    exclude_keys
+        List of action keys, which should be ignored for discretizing action space.
+    exclude_noop
+        The "noop" will be excluded from discrete action list.
+    """
+
+    BINARY_KEYS = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'attack']
+
+    def __init__(self, env, always_keys=None, reverse_keys=None, exclude_keys=None, exclude_noop=True):
+        super().__init__(env)
+
+        self.always_keys = [] if always_keys is None else always_keys
+        self.reverse_keys = [] if reverse_keys is None else reverse_keys
+        self.exclude_keys = [] if exclude_keys is None else exclude_keys
+        if len(set(self.always_keys) | set(self.reverse_keys) | set(self.exclude_keys)) != \
+                len(self.always_keys) + len(self.reverse_keys) + len(self.exclude_keys):
+            raise ValueError('always_keys ({}) or reverse_keys ({}) or exclude_keys ({}) intersect each other.'.format(
+                self.always_keys, self.reverse_keys, self.exclude_keys))
+        self.exclude_noop = exclude_noop
+
+        self.wrapping_action_space = self.env.action_space
+        self._noop_template = OrderedDict([
+            ('forward', 0),
+            ('back', 0),
+            ('left', 0),
+            ('right', 0),
+            ('jump', 0),
+            ('sneak', 0),
+            ('sprint', 0),
+            ('attack', 0),
+            ('camera', np.zeros((2,), dtype=np.float32)),
+            # 'none', 'dirt' (Obtain*:)+ 'stone', 'cobblestone', 'crafting_table', 'furnace', 'torch'
+            ('place', 0),
+            # (Obtain* tasks only) 'none', 'wooden_axe', 'wooden_pickaxe', 'stone_axe', 'stone_pickaxe', 'iron_axe', 'iron_pickaxe'
+            ('equip', 0),
+            # (Obtain* tasks only) 'none', 'torch', 'stick', 'planks', 'crafting_table'
+            ('craft', 0),
+            # (Obtain* tasks only) 'none', 'wooden_axe', 'wooden_pickaxe', 'stone_axe', 'stone_pickaxe', 'iron_axe', 'iron_pickaxe', 'furnace'
+            ('nearbyCraft', 0),
+            # (Obtain* tasks only) 'none', 'iron_ingot', 'coal'
+            ('nearbySmelt', 0),
+        ])
+        for key, space in self.wrapping_action_space.spaces.items():
+            if key not in self._noop_template:
+                raise ValueError('Unknown action name: {}'.format(key))
+
+        # get noop
+        self.noop = copy.deepcopy(self._noop_template)
+        for key in self._noop_template:
+            if key not in self.wrapping_action_space.spaces:
+                del self.noop[key]
+
+        # check&set always_keys
+        for key in self.always_keys:
+            if key not in self.BINARY_KEYS:
+                raise ValueError('{} is not allowed for `always_keys`.'.format(key))
+            self.noop[key] = 1
+        logger.info('always pressing keys: {}'.format(self.always_keys))
+        # check&set reverse_keys
+        for key in self.reverse_keys:
+            if key not in self.BINARY_KEYS:
+                raise ValueError('{} is not allowed for `reverse_keys`.'.format(key))
+            self.noop[key] = 1
+        logger.info('reversed pressing keys: {}'.format(self.reverse_keys))
+        # check exclude_keys
+        for key in self.exclude_keys:
+            if key not in self.noop:
+                raise ValueError('unknown exclude_keys: {}'.format(key))
+        logger.info('always ignored keys: {}'.format(self.exclude_keys))
+
+        # get each discrete action
+        self._actions = [self.noop]
+        idx = 0
+
+        self.word2idx_set = {}
+
+        self.camera_x_options = (-10, -5, -1, 0, 1, 5, 10)
+        self.camera_y_options = (-10, -5, -1, 0, 1, 5, 10)
+
+        # Create move possibilities:
+        for lateral in ("left", "none_lateral", "right"):
+            for straight in ("back", "none_straight", "forward"):
+                for attack in ("none_attack", "attack"):
+                    for jump in ("none_jump", "jump"):
+                        for camera_x in self.camera_x_options:
+                            for camera_y in self.camera_y_options:
+                                # To later on map from dict to idx:
+                                add_to_set_in_dict(self.word2idx_set, lateral, idx)
+                                add_to_set_in_dict(self.word2idx_set, straight, idx)
+                                add_to_set_in_dict(self.word2idx_set, attack, idx)
+                                add_to_set_in_dict(self.word2idx_set, jump, idx)
+                                camera_name = "camera_" + str(camera_x) + "_" + str(camera_y)
+                                add_to_set_in_dict(self.word2idx_set, camera_name, idx)
+
+                                # Create op that maps from idx to dict:
+                                op = copy.deepcopy(self.noop)
+                                if lateral != "none_lateral":
+                                    op[lateral] = 1
+                                if straight != "none_straight":
+                                    op[straight] = 1
+                                if attack != "none_attack":
+                                    op[attack] = 1
+                                if jump != "none_jump":
+                                    op[jump] = 1
+                                op["camera"] = np.array([camera_x, camera_y], dtype=np.float32)
+                                self._actions.append(op)
+                                idx += 1
+
+        # Create place, equip, craft etc options:
+        for key in self.noop:
+            if key in self.always_keys or key in self.exclude_keys:
+                continue
+            if key in {'place', 'equip', 'craft', 'nearbyCraft', 'nearbySmelt'}:
+                # action candidate : {1, 2, ..., len(space)-1}  (0 is ignored because it is for noop)
+                for a in range(1, self.wrapping_action_space.spaces[key].n):
+                    # Dict to Idx:
+                    name = key + str(a)
+                    add_to_set_in_dict(self.word2idx_set, name, idx)
+
+                    # Idx to dict:
+                    op = copy.deepcopy(self.noop)
+                    op[key] = a
+                    self._actions.append(op)
+                    idx += 1
+            else:
+                continue
+        if self.exclude_noop:
+            del self._actions[0]
+        n = len(self._actions)
+        self.n = n
+        self.action_space = gym.spaces.Discrete(n)
+        logger.info('{} is converted to {}.'.format(self.wrapping_action_space, self.action_space))
+
+    def action(self, action):
+        if not self.action_space.contains(action):
+            raise ValueError('action {} is invalid for {}'.format(action, self.action_space))
+
+        original_space_action = self._actions[action]
+        logger.debug('discrete action {} -> original action {}'.format(action, original_space_action))
+        return original_space_action
+
+    def dict2idx(self, action_dict):
+        possible_idxs = None
+        for key in action_dict:
+            val = action_dict[key]
+            name = key
+            # For camera:
+            if key == "camera":
+                x = map2closest_val(val[0], self.camera_x_options)
+                y = map2closest_val(val[1], self.camera_y_options)
+                name += "_" + str(x) + "_" + str(y)
+            # For other keys:
+            elif key in ('place', 'equip', 'craft', 'nearbyCraft', 'nearbySmelt'):
+                # Only one idx per place value, so it is easy to match:
+                if val:
+                    name = key + str(val)
+                    idx = self.word2idx_set[name][0]
+                    return idx
+            else:
+                if val:
+                    name = key
+                else:
+                    if key == "left" or key == "right":
+                        name = "none_lateral"
+                    elif key == "forward" or key == "backward":
+                        name = "none_straight"
+                    elif key == "jump":
+                        name = "none_jump"
+                    elif key == "attack":
+                        name = "none_attack"
+                new_idxs = self.word2idx_set[name]
+                # Repeatedly take the intersection of possible values until only one idx is left:
+                if possible_idxs is None:
+                    possible_idxs = new_idxs
+                else:
+                    possible_idxs = possible_idxs.intersection(new_idxs)
+                    # If only one more is possible:
+                    if len(possible_idxs) == 1:
+                        return possible_idxs[0]
+
+
 class ContinuingTimeLimitMonitor(Monitor):
     """`Monitor` with ChainerRL's `ContinuingTimeLimit` support.
 
@@ -383,6 +589,7 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
         original_space_action = self._actions[action]
         logger.debug('discrete action {} -> original action {}'.format(action, original_space_action))
         return original_space_action
+
 
 
 class CombineActionWrapper(gym.ActionWrapper):

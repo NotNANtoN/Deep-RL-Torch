@@ -6,8 +6,9 @@ import sys
 import os
 
 from RAdam import RAdam
-from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper
+from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper
 from trainer import Trainer
+
 
 def create_parser():
     parser = argparse.ArgumentParser()
@@ -156,22 +157,21 @@ if __name__ == "__main__":
         # Env specific:
         "convert_2_torch_wrapper": None,
         "action_wrapper": None,
-        "always_keys": ["sprint"], "exclude_keys": ["sneak"], "reverse_keys": ["forward"],
+        "always_keys": ["sprint"], "exclude_keys": ["sneak"],
         "use_MineRL_policy": False,
         "forward_when_jump": True,
 
         # TODO: The following still need to be implemented:
-        "use_dueling_network": False,
-        "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
-        "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
-        "epsilon_mid": 0.1, "boltzmann_temp": 0,
-        "epsilon_decay": 0,
         "PER_anneal_beta": False,
         "normalize_reward_magnitude": False,
         "lambda": 0,
 
-
+        "use_dueling_network": False, # could be used in QV especially
         "use_hrl": False,  # important
+        "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
+        "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
+        "epsilon_mid": 0.1, "boltzmann_temp": 0,
+        "epsilon_decay": 0,
 
         "QV_NO_TARGET_Q": False,  # does it even make sense to do??
         "target_policy_smoothing_noise": 0.1,  # only for ac. can be delayed. can decay, make uniform or clip
@@ -216,18 +216,22 @@ if __name__ == "__main__":
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
+        use_hierarchical_action_wrapper = True
         parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
-        parameters["action_wrapper"] = SerialDiscreteActionWrapper
+        if use_hierarchical_action_wrapper:
+            parameters["action_wrapper"] = HierarchicalActionWrapper
+        else:
+            parameters["action_wrapper"] = SerialDiscreteActionWrapper
         if "Pickaxe" in env or "Diamond" in env:
             parameters["use_MineRL_policy"] = True
 
     # Set up logging:
     if not os.path.exists("logs"):
         os.mkdir("logs")
-    log_setup =  parameters["log"]
+    log_setup = parameters["log"]
     if log_setup:
         logging.basicConfig(filename="logs/" + tensorboard_comment + ".log", filemode='w', level=logging.DEBUG)
 
-    trainer = Trainer(env, parameters, log=True, log_NNs=False, tb_comment=tensorboard_comment)
+    trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(600000, render=False, verbose=True)
