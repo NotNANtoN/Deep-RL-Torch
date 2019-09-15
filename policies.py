@@ -1,4 +1,5 @@
 # External imports:
+import itertools
 import logging
 import gym
 import torch
@@ -8,6 +9,7 @@ from gym.spaces import Discrete
 from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
 from networks import Q, V, Actor, ProcessState, ProcessStateAction
 from util import *
+import copy
 
 
 # This is the interface for the agent being trained by a Trainer instance
@@ -91,11 +93,11 @@ class Agent(AgentInterface):
             print("Ground Policy (will use base policy): ", ground_policy)
             if self.hyperparameters["use_MineRL_policy"]:
                 print("Use Hierarchical MineRL policy!")
-                policy = MineRLObtainPolicy(ground_policy, base_policy, self.F_s, self.F_sa, self.env, self.device,
-                                            self.log, self.hyperparameters)
+                policy = MineRLHierarchicalPolicy(ground_policy, base_policy, self.F_s, self.F_sa, self.env,
+                                                  self.device, self.log, self.hyperparameters)
             else:
                 policy = base_policy(ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
-                                 self.hyperparameters)
+                                     self.hyperparameters)
         return policy
 
     def remember(self, state, action, next_state, reward, done):
@@ -109,6 +111,7 @@ class Agent(AgentInterface):
 
     def exploit(self, state):
         return self.policy.exploit(state)
+
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
@@ -149,7 +152,6 @@ class BasePolicy:
             self.action_high = torch.tensor(env.action_space.high, device=self.device)
             print("Env action low: ", self.action_low)
             print("Env action high: ", self.action_high)
-
 
         # Set up parameters:
         # Actor-Critic:
@@ -203,14 +205,14 @@ class BasePolicy:
     def remember(self, state, action, reward, next_state, done):
         self.memory.add(state, action, reward, next_state, done)
 
-
     def random_action(self):
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
-                                                                     dtype=torch.float).unsqueeze(0) + self.action_low
+                                                                   dtype=torch.float).unsqueeze(0) + self.action_low
         return action
 
     def boltzmann_exploration(self, action):
         pass
+
     # TODO: implement
 
     def explore_discrete_actions(self, action):
@@ -269,7 +271,7 @@ class BasePolicy:
     def init_actor_critic(self, F_s, F_sa):
         Q_net, V_net = self.init_critic(F_s, F_sa)
         actor = self.init_actor(Q_net, V_net, F_s)
-        #print(Q_net.actor)
+        # print(Q_net.actor)
         return actor, Q_net, V_net
 
     def init_critic(self, F_s, F_sa):
@@ -281,7 +283,6 @@ class BasePolicy:
         else:
             self.state_feature_len = F_s.layers_merge[-1].out_features
             input_size = self.state_feature_len
-
 
         Q_net = None
         if not (self.use_CACLA_V and not self.use_QVMAX):
@@ -309,7 +310,6 @@ class BasePolicy:
         TDE_abs = abs(TDE)
         return TDE_abs
 
-
     def optimize(self):
         # Get Batch:
         transitions = self.get_transitions()
@@ -336,7 +336,6 @@ class BasePolicy:
 
         self.display_debug_info()
 
-
     def decay_exploration(self, n_steps):
         if self.eps_decay:
             self.epsilon *= self.eps_decay
@@ -347,7 +346,7 @@ class BasePolicy:
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
             transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
-            #print(importance_weights)
+            # print(importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()
         else:
             transitions = self.memory.sample(sampling_size)
@@ -380,9 +379,13 @@ class BasePolicy:
         else:
             state_batch = torch.cat(batch.state)
 
+
+        # print("non_final mask: ", non_final_mask)
+        # print("state batch: ", state_batch)
+        # print("next state batch: ", next_state_batch)
+        # print("non final next state batch: ", non_final_next_states)
+
         # Create next state batch:
-        # non_final_next_states = batch.next_state[non_final_mask]
-        # TODO: the upper line is a test replacement for the lower one
         non_final_next_states = [s for s in batch.next_state if s is not None]
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
@@ -454,7 +457,6 @@ class ActorCritic(BasePolicy):
         super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.F_s = F_s
 
-
     def optimize_networks(self, transitions):
         # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
         # TODO: for HRL this might be nice
@@ -477,9 +479,9 @@ class ActorCritic(BasePolicy):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
         actor.Q = Q
         actor.V = V
-        #Q.target_net.actor = actor
+        # Q.target_net.actor = actor
 
-        #print(actor)
+        # print(actor)
         return actor
 
     def train_actor(self, transitions):
@@ -487,13 +489,10 @@ class ActorCritic(BasePolicy):
         return abs(error)
 
 
-
-
 class Q_Policy(BasePolicy):
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.critic = self.Q
-
 
     def optimize_networks(self, transitions, retain_graph=False):
         TDE = self.train_critic(self.Q, self.V, transitions)
@@ -559,7 +558,7 @@ class REM(BasePolicy):
     def update_targets(self, n_steps):
         # TODO: test whether sampling here could also be beneficially (might need to drop target network update steps for it)
         idxes = range(self.num_heads)
-        #idxes = random.sample(range(self.num_heads), self.num_samples)
+        # idxes = random.sample(range(self.num_heads), self.num_samples)
         for idx in idxes:
             self.policy_heads[idx].update_targets(n_steps)
 
@@ -571,11 +570,64 @@ class REM(BasePolicy):
         pass
 
 
-class MineRLObtainPolicy(BasePolicy):
+class MineRLPolicy(BasePolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
-        super(MineRLObtainPolicy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
+        super(MineRLPolicy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
 
         self.base_policy = base_policy
+
+        self.jump_options = env.jump_options
+        self.attack_options = env.attack_options
+        self.lateral_options = env.lateral_options
+        self.straight_options = env.straight_options
+        self.camera_x_options = env.camera_x_options_string
+        self.camera_y_options = env.camera_y_options_string
+
+        self.num_jump_actions = len(self.jump_options)
+        self.num_attack_actions = len(self.attack_options)
+        self.num_lateral_actions = len(self.lateral_options)
+        self.num_straight_actions = len(self.straight_options)
+        self.num_camera_x_actions = len(self.camera_x_options)
+        self.num_camera_y_actions = len(self.camera_y_options)
+        self.num_camera_actions = self.num_camera_x_actions * self.num_camera_y_actions
+        self.num_move_actions = self.num_jump_actions * self.num_attack_actions * self.num_lateral_actions * \
+                                self.num_straight_actions * self.num_camera_actions
+
+    def create_adjusted_action_policy(self, num_actions, shift, action_mapping, counter, move_policy=False):
+        action_space = Discrete(num_actions)
+        real_action_space = self.env.action_space
+        self.env.action_space = action_space
+        if move_policy:
+            new_policy = MineRLMovePolicy(self.ground_policy, self.base_policy, self.F_s, self.F_sa, self.env,
+                                          self.device,
+                                          self.log, self.hyperparameters)
+        else:
+            new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
+                                          self.hyperparameters)
+        new_policy.set_retain_graph(True)
+        new_policy.shift = shift
+        action_mapping.extend([counter for _ in range(num_actions)])
+        self.env.action_space = real_action_space
+        return new_policy, shift + num_actions
+
+    def init_actor(self, Q, V, F_s):
+        return None
+
+    def init_critic(self, F_s, F_sa):
+        return None, None
+
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        # TODO: implement
+        return torch.tensor([0])
+
+    def display_debug_info(self):
+        pass
+
+
+class MineRLObtainPolicy(MineRLPolicy):
+    def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(MineRLObtainPolicy, self).__init__(ground_policy, base_policy, F_s, F_sa, env, device, log,
+                                                 hyperparameters)
 
         # Create policies:
         print("Creating high-level policy:")
@@ -593,23 +645,6 @@ class MineRLObtainPolicy(BasePolicy):
 
         self.lower_level_policies = (self.mover, self.placer, self.equipper, self.crafter, self.nearby_crafter,
                                      self.nearby_smelter)
-
-    def create_adjusted_action_policy(self, num_actions, shift, action_mapping, counter):
-        action_space = Discrete(num_actions)
-        env = gym.Env()
-        env.action_space = action_space
-        new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, env, self.device, self.log,
-                                      self.hyperparameters)
-        new_policy.set_retain_graph(True)
-        new_policy.shift = shift
-        action_mapping.extend([counter for _ in range(num_actions)])
-        return new_policy, shift + num_actions
-
-    def init_actor(self, Q, V, F_s):
-        return None
-
-    def init_critic(self, F_s, F_sa):
-        return None, None
 
     def action2high_low_level(self, actions):
         high_lvl = []
@@ -648,7 +683,10 @@ class MineRLObtainPolicy(BasePolicy):
                 continue
             transitions["action_argmax"][idx_mask] = low_level_actions[idx_mask]
             # Apply mask to transition dict and dicts within dict:
-            partial_transitions = {key: None if transitions[key] is None else transitions[key] if isinstance(transitions[key], list) else {sub_key: transitions[key][sub_key][idx_mask] for sub_key in transitions[key]} if isinstance(transitions[key], dict) else transitions[key][idx_mask] for key in transitions}
+            partial_transitions = {
+                key: None if transitions[key] is None else transitions[key] if isinstance(transitions[key], list) else {
+                    sub_key: transitions[key][sub_key][idx_mask] for sub_key in transitions[key]} if isinstance(
+                    transitions[key], dict) else transitions[key][idx_mask] for key in transitions}
             policy = self.lower_level_policies[policy_idx]
             error[idx_mask] += policy.optimize_networks(partial_transitions)
         # Reset actions just in case:
@@ -661,9 +699,12 @@ class MineRLObtainPolicy(BasePolicy):
         action_idxs = torch.argmax(actions_vals, dim=1) + policy.shift
         return action_idxs
 
-    def choose_action(self, state):
+    def choose_action(self, state, calc_state_features=True):
         # Preprocess:
-        state_features = self.F_s(state)
+        if calc_state_features:
+            state_features = self.F_s(state)
+        else:
+            state_features = state
         # Preprocess:
         action_q_vals = torch.zeros(state_features.shape[0], self.num_actions)
         # Apply high-level policy:
@@ -695,15 +736,328 @@ class MineRLObtainPolicy(BasePolicy):
         for policy in self.lower_level_policies:
             policy.update_targets(n_steps)
 
+
+class MineRLMovePolicy(MineRLPolicy):
+    def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(MineRLMovePolicy, self).__init__(ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters)
+
+        self._noop_template = env.noop
+        print("Creating Move Policy: ")
+        self.attacker = self.create_adjusted_action_policy(self.attack_options)
+        self.lateralus = self.create_adjusted_action_policy(self.lateral_options)
+        self.straightener = self.create_adjusted_action_policy(self.straight_options)
+        self.jumper = self.create_adjusted_action_policy(self.jump_options)
+        self.camera_xer = self.create_adjusted_action_policy(self.camera_x_options)
+        self.camera_yer = self.create_adjusted_action_policy(self.camera_y_options)
+        self.policies = [self.attacker, self.lateralus, self.straightener, self.jumper, self.camera_xer,
+                         self.camera_yer]
+        print()
+
+    def create_adjusted_action_policy(self, options):
+        action_space = Discrete(len(options))
+        real_action_space = self.env.action_space
+        self.env.action_space = action_space
+        new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
+                                      self.hyperparameters)
+        new_policy.set_retain_graph(True)
+        for idx, option in enumerate(options):
+            if "none" in option:
+                options[idx] = None
+
+        new_policy.options = options
+        self.env.action_space = real_action_space
+        return new_policy
+
+    def get_policy_options(self, policy, state):
+        action = policy.choose_action(state, calc_state_features=False)
+        action_idxs = torch.argmax(action, dim=1)
+        return [policy.options[idx] for idx in action_idxs]
+
+    def apply_options(self, options, noops):
+        actions = []
+        for idx, noop in enumerate(noops):
+            options_to_apply = [option[idx] for option in options]
+            for option in options_to_apply:
+                if option is None:
+                    continue
+                elif option[0] == "x":
+                    noop["camera"][0] = int(option[2:])
+                elif option[0] == "y":
+                    noop["camera"][1] = int(option[2:])
+                else:
+                    noop[option] = 1
+            actions.append(noop)
+        return actions
+
+    def choose_action(self, state, calc_state_features=True):
+        # Preprocess:
+        if calc_state_features:
+            state_features = self.F_s(state)
+        else:
+            state_features = state
+        # Init q val tensor and action templates
+        action_q_vals = torch.zeros(self.num_actions)
+        noops = [copy.deepcopy(self._noop_template) for _ in range(state_features.shape[0])]
+        # Apply policies and extract semantics:
+        options = [self.get_policy_options(policy, state_features) for policy in self.policies]
+        actions = self.apply_options(options, noops)
+        # Transform actions to match output format:
+        action_idx = self.env.dicts2idxs(actions)
+        # print("in choose_action of MovePOlicy")
+        # print("action q vals shape: ", action_q_vals.shape)
+        # print("actoin idx: ", action_idx)
+        action_q_vals[
+            action_idx] = 1  # Hacky way so that this action is chosen, as the interface requires us to return Q-vals for all possible actions
+        # print()
+        return action_q_vals.unsqueeze(0)
+
+    def get_action_idxs_for_policy(self, policy, action_dicts):
+        action_idxs = torch.zeros(len(action_dicts), device=self.device).long()
+        for dict_idx, action_dict in enumerate(action_dicts):
+            action_idx = None
+            none_idx = None
+            for idx, option in enumerate(policy.options):
+                if option is None:
+                    none_idx = idx
+                elif option[0] == "x":
+                    number = float(option[2:])
+                    if action_dict["camera"][0] == number:
+                        action_idx = idx
+                        break
+                elif option[0] == "y":
+                    number = float(option[2:])
+                    if action_dict["camera"][1] == number:
+                        action_idx = idx
+                        break
+                else:
+                    if action_dict[option] == 1:
+                        action_idx = idx
+                        break
+            if action_idx is None:
+                action_idx = none_idx
+            action_idxs[dict_idx] = action_idx
+        return action_idxs.unsqueeze(1)
+
+    def optimize_networks(self, transitions):
+        error = 0
+        # Save actions:
+        original_actions = transitions["action_argmax"].clone()
+        # Transform actions in dicts:
+        action_dicts = [self.env.action(idx.item()) for idx in original_actions]
+        for policy in self.policies:
+            action_idxs = self.get_action_idxs_for_policy(policy, action_dicts)
+            transitions["action_argmax"] = action_idxs
+            error += policy.optimize_networks(transitions)
+        transitions["action_argmax"] = original_actions
+        return error
+
+    def update_targets(self, n_steps):
+        for policy in self.policies:
+            policy.update_targets(n_steps)
+
+
+class MineRLHierarchicalPolicy(MineRLPolicy):
+    def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
+        super(MineRLHierarchicalPolicy, self).__init__(ground_policy, base_policy, F_s, F_sa, env, device, log,
+                                                       hyperparameters)
+
+        # Create policies:
+        noop = self.env.noop
+
+        shift = 0
+        count = 0
+        self.action_mapping = []
+        print("Creating low-level policies:")
+        self.mover, shift = self.create_adjusted_action_policy(self.num_move_actions, shift, self.action_mapping, count,
+                                                               move_policy=True)
+        count += 1
+        self.lower_level_policies = [self.mover]
+        if "place" in noop:
+            num_choices = self.env.wrapping_action_space.spaces["place"].n - 1
+            self.placer, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.lower_level_policies.append(self.placer)
+            count += 1
+        if "equip" in noop:
+            num_choices = self.env.wrapping_action_space.spaces["equip"].n - 1
+            self.equipper, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.lower_level_policies.append(self.equipper)
+            count += 1
+        if "craft" in noop:
+            num_choices = self.env.wrapping_action_space.spaces["craft"].n - 1
+            self.crafter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.lower_level_policies.append(self.crafter)
+            count += 1
+        if "nearbyCraft" in noop:
+            num_choices = self.env.wrapping_action_space.spaces["nearbyCraft"].n - 1
+            self.nearby_crafter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping,
+                                                                            count)
+            self.lower_level_policies.append(self.nearby_crafter)
+            count += 1
+        if "nearbySmelt" in noop:
+            num_choices = self.env.wrapping_action_space.spaces["nearbySmelt"].n - 1
+            self.nearby_smelter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping,
+                                                                            count)
+            self.lower_level_policies.append(self.nearby_smelter)
+            count += 1
+        if len(self.lower_level_policies) > 1:
+            print("Creating high-level policy:")
+            self.decider, _ = self.create_adjusted_action_policy(len(self.lower_level_policies), 0, [], 0)
+        else:
+            self.decider = None
+        print()
+
+    def action2high_low_level(self, actions):
+        high_lvl = []
+        low_lvl = []
+        for action in actions:
+            action = action.item()
+            high_lvl_action = self.action_mapping[action]
+            low_lvl_action = action - self.lower_level_policies[high_lvl_action].shift
+            # if high_lvl_action != 0:
+            # print("raw action: ", action)
+            # print("high level action: ", high_lvl_action)
+            # print("low level action: ", low_lvl_action)
+            high_lvl.append(high_lvl_action)
+            low_lvl.append(low_lvl_action)
+        high_lvl = torch.tensor(high_lvl).unsqueeze(1)
+        low_lvl = torch.tensor(low_lvl).unsqueeze(1)
+        return high_lvl, low_lvl
+
+    def get_masks(self, actions, num_low_lvl=6):
+        # Aggregate idxs for lower-level policies to operate on:
+        idxs = [[] for _ in range(num_low_lvl)]
+        for idx, action in enumerate(actions):
+            idxs[action.item()].append(idx)
+        return idxs
+
+    def apply_mask_to_transitions(self, transitions, idx_mask):
+        masked_transitions = {}
+
+        # Deal with non final next states:
+        if transitions["non_final_mask"] is None:
+            masked_transitions["non_final_mask"] = None
+        else:
+            non_final_mask = transitions["non_final_mask"]
+
+            def apply_idx_mask_to_mask(idx_mask, mask):
+                non_final_idx = 0
+                transformed_mask = []  # torch.zeros(non_finals.shape ,dtype=torch.bool)
+                idx_mask_cpy = idx_mask[:]
+                # Iterate through the non_final_mask to find out which non_final_next states are masked by the idx_mask:
+                for mask_idx, non_final_bool in enumerate(mask):
+                    if non_final_bool:
+                        if mask_idx == idx_mask_cpy[0]:
+                            transformed_mask.append(non_final_idx)
+                        non_final_idx += 1
+                    if mask_idx == idx_mask_cpy[0]:
+                        del idx_mask_cpy[0]  # as we iterate from the start the first idx in idx mask is always deleted
+                        if len(idx_mask_cpy) == 0:
+                            break
+                return transformed_mask
+
+            transformed_mask = apply_idx_mask_to_mask(idx_mask, non_final_mask)
+
+            non_finals = transitions["non_final_next_states"]
+            masked_transitions["non_final_next_states"] = {key: non_finals[key][transformed_mask] for key in non_finals}
+            masked_transitions["non_final_next_state_features"] = transitions["non_final_next_state_features"][transformed_mask]
+            masked_transitions["non_final_mask"] = transitions["non_final_mask"][idx_mask]
+
+        # Deal with the rest:
+        for key in transitions:
+            content = transitions[key]
+            if content is None:
+                new_content = None
+            elif key in ("non_final_mask", "non_final_next_states", "non_final_next_state_features"):
+                continue
+            elif isinstance(content, list):
+                new_content = content  # For PER idx
+            elif isinstance(content, dict):
+                new_dict = {}
+                for sub_key in content:
+                    sub_content = content[sub_key]
+                    new_sub_content = sub_content[idx_mask]
+                    new_dict[sub_key] = new_sub_content
+                new_content = new_dict
+            else:
+                new_content = content[idx_mask]
+            masked_transitions[key] = new_content
+
+        return masked_transitions
+
+    def optimize_networks(self, transitions):
+        error = 0
+        # Save actions:
+        original_actions = transitions["action_argmax"].clone()
+        # Transform action idx such as 34 into e.g. ([3], [8])
+        high_level_actions, low_level_actions = self.action2high_low_level(original_actions)
+        # Train high-level policy:
+        if self.decider is not None:
+            transitions["action_argmax"] = high_level_actions
+            error += self.decider.optimize_networks(transitions)
+        else:
+            error = torch.zeros(len(transitions, device=self.device))
+        # Get mask of which low-level policy trains on which part of the transitions:
+        mask_list = self.get_masks(high_level_actions)
+        # Train low-level policies:
+        for policy_idx, idx_mask in enumerate(mask_list):
+            if not idx_mask:
+                continue
+            transitions["action_argmax"][idx_mask] = low_level_actions[idx_mask]
+            # Apply mask to transition dict and dicts within dict:
+            partial_transitions = self.apply_mask_to_transitions(transitions, idx_mask)
+            policy = self.lower_level_policies[policy_idx]
+            error[idx_mask] += policy.optimize_networks(partial_transitions)
+        # Reset actions just in case:
+        transitions["action_argmax"] = original_actions
+        return error
+
+    def apply_lower_level_policy(self, policy, state):
+        with torch.no_grad():
+            actions_vals = policy(state)
+        action_idxs = torch.argmax(actions_vals, dim=1) + policy.shift
+        return action_idxs
+
+    def choose_action(self, state):
+        # Preprocess:
+        state_features = self.F_s(state)
+        # Preprocess:
+        action_q_vals = torch.zeros(state_features.shape[0], self.num_actions)
+        # Apply high-level policy:
+        with torch.no_grad():
+            action = self.decider.choose_action(state_features, calc_state_features=False)
+        high_level_actions = torch.argmax(action, dim=1)
+        # print("High level actions: ", high_level_actions)
+        masks = self.get_masks(high_level_actions)
+        # print("Masks: ", masks)
+        # Apply lower-level policies:
+        for policy_idx, mask in enumerate(masks):
+            if mask == []:
+                continue
+            # print("Mask: ", mask)
+            # print("state shape: ", state_features.shape)
+            # print("action q vals masked shape: ", action_q_vals[mask].shape)
+            # print("action q vals masked: ", action_q_vals[mask])
+            # print("state masked shape: ", state_features[mask].shape)
+            policy = self.lower_level_policies[policy_idx]
+            shift = policy.shift
+            low_lvl_action = policy.choose_action(state_features, calc_state_features=False)
+            # print("low level action shape: ", low_lvl_action.shape)
+            # print("low level action: ", low_lvl_action)
+            # print("low_lvl_ action: ", low_lvl_action)
+            # print("shift of policy: ", shift)
+            # print("low lvl action len : ", (len(low_lvl_action[0])))
+            # print("policy idx: ", policy_idx)
+            action_q_vals[0][shift: shift + len(low_lvl_action[0])] = low_lvl_action[0]
+        return action_q_vals
+
+    def update_targets(self, n_steps):
+        self.decider.update_targets(n_steps)
+        for policy in self.lower_level_policies:
+            policy.update_targets(n_steps)
+
     def calculate_TDE(self, state, action, next_state, reward, done):
         # TODO: implement
         return torch.tensor([0])
 
     def display_debug_info(self):
         pass
-
-
-
-
-
-

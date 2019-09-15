@@ -212,7 +212,7 @@ if __name__ == "__main__":
     # Decide on env here:
     tensorboard_comment = "" + "_".join([argument if idx % 2 == 1 else argument[2:] for idx, argument in enumerate(sys.argv[1:])])
     print("Tensorboard comment: ", tensorboard_comment)
-    env = nav_dense
+    env = diamond
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
@@ -235,3 +235,4 @@ if __name__ == "__main__":
     trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(600000, render=False, verbose=True)
+

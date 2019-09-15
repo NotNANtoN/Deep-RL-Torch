@@ -241,7 +241,6 @@ class ProcessState(OptimizableNet):
         normalizer = proc_dict["Normalizer"]
         layers = proc_dict["Layers"]
         act_functs = proc_dict["Act_Functs"]
-
         batch_size = x.shape[0]
         if self.normalize_obs:
             if not self.freeze_normalizer:
@@ -605,6 +604,10 @@ class Q(TempDiffNet):
                 reward_prediction = self.forward_r(input_features).gather(1, actions)
             else:
                 reward_prediction = 0
+            #print("input feature shape: ", input_features.shape)
+            #print("forward _R shape: ", self.forward_R(input_features).shape)
+            #print("num actions: ", self.num_actions)
+            #print("actions: ", actions)
             value_prediction = self.forward_R(input_features).gather(1, actions)
             return value_prediction, reward_prediction
         else:

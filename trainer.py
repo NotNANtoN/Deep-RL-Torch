@@ -6,7 +6,7 @@ from itertools import count
 
 
 import torch
-
+import tqdm
 import time
 
 from networks import *
@@ -86,12 +86,13 @@ class Trainer:
         return reward
 
     def fill_replay_buffer(self, n_actions):
+        print("Filling Replay Buffer....")
         state = self.env.reset()
         if not isinstance(state, dict):
             state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
-        for _ in range(n_actions):
+        for _ in tqdm(range(n_actions)):
 
             # To initialize the normalizer:
             if self.normalize_observations:
@@ -105,6 +106,9 @@ class Trainer:
                 state = self.env.reset()
                 if not isinstance(state, dict):
                     state = torch.tensor([state], device=self.device).float()
+        print("Done with filling replay buffer.")
+        print()
+
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
         # Select an action
@@ -171,7 +175,6 @@ class Trainer:
         # Fill replay buffer with random actions:
         self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
 
-        print("Done with initial random actions.")
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
             self.policy.freeze_normalizers()
@@ -184,14 +187,14 @@ class Trainer:
         # Do the actual training:
         time_after_optimize = None
         i_episode = 0
-        while self.steps_done < n_steps:
+        while tqdm(self.steps_done < n_steps, desc="Total Training"):
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
             if not isinstance(state, dict):
                 state = torch.tensor([state], device=self.device).float()
 
-            for t in count():
+            for t in tqdm(count(), desc="Episode Progress"):
                 self.steps_done += 1
                 if not verbose and not on_server:
                     print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%")  # , end="\r")

@@ -115,14 +115,24 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
 
         self.word2idx_set = {}
 
-        self.camera_x_options = (-10, -5, -1, 0, 1, 5, 10)
-        self.camera_y_options = (-10, -5, -1, 0, 1, 5, 10)
+        self.dict2id_set = {}
+
+
+        self.lateral_options = ["left", "none_lateral", "right"]
+        self.straight_options = ["back", "none_straight", "forward"]
+        self.attack_options = ["none_attack", "attack"]
+        self.jump_options = ["none_jump", "jump"]
+        self.camera_x_options = [-10, -5, -1, 0, 1, 5, 10]
+        self.camera_y_options = self.camera_x_options
+        self.camera_x_options_string = ["x_" + str(number) for number in self.camera_x_options]
+        self.camera_y_options_string = ["y_" + str(number) for number in self.camera_x_options]
+        self.num_camera_actions = len(self.camera_x_options)
 
         # Create move possibilities:
-        for lateral in ("left", "none_lateral", "right"):
-            for straight in ("back", "none_straight", "forward"):
-                for attack in ("none_attack", "attack"):
-                    for jump in ("none_jump", "jump"):
+        for lateral in self.lateral_options:
+            for straight in self.straight_options:
+                for attack in self.attack_options:
+                    for jump in self.jump_options:
                         for camera_x in self.camera_x_options:
                             for camera_y in self.camera_y_options:
                                 # To later on map from dict to idx:
@@ -143,8 +153,12 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                                     op[attack] = 1
                                 if jump != "none_jump":
                                     op[jump] = 1
-                                op["camera"] = np.array([camera_x, camera_y], dtype=np.float32)
+                                op["camera"] = (camera_x, camera_y)
+                                # For idx to dict:
                                 self._actions.append(op)
+                                # For dict to idx:
+                                self.dict2id_set[tuple(op.items())] = idx
+
                                 idx += 1
 
         # Create place, equip, craft etc options:
@@ -180,7 +194,18 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         logger.debug('discrete action {} -> original action {}'.format(action, original_space_action))
         return original_space_action
 
+    def dicts2idxs(self, action_dict_iterable):
+        return [self.dict2idx(action_dict) for action_dict in action_dict_iterable]
+
     def dict2idx(self, action_dict):
+        action_dict_copy = action_dict.copy()
+        x = action_dict["camera"][0]
+        y = action_dict["camera"][1]
+        mapped_camera = (map2closest_val(x, self.camera_x_options), map2closest_val(y, self.camera_y_options))
+        action_dict_copy["camera"] = mapped_camera
+        return self.dict2id_set[tuple(action_dict_copy.items())]
+
+    def dict2idx_old(self, action_dict):
         possible_idxs = None
         for key in action_dict:
             val = action_dict[key]
@@ -336,7 +361,12 @@ def one_hot_encode_single(number, num_actions):
 def process_equipped(mainhand_dict):
     dmg = torch.tensor(mainhand_dict["damage"], dtype=torch.float).unsqueeze(0)
     max_dmg = torch.tensor(mainhand_dict["maxDamage"], dtype=torch.float).unsqueeze(0)
-    item_type = one_hot_encode_single(mainhand_dict["type"], 9)
+    obj_type = mainhand_dict["type"]
+    if np.any(obj_type != 0):
+        possible_non_none_types = ("air","wooden_axe","wooden_pickaxe","stone_axe","stone_pickaxe","iron_axe","iron_pickaxe")
+        if obj_type != 0 and obj_type not in range(1, 8) and obj_type not in possible_non_none_types:
+            obj_type = 8
+    item_type = one_hot_encode_single(obj_type, 9)
     return torch.cat([dmg, max_dmg, item_type], dim=0)
 
 
