@@ -72,7 +72,7 @@ class Trainer:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
         if self.max_steps_per_episode:
             self.tqdm_episode_len = self.max_steps_per_episode
-        elif env._max_episode_steps:
+        elif self.env._max_episode_steps:
             self.tqdm_episode_len = env._max_episode_steps
         else:
             self.tqdm_episode_len = None
