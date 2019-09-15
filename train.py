@@ -13,9 +13,12 @@ from trainer import Trainer
 def create_parser():
     parser = argparse.ArgumentParser()
     # General:
-    parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
+    parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
+    parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
     parser.add_argument("--log", action="store_true", default=0)
+    parser.add_argument("--log_NNs", action="store_true", default=0)
+    parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=1)
     parser.add_argument("--max_episode_steps", type=int, help="Limit the length of episodes", default=0)
@@ -210,9 +213,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Decide on env here:
-    tensorboard_comment = "" + "_".join([argument if idx % 2 == 1 else argument[2:] for idx, argument in enumerate(sys.argv[1:])])
+    tensorboard_comment = parameters["tb_comment"] + "_".join([argument if idx % 2 == 1 else argument[2:] for idx, argument in enumerate(sys.argv[1:])])
     print("Tensorboard comment: ", tensorboard_comment)
-    env = diamond
+    env = tree
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
@@ -232,7 +235,7 @@ if __name__ == "__main__":
     if log_setup:
         logging.basicConfig(filename="logs/" + tensorboard_comment + ".log", filemode='w', level=logging.DEBUG)
 
-    trainer = Trainer(env, parameters, log=False, log_NNs=False, tb_comment=tensorboard_comment)
+    trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    trainer.run(600000, render=False, verbose=True)
+    trainer.run(600000, render=parameters["render"], verbose=parameters["verbose"])
 

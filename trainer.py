@@ -6,7 +6,7 @@ from itertools import count
 
 
 import torch
-import tqdm
+from tqdm import tqdm
 import time
 
 from networks import *
@@ -187,7 +187,8 @@ class Trainer:
         # Do the actual training:
         time_after_optimize = None
         i_episode = 0
-        while tqdm(self.steps_done < n_steps, desc="Total Training"):
+        pbar = tqdm(total=n_steps, desc="Total Training")
+        while self.steps_done < n_steps:
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
@@ -195,6 +196,7 @@ class Trainer:
                 state = torch.tensor([state], device=self.device).float()
 
             for t in tqdm(count(), desc="Episode Progress"):
+                pbar.update(1)
                 self.steps_done += 1
                 if not verbose and not on_server:
                     print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%")  # , end="\r")
@@ -247,6 +249,7 @@ class Trainer:
 
         print('Done.')
         self.env.close()
+        pbar.close()
         return i_episode, self.log.storage
 
 
