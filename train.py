@@ -14,6 +14,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
     # General:
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
+    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
     parser.add_argument("--log", action="store_true", default=0)

@@ -42,7 +42,7 @@ class Trainer:
 
             self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys)
             print("Num actions after wrapping: ", self.env.action_space.n)
-        # Extract relevant hyperparameters:
+
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]
         elif self.env_name == "LunarLander-v2":
@@ -68,6 +68,15 @@ class Trainer:
         # else:
         #    self.normalizer = None
 
+        # Show proper tqdm progress if possible:
+        self.disable_tqdm = hyperparameters["tqdm"] == 0
+        if self.max_steps_per_episode:
+            self.tqdm_episode_len = self.max_steps_per_episode
+        elif env._max_episode_steps:
+            self.tqdm_episode_len = env._max_episode_steps
+        else:
+            self.tqdm_episode_len = None
+
         # Init Policy:
         self.policy = Agent(self.env, self.device, self.log, hyperparameters)
 
@@ -92,7 +101,7 @@ class Trainer:
             state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
-        for _ in tqdm(range(n_actions)):
+        for _ in tqdm(range(n_actions), disable=self.disable_tqdm):
 
             # To initialize the normalizer:
             if self.normalize_observations:
@@ -187,7 +196,7 @@ class Trainer:
         # Do the actual training:
         time_after_optimize = None
         i_episode = 0
-        pbar = tqdm(total=n_steps, desc="Total Training")
+        pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
         while self.steps_done < n_steps:
             i_episode += 1
             # Initialize the environment and state
@@ -195,7 +204,7 @@ class Trainer:
             if not isinstance(state, dict):
                 state = torch.tensor([state], device=self.device).float()
 
-            for t in tqdm(count(), desc="Episode Progress"):
+            for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 pbar.update(1)
                 self.steps_done += 1
                 if not verbose and not on_server:
