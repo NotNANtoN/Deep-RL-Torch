@@ -9,7 +9,6 @@ from RAdam import RAdam
 from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper
 from trainer import Trainer
 
-
 def create_parser():
     parser = argparse.ArgumentParser()
     # General:
@@ -36,6 +35,11 @@ def create_parser():
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
     parser.add_argument("--use_CER", type=int, default=1)
+    # Expert Data:
+    parser.add_argument("--use_expert_data", type=int, default=0)
+    parser.add_argument("--pretrain", type=int, default=0)
+    parser.add_argument("--pretrain_percentage", type=float, default=0.1)
+    parser.add_argument("--pretrain_weight_decay", type=float, default=0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
     parser.add_argument("--action_sigma", type=float, default=0.0)
@@ -209,7 +213,7 @@ if __name__ == "__main__":
     elif parameters["layers_conv"] == "vizdoom_winner":
         parameters["layers_conv"] = vizdoom_winner
 
-    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr?
+    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr? - apparently AdamW (in PyTorch) decouples weight decay properly from optimizer
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

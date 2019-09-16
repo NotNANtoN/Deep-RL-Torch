@@ -20,7 +20,6 @@ class Trainer:
         # Init logging:
         self.path = os.getcwd()
         self.log = Log(self.path + '/tb_log', log, tb_comment, log_NNs)
-        self.steps_done = 0
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]
@@ -77,8 +76,24 @@ class Trainer:
         else:
             self.tqdm_episode_len = None
 
+        self.use_expert_data = hyperparameters["use_expert_data"]
+        self.do_pretrain = hyperparameters["pretrain"]
+        self.pretrain_percentage = hyperparameters["pretrain_percentage"]
+        self.pretrain_weight_decay = hyperparameters["pretrain_weight_decay"]
+
+        # Load expert data:
+        if self.use_expert_data:
+            expert_data = self.load_expert_data()
+            num_expert_samples = len(expert_data)
+            hyperparameters["num_expert_samples"] = num_expert_samples
+        else:
+            hyperparameters["num_expert_samples"] = 0
         # Init Policy:
         self.policy = Agent(self.env, self.device, self.log, hyperparameters)
+        # Load expert data into policy buffer:
+        if self.use_expert_data:
+            self.move_expert_data_into_buffer(expert_data)
+
 
     def reset(self):
         self.steps_done = 0
@@ -93,6 +108,86 @@ class Trainer:
         if self.reward_std:
             reward += torch.tensor(np.random.normal(0, self.reward_std))
         return reward
+
+
+    def move_expert_data_into_buffer(self, data):
+        print("Moving Expert Data into the replay buffer...")
+        pbar = tqdm(total=len(data))
+        while len(data) > 0:
+            pbar.update(1)
+            state, raw_action, reward, next_state, done = data[0]
+
+            # TODO: transform state and next_state into the same obs space as the original env (e.g. convert treechop to obtainDiamond etc)
+            raw_action["camera"] = tuple(raw_action["camera"][0])
+            action = self.env.dict2idx(raw_action)
+            reward = torch.tensor(reward, dtype=torch.float, device=self.device)
+
+            # To initialize the normalizer:
+            if self.normalize_observations:
+                self.policy.F_s(state)
+
+
+
+            self.policy.remember(state, action, next_state, reward, done)
+            # Delete data from data list when processed to save memory
+            del data[0]
+        # TODO: maybe preprocess the data somehow. We could train during the loading for example. Or we calculate eligibility traces upon seeing a done.
+        pbar.close()
+
+
+    def use_data_pipeline_MineRL(self, pipeline):
+        data = []
+        for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1)):
+            data.append(sample)
+
+            if len(data) > 10000:
+                break
+        return data
+
+        # TODO: apply frameskip here! (if used)
+
+    def load_expert_data_MineRL(self):
+        print("Loading expert MineRL data...")
+
+        #MineRLTreechop - v0 - 426699
+        #MineRLObtainIronPickaxe - v0 - 1401485
+        #MineRLNavigateDense - v0 - 235786
+        #MineRLObtainDiamond - v0 -1780457
+        #MineRLNavigateExtreme - v0 - 268744
+        #MineRLNavigateDense - v0 - 235786
+        #MineRLNavigateExtremeDense - v0 - 268326
+        #MineRLObtainDiamondDense - v0 - 1780457
+        #MineRLObtainIronPickaxeDense - v0 - 1401485
+
+        #env_name_data = 'MineRLObtainDiamond-v0'
+        env_name_data = self.env_name
+        data_pipeline = minerl.data.make(
+            env_name_data,
+            data_dir='data')
+        data = self.use_data_pipeline_MineRL(data_pipeline)
+
+        return data
+
+        # TODO: store data in a file depending on mineRL version to have quicker loading
+
+        # TODO: use data from all envs (except navigate)
+
+    def load_expert_data(self):
+        if "MineRL" in self.env_name:
+            return self.load_expert_data_MineRL()
+        else:
+            raise NotImplementedError("No expert data loading for this environment is implemented at the moment.")
+
+    def pretrain(self, steps):
+        # TODO: implement weight decay according to DQfD
+        #self.policy.set_weight_decay(self.pretrain_weight_decay)
+        for step in range(steps):
+            # Perform one step of the optimization
+            self.policy.optimize()
+
+            # Update the target network
+            self.policy.update_targets(step)
+        #self.policy.set_weight_decay(0)
 
     def fill_replay_buffer(self, n_actions):
         print("Filling Replay Buffer....")
@@ -181,8 +276,15 @@ class Trainer:
         print()
 
     def run(self, n_steps, verbose=False, render=False, on_server=True):
+        steps_done = 0
         # Fill replay buffer with random actions:
-        self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
+        if self.use_expert_data:
+            if self.do_pretrain:
+                pretrain_steps = int(self.pretrain_percentage * n_steps)
+                self.pretrain(pretrain_steps)
+                steps_done += pretrain_steps
+        else:
+            self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
 
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
@@ -197,7 +299,7 @@ class Trainer:
         time_after_optimize = None
         i_episode = 0
         pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
-        while self.steps_done < n_steps:
+        while steps_done < n_steps:
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()

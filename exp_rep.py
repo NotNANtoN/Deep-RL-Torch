@@ -4,7 +4,7 @@ from util import Transition
 from segment_tree import SumSegmentTree, MinSegmentTree
 
 class ReplayBuffer(object):
-    def __init__(self, size, use_CER=False):
+    def __init__(self, size, use_CER=False, size_expert_data=0):
         """
         Implements a ring buffer (FIFO).
 
@@ -12,9 +12,12 @@ class ReplayBuffer(object):
             memories are dropped.
         """
         self._storage = []
-        self._maxsize = size
+        self._expert_data_storage = []
+        self._maxsize = size + size_expert_data
         self._next_idx = 0
+
         self.use_CER = use_CER
+        self.size_expert_data = size_expert_data
 
     def __len__(self):
         return len(self._storage)
@@ -54,7 +57,9 @@ class ReplayBuffer(object):
             self._storage.append(data)
         else:
             self._storage[self._next_idx] = data
-        self._next_idx = (self._next_idx + 1) % self._maxsize
+        self._next_idx += 1
+        remainder = self._next_idx % self._maxsize
+        self._next_idx = 0 + self.size_expert_data if remainder == 0 else remainder
 
 
     def add_old(self, obs_t, action, reward, obs_tp1, done):

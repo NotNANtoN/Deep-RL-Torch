@@ -177,10 +177,10 @@ class BasePolicy:
         # TODO: -Include PER with prioritization based on Upper Bound of Gradient Norm.
         # TODO: -include different sampling schemes from the papers investigatin PER in SL (small and big buffer for gradient norm too)
 
-        # TODO: -add goal to replay buffer and Transition
+        # TODO: -add goal to replay buffer and Transition (For HRL)
         # TODO: -add eligibility traces to replay buffer (probably the one that update after the current episode is done and after k steps)
         # Set up replay buffer:
-        self.buffer_size = hyperparameters["replay_buffer_size"]
+        self.buffer_size = hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"]
         self.use_PER = hyperparameters["use_PER"]
         self.use_CER = hyperparameters["use_CER"]
         self.PER_alpha = hyperparameters["PER_alpha"]
