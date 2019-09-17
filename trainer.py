@@ -77,8 +77,8 @@ class Trainer:
             self.tqdm_episode_len = None
 
         self.use_expert_data = hyperparameters["use_expert_data"]
-        self.do_pretrain = hyperparameters["pretrain"]
         self.pretrain_percentage = hyperparameters["pretrain_percentage"]
+        self.do_pretrain = self.pretrain_percentage > 0
         self.pretrain_weight_decay = hyperparameters["pretrain_weight_decay"]
 
         # Load expert data:

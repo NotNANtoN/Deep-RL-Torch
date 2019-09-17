@@ -39,9 +39,8 @@ def create_parser():
     parser.add_argument("--use_CER", type=int, default=1)
     # Expert Data:
     parser.add_argument("--use_expert_data", type=int, default=0)
-    parser.add_argument("--pretrain", type=int, default=0)
-    parser.add_argument("--pretrain_percentage", type=float, default=0.1)
-    parser.add_argument("--pretrain_weight_decay", type=float, default=0)
+    parser.add_argument("--pretrain_percentage", type=float, default=0.0)
+    parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
     parser.add_argument("--action_sigma", type=float, default=0.0)
@@ -221,14 +220,21 @@ if __name__ == "__main__":
 
 
     # Decide on env here:
-    tensorboard_comment = parameters["tb_comment"]
-    for arg in sys.argv[1:]:
-        if arg[:2] == "--":
-            tensorboard_comment += arg[2:]
-
-    print("Tensorboard comment: ", tensorboard_comment)
     env = cart
     print("Env: ", env)
+    tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
+    for arg in sys.argv[1:]:
+        if arg[:2] == "--":
+            arg = arg[2:]
+        modified_arg = ""
+        for char in arg:
+            if char == ".":
+                modified_arg += "_"
+            else:
+                modified_arg += char
+        tensorboard_comment += modified_arg
+    print("Tensorboard comment: ", tensorboard_comment)
+
     if "MineRL" in env:
         print("MineRL env!")
         use_hierarchical_action_wrapper = True
