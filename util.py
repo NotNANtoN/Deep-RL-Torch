@@ -57,6 +57,9 @@ class Log(object):
         self.tb_path = 'runs'
         #self.run_tb()
 
+        # TODO: add option to only store every Nth (maybe 100th or 1000th) event in tensorboard (average over skipped values)
+        # TODO: N should be defined in the function call of .add s.t. every variable can have a different time window
+
     def flush_episodic(self):
         self.episodic_storage = {}
 

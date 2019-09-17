@@ -217,8 +217,13 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
     # Decide on env here:
-    tensorboard_comment = parameters["tb_comment"] + "_".join([argument if idx % 2 == 1 else argument[2:] for idx, argument in enumerate(sys.argv[1:])])
+    tensorboard_comment = parameters["tb_comment"]
+    for arg in sys.argv[1:]:
+        if arg[:2] == "--":
+            tensorboard_comment += arg[2:]
+
     print("Tensorboard comment: ", tensorboard_comment)
     env = tree
     print("Env: ", env)
@@ -243,4 +248,7 @@ if __name__ == "__main__":
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     trainer.run(600000, render=parameters["render"], verbose=parameters["verbose"])
+
+    # TODO: log more important details: hist over actions idx used in an episode (maybe every tenth episode).
+    # TODO: also log TDE of new incoming transitions and expected Q-vals
 

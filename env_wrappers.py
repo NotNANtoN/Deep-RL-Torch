@@ -397,6 +397,9 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                     obs = obs.permute(2, 0, 1)
                 if self.max_val:
                     obs /= self.max_val
+                # TODO: instead of normalizing here, normalize later and use a more efficient data type
+
+
             elif key == "compassAngle":
                 obs = torch.tensor(obs_dict[key], dtype=torch.float).unsqueeze(0)
             else:
