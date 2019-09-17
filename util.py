@@ -91,7 +91,7 @@ class Log(object):
         sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
 
     def add(self, name, value, distribution=None, steps=None, skip_steps=0):
-        self._add_to_storage(self.storage, name, value)
+        #self._add_to_storage(self.storage, name, value)
         self._add_to_storage(self.short_term_storage, name, value)
         self._add_to_storage(self.episodic_storage, name, value)
 

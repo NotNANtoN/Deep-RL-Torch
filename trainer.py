@@ -382,7 +382,7 @@ class Trainer:
         print('Done.')
         self.env.close()
         pbar.close()
-        return i_episode, self.log.storage
+        return i_episode
 
 
 
