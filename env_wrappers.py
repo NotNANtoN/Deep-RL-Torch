@@ -157,7 +157,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                                 # For idx to dict:
                                 self._actions.append(op)
                                 # For dict to idx:
-                                self.dict2id_set[tuple(op.items())] = idx
+                                self.dict2id_set[tuple(sorted(op.items()))] = idx
 
                                 idx += 1
 
@@ -176,6 +176,10 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                     op = copy.deepcopy(self.noop)
                     op[key] = a
                     self._actions.append(op)
+
+                    op["camera"] = tuple(op["camera"])
+                    self.dict2id_set[tuple(sorted(op.items()))] = idx
+
                     idx += 1
             else:
                 continue
@@ -203,7 +207,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         y = action_dict["camera"][1]
         mapped_camera = (map2closest_val(x, self.camera_x_options), map2closest_val(y, self.camera_y_options))
         action_dict_copy["camera"] = mapped_camera
-        return self.dict2id_set[tuple(action_dict_copy.items())]
+        return self.dict2id_set[tuple(sorted(action_dict_copy.items()))]
 
     def dict2idx_old(self, action_dict):
         possible_idxs = None
@@ -357,13 +361,13 @@ def one_hot_encode_single(number, num_actions):
     y[number] = 1.0
     return y
 
-
 def process_equipped(mainhand_dict):
     dmg = torch.tensor(mainhand_dict["damage"], dtype=torch.float).unsqueeze(0)
     max_dmg = torch.tensor(mainhand_dict["maxDamage"], dtype=torch.float).unsqueeze(0)
     obj_type = mainhand_dict["type"]
     if np.any(obj_type != 0):
-        possible_non_none_types = ("air","wooden_axe","wooden_pickaxe","stone_axe","stone_pickaxe","iron_axe","iron_pickaxe")
+        possible_non_none_types = ("air", "wooden_axe", "wooden_pickaxe", "stone_axe", "stone_pickaxe", "iron_axe" ,
+                                   "iron_pickaxe")
         if obj_type != 0 and obj_type not in range(1, 8) and obj_type not in possible_non_none_types:
             obj_type = 8
     item_type = one_hot_encode_single(obj_type, 9)
@@ -377,7 +381,7 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
         self.max_val = max_val
         self.rgb2gray = rgb2gray
 
-    def observation(self, obs_dict):
+    def observation(self, obs_dict, expert_data=False):
         new_obs = {}
         for key in obs_dict:
             if key == "equipped_items":
@@ -388,7 +392,7 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             elif key == "inventory":
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
-                obs = torch.cat([torch.tensor(inv_dict[key]).unsqueeze(0) for key in inv_dict])
+                obs = torch.cat([torch.tensor(inv_dict[key], dtype=torch.float).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
                 obs = torch.from_numpy(np.flip(obs_dict[key], axis=0).copy()).float()
                 if self.rgb2gray:
@@ -398,14 +402,14 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                 if self.max_val:
                     obs /= self.max_val
                 # TODO: instead of normalizing here, normalize later and use a more efficient data type
-
-
             elif key == "compassAngle":
                 obs = torch.tensor(obs_dict[key], dtype=torch.float).unsqueeze(0)
             else:
                 print("Unknown dict key: ", key)
                 raise NotImplementedError
-            new_obs[key] = obs.to(self.device).unsqueeze(0).float()
+            if expert_data:
+                obs = obs.squeeze().unsqueeze(0)
+            new_obs[key] = obs.to(self.device).unsqueeze(0)
         return new_obs
 
 

@@ -167,7 +167,7 @@ class OptimizableNet(nn.Module):
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = loss.detach().clone().item()
-        self.log.add(name, detached_loss)
+        self.log.add(name, detached_loss, skip_steps=100)
 
         # Log weight and gradient norms:
         if self.log.do_logging and self.log.log_NNs:
@@ -903,7 +903,7 @@ class Actor(OptimizableNet):
             actor_loss = q_vals.mean() * -1
             actor_loss.backward(retain_graph=True)  # retain necessary? I thnk so
             gradients = actions_current_state_detached.grad
-            self.log.add("DDPG Action Gradient", gradients.mean())
+            self.log.add("DDPG Action Gradient", gradients.mean(), skip_steps=10000)
 
             # Normalize gradients:
             # gradients = self.normalize_gradients(gradients)
@@ -981,7 +981,7 @@ class Actor(OptimizableNet):
             # print("No Training for Actor...")
 
         if self.use_CACLA_V or self.use_CACLA_Q or self.use_SPG:
-            self.log.add("Actor_actual_train_batch_size", len(output))
+            self.log.add("Actor_actual_train_batch_size", len(output), skip_steps=10000)
 
         return error
 

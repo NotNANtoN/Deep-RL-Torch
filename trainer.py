@@ -96,7 +96,6 @@ class Trainer:
 
 
     def reset(self):
-        self.steps_done = 0
         self.episode_durations = []
         self.policy.reset()
 
@@ -118,15 +117,42 @@ class Trainer:
             state, raw_action, reward, next_state, done = data[0]
 
             # TODO: transform state and next_state into the same obs space as the original env (e.g. convert treechop to obtainDiamond etc)
-            raw_action["camera"] = tuple(raw_action["camera"][0])
-            action = self.env.dict2idx(raw_action)
-            reward = torch.tensor(reward, dtype=torch.float, device=self.device)
+            for key in raw_action:
+                if key == "camera":
+                    raw_action[key] = tuple(raw_action["camera"][0])
+                else:
+                    raw_action[key] = int(raw_action[key])
+            raw_action["sneak"] = 0
+            raw_action["sprint"] = 1
+            if raw_action["right"] and raw_action["left"]:
+                raw_action["right"] = 0
+                raw_action["left"] = 0
+            if ("place" in raw_action and raw_action["place"]) or\
+                    ("craft" in raw_action and raw_action["craft"]) or\
+                    ("nearbyCraft" in raw_action and raw_action["nearbyCraft"]) or\
+                    ("nearbySmelt" in raw_action and raw_action["nearbySmelt"]) or\
+                    ("equip" in raw_action and raw_action["equip"]):
+                raw_action["left"] = 0
+                raw_action["right"] = 0
+                raw_action["forward"] = 0
+                raw_action["back"] = 0
+                raw_action["camera"] = (0, 0)
+                raw_action["jump"] = 0
+                raw_action["attack"] = 0
 
+            # TODO: move as many of those checks above into the dict2idx function!
+            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.float)
+            action_idx = self.env.dict2idx(raw_action)
+            action[0][action_idx] = 1.0
+            reward = self.modify_env_reward(reward)[0]
+
+            state = self.env.observation(state, expert_data=True)
+            next_state = self.env.observation(next_state, expert_data=True)
             # To initialize the normalizer:
             if self.normalize_observations:
                 self.policy.F_s(state)
 
-
+            # TODO: if "place" or another exclusive action is 1, either set all others to 0 or treat it as 2 transitions: first place, then move
 
             self.policy.remember(state, action, next_state, reward, done)
             # Delete data from data list when processed to save memory
@@ -136,28 +162,20 @@ class Trainer:
 
 
     def use_data_pipeline_MineRL(self, pipeline):
+        return [sample for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm)]
+
         data = []
         for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm):
             data.append(sample)
 
-            if len(data) > 10000:
-                break
+            #if len(data) > 10000:
+            #    break
         return data
 
         # TODO: apply frameskip here! (if used)
 
     def load_expert_data_MineRL(self):
         print("Loading expert MineRL data...")
-
-        #MineRLTreechop - v0 - 426699
-        #MineRLObtainIronPickaxe - v0 - 1401485
-        #MineRLNavigateDense - v0 - 235786
-        #MineRLObtainDiamond - v0 -1780457
-        #MineRLNavigateExtreme - v0 - 268744
-        #MineRLNavigateDense - v0 - 235786
-        #MineRLNavigateExtremeDense - v0 - 268326
-        #MineRLObtainDiamondDense - v0 - 1780457
-        #MineRLObtainIronPickaxeDense - v0 - 1401485
 
         #env_name_data = 'MineRLObtainDiamond-v0'
         env_name_data = self.env_name
@@ -179,9 +197,10 @@ class Trainer:
             raise NotImplementedError("No expert data loading for this environment is implemented at the moment.")
 
     def pretrain(self, steps):
+        print("Pretraining on expert data...")
         # TODO: implement weight decay according to DQfD
         #self.policy.set_weight_decay(self.pretrain_weight_decay)
-        for step in range(steps):
+        for step in tqdm(range(steps), disable=self.disable_tqdm):
             # Perform one step of the optimization
             self.policy.optimize()
 
@@ -237,8 +256,9 @@ class Trainer:
         if self.use_exp_rep and store_in_exp_rep:
             self.policy.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
-        TDE = self.policy.calculate_TDE(state, raw_action, next_state, reward, done)
-        self.log.add("TDE_live", TDE.item())
+        # TODO: implement logging of predicted Q value and TDE
+        #TDE = self.policy.calculate_TDE(state, raw_action, next_state, reward, done)
+        #self.log.add("TDE_live", TDE.item())
         # Render:
         if render:
             self.env.render()
@@ -257,18 +277,18 @@ class Trainer:
 
         return next_state
 
-    def _display_debug_info(self, i_episode):
+    def _display_debug_info(self, i_episode, steps_done):
         episode_return = self.log.get_episodic("Return")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
         print("#Episode ", i_episode)
-        print("#Steps: ", self.steps_done)
+        print("#Steps: ", steps_done)
         print(" Return:", episode_return[0])
         print(" Opt-time: ", round(np.mean(optimize_time), 4), "s")
         print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:
             pass
-            # TODO: to an extensive test in test_env every N steps
+            # TODO: do an extensive test in test_env every N steps
             # Not needed anymore, because he have tensorboard now
             #plot_rewards(rewards)
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
@@ -278,17 +298,17 @@ class Trainer:
     def run(self, n_steps, verbose=False, render=False, on_server=True):
         steps_done = 0
         # Fill replay buffer with random actions:
-        if self.use_expert_data:
-            if self.do_pretrain:
-                pretrain_steps = int(self.pretrain_percentage * n_steps)
-                self.pretrain(pretrain_steps)
-                steps_done += pretrain_steps
-        else:
+        if not self.use_expert_data:
             self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
 
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
             self.policy.freeze_normalizers()
+
+        if self.use_expert_data and self.do_pretrain:
+            pretrain_steps = int(self.pretrain_percentage * n_steps)
+            self.pretrain(pretrain_steps)
+            steps_done += pretrain_steps
 
         # Initialize test environment:
         # test_env = gym.make(self.env_name).unwrapped
@@ -307,8 +327,7 @@ class Trainer:
                 state = torch.tensor([state], device=self.device).float()
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
-                pbar.update(1)
-                self.steps_done += 1
+                steps_done += 1
                 if not verbose and not on_server:
                     print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%")  # , end="\r")
 
@@ -324,12 +343,12 @@ class Trainer:
                 state = next_state
 
                 # Reduce epsilon and other exploratory values:
-                self.policy.decay_exploration(self.steps_done)
+                self.policy.decay_exploration(steps_done)
 
                 time_before_optimize = time.time()
                 # Log time between optimizations:
                 if time_after_optimize is not None:
-                    self.log.add("Non-Optimize_Time", time_before_optimize - time_after_optimize)
+                    self.log.add("Non-Optimize_Time", time_before_optimize - time_after_optimize, skip_steps=10000)
 
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else n_steps % int(1 / self.updates_per_step) == 0
@@ -338,23 +357,25 @@ class Trainer:
                     self.policy.optimize()
 
                     # Update the target network
-                    self.policy.update_targets(self.steps_done)
+                    self.policy.update_targets(steps_done)
                 time_after_optimize = time.time()
 
                 # Log reward and time:
-                self.log.add("Train_Reward", reward.item())
-                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")))
-                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize)
+                self.log.add("Train_Reward", reward.item(), skip_steps=10000)
+                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")), skip_steps=10000)
+                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=10000)
 
                 if render:
                     self.env.render()
 
                 self.log.step()
                 if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode) \
-                        or self.steps_done >= n_steps:
+                        or steps_done >= n_steps:
+                    pbar.update(t)
+
                     self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode)
                     if verbose:
-                        self._display_debug_info(i_episode)
+                        self._display_debug_info(i_episode, steps_done)
                     self.log.flush_episodic()
                     break
 

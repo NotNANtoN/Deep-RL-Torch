@@ -10,6 +10,8 @@ from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, Hier
 from trainer import Trainer
 
 def create_parser():
+    # TODO: store the default values of hyperparameters in a dict as before, as this is "übersichtlicher". Then use the parser to overwrite those default values
+
     parser = argparse.ArgumentParser()
     # General:
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
@@ -225,7 +227,7 @@ if __name__ == "__main__":
             tensorboard_comment += arg[2:]
 
     print("Tensorboard comment: ", tensorboard_comment)
-    env = nav_dense
+    env = cart
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")
@@ -247,6 +249,7 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
+    # TODO: Instead of specifying a certain number of steps, specify a number of seconds/hours to run the algorithm for
     trainer.run(600000, render=parameters["render"], verbose=parameters["verbose"])
 
     # TODO: log more important details: hist over actions idx used in an episode (maybe every tenth episode).

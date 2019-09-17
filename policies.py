@@ -58,10 +58,7 @@ class Agent(AgentInterface):
         self.policy = self.create_policy()
 
     def init_feature_extractors(self):
-        # TODO: this currently only works for input vectors, NOT for matrices or multiple input vectors (not for MineRL)
-
         F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
-
         F_sa = None
         if self.use_actor_critic:
             state_feature_len = F_s.layers_merge[-1].out_features
@@ -70,7 +67,6 @@ class Agent(AgentInterface):
 
     def create_policy(self):
         # Define base policy of HRL or the general algorithm and ground policy of REM:
-        # TODO: add decicion whether to create REM as base_policy
         if self.hyperparameters["use_actor_critic"]:
             base_policy = ActorCritic
         elif self.discrete_env:
@@ -339,7 +335,7 @@ class BasePolicy:
     def decay_exploration(self, n_steps):
         if self.eps_decay:
             self.epsilon *= self.eps_decay
-        self.log.add("Epsilon", self.epsilon)
+            self.log.add("Epsilon", self.epsilon)
         # TODO: decay temperature for Boltzmann if that exploration is used
 
     def get_transitions(self):
@@ -397,6 +393,7 @@ class BasePolicy:
             non_final_next_states = None
 
         # Create action batch:
+        #print(batch.action)
         action_batch = torch.cat(batch.action)
 
         # Create Reward batch:

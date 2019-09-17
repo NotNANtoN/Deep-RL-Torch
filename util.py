@@ -53,6 +53,7 @@ class Log(object):
         self.writer = SummaryWriter(comment=comment)
         self.episodic_storage = {}
         self.storage = {}
+        self.short_term_storage = {}
         self.global_step = 0
         self.tb_path = 'runs'
         #self.run_tb()
@@ -89,18 +90,23 @@ class Log(object):
         sys.stdout.write('TensorBoard at %s \n' % url)
         sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
 
-    def add(self, name, value, distribution=None, steps=None):
+    def add(self, name, value, distribution=None, steps=None, skip_steps=0):
         self._add_to_storage(self.storage, name, value)
+        self._add_to_storage(self.short_term_storage, name, value)
         self._add_to_storage(self.episodic_storage, name, value)
 
         if self.do_logging:
-            if steps is None:
-                steps = self.global_step
-            # Add to tensorboard:
-            if distribution is None:
-                self.writer.add_scalar(name, value, global_step=steps)
-            else:
-                self.writer.add_histogram(name, distribution, global_step=steps)
+            if len(self.short_term_storage[name]) > skip_steps:
+                mean_value = np.mean(self.short_term_storage[name])
+                del self.short_term_storage[name]
+
+                if steps is None:
+                    steps = self.global_step
+                # Add to tensorboard:
+                if distribution is None:
+                    self.writer.add_scalar(name, mean_value, global_step=steps)
+                else:
+                    self.writer.add_histogram(name, distribution, global_step=steps)
 
     def get(self):
         return self.storage
