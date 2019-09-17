@@ -225,7 +225,7 @@ if __name__ == "__main__":
             tensorboard_comment += arg[2:]
 
     print("Tensorboard comment: ", tensorboard_comment)
-    env = tree
+    env = nav_dense
     print("Env: ", env)
     if "MineRL" in env:
         print("MineRL env!")

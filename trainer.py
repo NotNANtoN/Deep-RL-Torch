@@ -112,7 +112,7 @@ class Trainer:
 
     def move_expert_data_into_buffer(self, data):
         print("Moving Expert Data into the replay buffer...")
-        pbar = tqdm(total=len(data))
+        pbar = tqdm(total=len(data), disable=self.disable_tqdm)
         while len(data) > 0:
             pbar.update(1)
             state, raw_action, reward, next_state, done = data[0]
@@ -137,7 +137,7 @@ class Trainer:
 
     def use_data_pipeline_MineRL(self, pipeline):
         data = []
-        for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1)):
+        for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm):
             data.append(sample)
 
             if len(data) > 10000:
