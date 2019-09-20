@@ -175,7 +175,8 @@ class BasePolicy:
         # TODO: -include different sampling schemes from the papers investigatin PER in SL (small and big buffer for gradient norm too)
 
         # TODO: -add goal to replay buffer and Transition (For HRL)
-        # TODO: -add eligibility traces to replay buffer (probably the one that update after the current episode is done and after k steps)
+        # Eligibility traces:
+        self.use_efficient_traces = hyperparameters["use_efficient_traces"]
         # Set up replay buffer:
         self.buffer_size = hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"]
         self.use_PER = hyperparameters["use_PER"]
@@ -199,9 +200,6 @@ class BasePolicy:
         # Set up Networks:
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.add(state, action, reward, next_state, done)
-
     def random_action(self):
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
                                                                    dtype=torch.float).unsqueeze(0) + self.action_low
@@ -210,7 +208,7 @@ class BasePolicy:
     def boltzmann_exploration(self, action):
         pass
 
-    # TODO: implement
+    # TODO: implement boltzman exploration
 
     def explore_discrete_actions(self, action):
         if self.boltzmann_exploration_temp > 0:
@@ -273,7 +271,6 @@ class BasePolicy:
 
     def init_critic(self, F_s, F_sa):
         # TODO: differentiate between DQN critic and AC critic by checking in Q __init__ for use_actor_critic
-
         if self.use_actor_critic:
             self.state_action_feature_len = F_sa.layers_merge[-1].out_features
             input_size = self.state_action_feature_len
@@ -291,7 +288,7 @@ class BasePolicy:
             V_net = V(self.state_feature_len, self.env, F_s, None, self.device, self.log, self.hyperparameters)
         return Q_net, V_net
 
-    def train_critic(self, Q, V, transitions, retain_graph=False):
+    def train_critic(self, Q, V, transitions):
         TDE_V = 0
         if self.V is not None:
             V.retain_graph = True
@@ -313,7 +310,6 @@ class BasePolicy:
         # Get Batch:
         transitions = self.get_transitions()
         # Extract features:
-        # TODO: we really need to convert a state_batch into vector/matrix stuff instead of hardcoding
         state_batch = transitions["state"]
         non_final_next_states = transitions["non_final_next_states"]
         state_feature_batch = self.F_s(state_batch)
@@ -331,7 +327,7 @@ class BasePolicy:
         error = abs(error) + 0.0001
         error_np = error.cpu().detach().numpy()
         if self.use_PER:
-            self.memory.update_priorities(transitions["PER_idxs"], error_np)
+            self.memory.update_priorities(transitions["idxs"], error_np)
 
         self.display_debug_info()
 
@@ -339,22 +335,21 @@ class BasePolicy:
         if self.eps_decay:
             self.epsilon *= self.eps_decay
             self.log.add("Epsilon", self.epsilon)
-        # TODO: decay temperature for Boltzmann if that exploration is used
+        # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
-            transitions, importance_weights, PER_idxs = self.memory.sample(sampling_size, self.PER_beta)
+            transitions, importance_weights, idxs = self.memory.sample(sampling_size, self.PER_beta)
             # print(importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()
         else:
-            transitions = self.memory.sample(sampling_size)
-            PER_idxs = None
+            transitions, idxs = self.memory.sample(sampling_size)
             importance_weights = None
         # Transform the stored tuples into torch arrays:
         transitions = self.extract_batch(transitions)
         # Save PER relevant info:
-        transitions["PER_idxs"] = PER_idxs
+        transitions["idxs"] = idxs
         transitions["importance_weights"] = importance_weights
 
         return transitions
@@ -398,13 +393,15 @@ class BasePolicy:
         # print(batch.action)
         action_batch = torch.cat(batch.action)
 
+        action_argmax = torch.argmax(action_batch, 1).unsqueeze(1)
+
         # Create Reward batch:
         reward_batch = torch.cat(batch.reward).unsqueeze(1)
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
-                       "state_action_features": None, "PER_importance_weights": None, "PER_idxs": None,
-                       "action_argmax": torch.argmax(action_batch, 1).unsqueeze(1)}
+                       "state_action_features": None, "PER_importance_weights": None, "idxs": None,
+                       "action_argmax": action_argmax}
 
         return transitions
 
@@ -427,7 +424,22 @@ class BasePolicy:
         if self.actor is not None:
             self.actor.retain_graph = val
 
+    #     def update_traces(self, episode_transitions, actor=None, V=None, Q=None):
+    #         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
+
+    def remember(self, state, action, reward, next_state, done):
+        if self.use_efficient_traces:
+            transition = (state, action, reward, next_state, done)
+            self.current_episode.append(transition)
+            if done:
+
+        else:
+            self.memory.add(state, action, reward, next_state, done)
+
     def update_targets(self, n_steps):
+        if self.use_efficient_traces:
+            self.update_traces(n_steps)
+
         if self.Q is not None:
             self.Q.update_targets(n_steps)
         if self.V is not None:
@@ -438,6 +450,16 @@ class BasePolicy:
             self.F_s.update_targets(n_steps)
         if self.F_sa is not None:
             self.F_sa.update_targets(n_steps)
+
+    def update_traces(self, n_steps):
+        if n_steps % self.elig_traces_update == 0:
+            episodes = self.memory.get_all_episodes()
+            for episode in episodes:
+                episode_transitions = self.extract_batch(episode)
+                if self.Q is not None:
+                    self.Q.update_traces(episode_transitions, actor=self.actor, V=self.V, Q=None)
+                if self.V is not None:
+                    self.V.update_traces(episode_transitions, actor=None, V=None, Q=self.Q)
 
     def freeze_normalizers(self):
         self.F_s.freeze_normalizers()
@@ -497,8 +519,8 @@ class ActorCritic(BasePolicy):
 class Q_Policy(BasePolicy):
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
-        self.critic = self.Q
 
+        self.critic = self.Q
         self.set_name("")
 
     def optimize_networks(self, transitions, retain_graph=False):

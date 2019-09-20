@@ -51,6 +51,9 @@ def create_parser():
     group_QV = parser.add_mutually_exclusive_group()
     group_QV.add_argument("--use_QV", type=int, default=0)
     group_QV.add_argument("--use_QVMAX", type=int, default=0)
+    # Eligibility traces:
+    parser.add_argument("--use_efficient_traces", type=int, default=0)
+    parser.add_argument("--elig_traces_lambda", type=float, default=0)
     # Input Normalization:
     parser.add_argument("--normalize_obs", type=int, default=1)
     parser.add_argument("--freeze_normalize_after_initial", type=int, default=1)
@@ -175,8 +178,11 @@ if __name__ == "__main__":
         "normalize_reward_magnitude": False,
         "lambda": 0,
 
+
+
         "use_dueling_network": False, # could be used in QV especially
         "use_hrl": False,  # important
+        "use_backwards_sampling": False, # new idea: sample batch of idxs, train on these, then get every idx-1 of idxs and train on these too for faster value propagation (kind of similar to eligibility traces, so maybe unnecessary)
         "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
         "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
         "epsilon_mid": 0.1, "boltzmann_temp": 0,

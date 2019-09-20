@@ -11,9 +11,9 @@ import torch
 matplotlib.use('Pdf')
 import matplotlib.pyplot as plt
 
-from collections import namedtuple
 from torch.utils.tensorboard import SummaryWriter
 from tensorboard import program
+from collections import namedtuple
 
 
 Transition = namedtuple('Transition',

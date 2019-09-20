@@ -116,6 +116,8 @@ class Trainer:
         while len(data) > 0:
             pbar.update(1)
             state, raw_action, reward, next_state, done = data[0]
+            # TODO: think about filtering out the end of an episode that did not lead to a reward. So if [0,0,1,2,0, 0,1,0 0 ,0] are the episode rewards, it should be cut to [0, 0, 1, 2, 0, 0, 1]
+            # TODO: this could be good because it filters unsuccesfull runs... but maybe it is good to have some unsucessfull runs if we assume that the player handled the difficulties in a relatively good way
 
             # TODO: transform state and next_state into the same obs space as the original env (e.g. convert treechop to obtainDiamond etc)
             for key in raw_action:
@@ -188,9 +190,9 @@ class Trainer:
 
         return data
 
-        # TODO: store data in a file depending on mineRL version to have quicker loading
+        # TODO: possibly store data in a file depending on mineRL version to have quicker loading
 
-        # TODO: use data from all envs (except navigate)
+        # TODO: use data from all envs (except navigate)!!!
 
     def load_expert_data(self):
         if "MineRL" in self.env_name:
@@ -335,7 +337,7 @@ class Trainer:
             pretrain_time = int(self.pretrain_percentage * n_hours)
             if pretrain_episodes:
                 pretrain_steps = pretrain_episodes * 5000
-                # TODO: insetad of hardcoding 5000 get an expective episode duration from somewhere
+                # TODO: instead of hardcoding 5000 get an expective episode duration from somewhere
 
             self.pretrain(pretrain_steps, pretrain_time, start_time)
             steps_done += pretrain_steps

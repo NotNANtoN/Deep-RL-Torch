@@ -189,6 +189,7 @@ class OptimizableNet(nn.Module):
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = loss.detach().clone().item()
         self.log.add(name, detached_loss, skip_steps=100)
+        # TODO: we might need to test the option of not stepping the optimizer here, but instead returning the loss and only stepping once per policy for all networks at the same time (averaging the losses of all networks)
 
         # Log weight and gradient norms:
         if self.log.do_logging and self.log.log_NNs:
@@ -200,6 +201,7 @@ class OptimizableNet(nn.Module):
         return self.parameters()
 
     def update_targets(self, steps):
+        # TODO: add option to update eligibility traces of all episodes
         if self.target_network_polyak:
             soft_update(self, self.target_net, self.tau)
         else:
@@ -439,6 +441,12 @@ class TempDiffNet(OptimizableNet):
 
         self.current_reward_prediction = None
 
+        # Eligibility traces:
+        self.use_efficient_traces = hyperparameters["use_efficient_traces"]
+        self.elig_traces_lambda = hyperparameters["elig_traces_lambda"]
+        if self.use_efficient_traces:
+            self.traces = torch.empty(hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"])
+
     def create_split_net(self, input_size, updateable_parameters, device, hyperparameters):
         if self.split:
             self.lr_r = hyperparameters["lr_r"]
@@ -458,8 +466,6 @@ class TempDiffNet(OptimizableNet):
         predicted_reward = 0
         if self.split:
             predicted_reward = apply_layers(x, self.layers_r, self.act_functs_r)
-            # self.last_r_prediction = predicted_reward
-            # TODO: What was the upper line used for?
         predicted_state_value = apply_layers(x, self.layers_TD, self.act_functs_TD)
         return predicted_state_value + predicted_reward
 
@@ -489,7 +495,37 @@ class TempDiffNet(OptimizableNet):
         # print("Prediction next state: ", predictions_next_state)
 
         # Compute the updated expected values. Do not add the reward, if the critic is split
-        return (self.predictions_next_state * self.gamma) + (reward_batch if not self.split else 0)
+        return (reward_batch if not self.split else 0) + (self.predictions_next_state * self.gamma)
+
+    def update_traces(self, episode_transitions, actor=None, V=None, Q=None):
+        num_steps_in_episode = len(episode_transitions["state"])
+        non_final_next_state_features = episode_transitions["non_final_next_state_features"]
+        non_final_mask = episode_transitions["non_final_mask"]
+        rewards = episode_transitions["reward"]
+        idxs = episode_transitions["idxs"]
+
+        # Pre-calculate next-state-values in a large batch:
+        next_state_vals = None
+        if non_final_next_state_features:
+            next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
+
+        traces = torch.empty(num_steps_in_episode)
+        last_trace_value = 0
+        # Iterate backwards through transitions in the episode:
+        for step_idx in range(0, num_steps_in_episode)[::-1]:
+            traces[step_idx] = rewards[step_idx]
+            if non_final_mask[step_idx]:
+                traces[step_idx] += self.gamma * (self.elig_traces_lambda * last_trace_value +
+                                                  (1 - self.elig_traces_lambda) * next_state_vals[step_idx])
+            last_trace_value = traces[step_idx]
+
+        # If split the direct reward prediction is taken care of another network
+        if self.split:
+            traces = [trace - rewards[idx] for idx, trace in enumerate(traces)]
+
+        self.traces[idxs] = traces
+
+
 
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]
@@ -498,14 +534,11 @@ class TempDiffNet(OptimizableNet):
         reward_batch = transitions["reward"]
         non_final_next_state_features = transitions["non_final_next_state_features"]
         non_final_mask = transitions["non_final_mask"]
-
+        idxs = transitions["idxs"]
 
         # Compute V(s_t) or Q(s_t, a_t)
         predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
                                                                             action_batch)
-
-        # print("Current state features: ", state_features)
-        # print("Prediction current state: ", predictions_current.detach())
 
         # Train reward net if it exists:
         if self.split:
@@ -515,13 +548,13 @@ class TempDiffNet(OptimizableNet):
         else:
             TDE_r = 0
 
-
         # Compute the expected values. Do not add the reward, if the critic is split
-        expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
-                                                                            non_final_next_state_features,
-                                                                            non_final_mask, actor, Q, V)
-        # print("Expected value next state: ", self.expected_value_next_state)
-        # print()
+        if self.use_efficient_traces:
+            expected_value_next_state = self.traces[idxs]
+        else:
+            expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
+                                                                                non_final_next_state_features,
+                                                                                non_final_mask, actor, Q, V)
 
         # TD must be stored for actor-critic updates:
         self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
