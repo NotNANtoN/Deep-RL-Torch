@@ -54,6 +54,7 @@ def create_parser():
     # Eligibility traces:
     parser.add_argument("--use_efficient_traces", type=int, default=0)
     parser.add_argument("--elig_traces_lambda", type=float, default=0)
+    parser.add_argument("--elig_traces_update_steps", type=int, default=0)
     # Input Normalization:
     parser.add_argument("--normalize_obs", type=int, default=1)
     parser.add_argument("--freeze_normalize_after_initial", type=int, default=1)
@@ -226,7 +227,7 @@ if __name__ == "__main__":
 
 
     # Decide on env here:
-    env = tree
+    env = cart
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
     for arg in sys.argv[1:]:

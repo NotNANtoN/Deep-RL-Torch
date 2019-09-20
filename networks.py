@@ -482,7 +482,7 @@ class TempDiffNet(OptimizableNet):
         with torch.no_grad():
             next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features, self.F_sa,
                                                                          actor)
-        next_state_values[non_final_mask] = next_state_predictions  # [0] #TODO: why [0]?
+        next_state_values[non_final_mask] = next_state_predictions
         return next_state_values
 
     def calculate_updated_value_next_state(self, reward_batch, non_final_next_state_features, non_final_mask,
@@ -506,18 +506,20 @@ class TempDiffNet(OptimizableNet):
 
         # Pre-calculate next-state-values in a large batch:
         next_state_vals = None
-        if non_final_next_state_features:
+        if non_final_next_state_features is not None:
             next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
 
         traces = torch.empty(num_steps_in_episode)
         last_trace_value = 0
         # Iterate backwards through transitions in the episode:
-        for step_idx in range(0, num_steps_in_episode)[::-1]:
-            traces[step_idx] = rewards[step_idx]
+        for step_idx in range(0, num_steps_in_episode):
+            reversed_idx = num_steps_in_episode - 1 - step_idx
+            current_trace_val = rewards[reversed_idx]
             if non_final_mask[step_idx]:
-                traces[step_idx] += self.gamma * (self.elig_traces_lambda * last_trace_value +
-                                                  (1 - self.elig_traces_lambda) * next_state_vals[step_idx])
-            last_trace_value = traces[step_idx]
+                current_trace_val += self.gamma * (self.elig_traces_lambda * last_trace_value +
+                                                  (1 - self.elig_traces_lambda) * next_state_vals[reversed_idx][0])
+            traces[reversed_idx] = current_trace_val
+            last_trace_value = current_trace_val
 
         # If split the direct reward prediction is taken care of another network
         if self.split:
@@ -551,6 +553,7 @@ class TempDiffNet(OptimizableNet):
         # Compute the expected values. Do not add the reward, if the critic is split
         if self.use_efficient_traces:
             expected_value_next_state = self.traces[idxs]
+            # TODO: A possible extension could be to update the traces of the sampled transitions in this method
         else:
             expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
                                                                                 non_final_next_state_features,

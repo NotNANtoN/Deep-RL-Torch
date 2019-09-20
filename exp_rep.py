@@ -132,6 +132,41 @@ class ReplayBuffer(object):
             
         return samples
 
+    def get_all_episodes(self):
+        # TODO: this method does not take into account that an episode might span from the end of the buffer to the start - so the trace of one episode will likely be cut if the buffer is full. Not sure how bad this is
+        episodes = []
+        current_episode = []
+        current_idxs = []
+        idx_list = []
+
+        for idx, transition in enumerate(self._storage[::-1]):
+            real_idx = len(self._storage) - 1 - idx
+            if transition.done or real_idx == self._next_idx - 1:
+                if len(current_episode) != 0:  # extra check for initial transition
+                    episodes.append(current_episode)
+                    idx_list.append(current_idxs)
+                current_episode = [transition]
+                current_idxs = [real_idx]
+            else:
+                current_episode.append(transition)
+                current_idxs.append(real_idx)
+        if len(current_episode) != 0:
+            episodes.append(current_episode)
+            idx_list.append(current_idxs)
+
+        return episodes, idx_list
+
+    def get_most_recent_episode(self):
+        episode = []
+        idxs = []
+        for idx, transition in enumerate(self._storage[::-1]):
+            real_idx = len(self._storage) - 1 - idx
+            if idx != 0 and (transition.done or real_idx == self._next_idx - 1):
+                return episode, idxs
+            else:
+                episode.append(transition)
+                idxs.append(real_idx)
+        return episode, idxs
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, size, alpha, use_CER=False, max_priority=1.0):

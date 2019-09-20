@@ -176,7 +176,9 @@ class BasePolicy:
 
         # TODO: -add goal to replay buffer and Transition (For HRL)
         # Eligibility traces:
+        self.current_episode = []
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
+        self.elig_traces_update_steps = hyperparameters["elig_traces_update_steps"]
         # Set up replay buffer:
         self.buffer_size = hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"]
         self.use_PER = hyperparameters["use_PER"]
@@ -306,9 +308,7 @@ class BasePolicy:
         TDE_abs = abs(TDE)
         return TDE_abs
 
-    def optimize(self):
-        # Get Batch:
-        transitions = self.get_transitions()
+    def extract_features(self, transitions):
         # Extract features:
         state_batch = transitions["state"]
         non_final_next_states = transitions["non_final_next_states"]
@@ -318,6 +318,12 @@ class BasePolicy:
             non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
         transitions["state_features"] = state_feature_batch
         transitions["non_final_next_state_features"] = non_final_next_state_features
+
+    def optimize(self):
+        # Get Batch:
+        transitions = self.get_transitions()
+        # Extract state features
+        self.extract_features(transitions)
         # Optimize:
         if self.use_world_model:
             self.world_model.optimize()
@@ -326,6 +332,7 @@ class BasePolicy:
 
         error = abs(error) + 0.0001
         error_np = error.cpu().detach().numpy()
+
         if self.use_PER:
             self.memory.update_priorities(transitions["idxs"], error_np)
 
@@ -432,11 +439,18 @@ class BasePolicy:
             transition = (state, action, reward, next_state, done)
             self.current_episode.append(transition)
             if done:
+                for state, action, reward, next_state, done in self.current_episode:
+                    self.memory.add(state, action, reward, next_state, done)
+                self.current_episode = []
+                # Update episode trace:
+                most_recent_episode, idxs = self.memory.get_most_recent_episode()
+                self.update_episode_trace(most_recent_episode, idxs)
 
         else:
             self.memory.add(state, action, reward, next_state, done)
 
     def update_targets(self, n_steps):
+        # TODO: maybe move to optimize???
         if self.use_efficient_traces:
             self.update_traces(n_steps)
 
@@ -451,15 +465,20 @@ class BasePolicy:
         if self.F_sa is not None:
             self.F_sa.update_targets(n_steps)
 
+    def update_episode_trace(self, episode, idxs):
+        episode_transitions = self.extract_batch(episode)
+        episode_transitions["idxs"] = idxs
+        self.extract_features(episode_transitions)
+        if self.Q is not None:
+            self.Q.update_traces(episode_transitions, actor=self.actor, V=self.V, Q=None)
+        if self.V is not None:
+            self.V.update_traces(episode_transitions, actor=None, V=None, Q=self.Q)
+
     def update_traces(self, n_steps):
-        if n_steps % self.elig_traces_update == 0:
-            episodes = self.memory.get_all_episodes()
-            for episode in episodes:
-                episode_transitions = self.extract_batch(episode)
-                if self.Q is not None:
-                    self.Q.update_traces(episode_transitions, actor=self.actor, V=self.V, Q=None)
-                if self.V is not None:
-                    self.V.update_traces(episode_transitions, actor=None, V=None, Q=self.Q)
+        if n_steps % self.elig_traces_update_steps == 0:
+            episodes, idx_list = self.memory.get_all_episodes()
+            for episode, idxs in zip(episodes, idx_list):
+                self.update_episode_trace(episode, idxs)
 
     def freeze_normalizers(self):
         self.F_s.freeze_normalizers()

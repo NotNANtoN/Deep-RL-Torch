@@ -228,14 +228,15 @@ class Trainer:
 
         #self.policy.set_weight_decay(0)
 
-    def fill_replay_buffer(self, n_actions):
+    def fill_replay_buffer(self, n_steps):
+        assert n_steps > 0
         print("Filling Replay Buffer....")
         state = self.env.reset()
         if not isinstance(state, dict):
             state = torch.tensor([state], device=self.device).float()
 
         # Fill exp replay buffer so that we can start training immediately:
-        for _ in tqdm(range(n_actions), disable=self.disable_tqdm):
+        for _ in tqdm(range(n_steps), disable=self.disable_tqdm):
 
             # To initialize the normalizer:
             if self.normalize_observations:
@@ -251,6 +252,10 @@ class Trainer:
                     state = torch.tensor([state], device=self.device).float()
         print("Done with filling replay buffer.")
         print()
+        if done:
+            return None
+        else:
+            return state
 
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
@@ -323,9 +328,10 @@ class Trainer:
         steps_done = 0
         i_episode = 0
         start_time = time.time()
+        state = None
         # Fill replay buffer with random actions:
         if not self.use_expert_data:
-            self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
+            state = self.fill_replay_buffer(n_steps=self.n_initial_random_actions)
 
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
@@ -337,7 +343,7 @@ class Trainer:
             pretrain_time = int(self.pretrain_percentage * n_hours)
             if pretrain_episodes:
                 pretrain_steps = pretrain_episodes * 5000
-                # TODO: instead of hardcoding 5000 get an expective episode duration from somewhere
+                # TODO: instead of hardcoding 5000 get an expected episode duration from somewhere
 
             self.pretrain(pretrain_steps, pretrain_time, start_time)
             steps_done += pretrain_steps
@@ -354,10 +360,12 @@ class Trainer:
         while (n_steps and steps_done < n_steps) or (n_episodes and i_episode < n_episodes) or\
                 (n_hours and (time.time() - start_time) / 360 < n_hours):
             i_episode += 1
-            # Initialize the environment and state
-            state = self.env.reset()
-            if not isinstance(state, dict):
-                state = torch.tensor([state], device=self.device).float()
+            # Initialize the environment and state. Do not reset
+            print("state: ", state)
+            if state is None:
+                state = self.env.reset()
+                if not isinstance(state, dict):
+                    state = torch.tensor([state], device=self.device).float()
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1
@@ -405,8 +413,7 @@ class Trainer:
                     self.env.render()
 
                 self.log.step()
-                if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode) \
-                        or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
+                if done or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
                         (n_hours and (time.time() - start_time) / 360 >= n_hours):
                     pbar.update(t)
 
@@ -414,6 +421,7 @@ class Trainer:
                     if verbose:
                         self._display_debug_info(i_episode, steps_done)
                     self.log.flush_episodic()
+                    state = None
                     break
 
         print('Done.')
