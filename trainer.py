@@ -12,6 +12,7 @@ import time
 from networks import *
 from policies import Agent
 from env_wrappers import FrameSkip
+from util import display_top_memory_users
 
 
 
@@ -152,12 +153,10 @@ class Trainer:
             if self.normalize_observations:
                 self.policy.F_s(state)
 
-            # TODO: if "place" or another exclusive action is 1, either set all others to 0 or treat it as 2 transitions: first place, then move
-
             self.policy.remember(state, action, next_state, reward, done)
             # Delete data from data list when processed to save memory
             del data[0]
-        # TODO: maybe preprocess the data somehow. We could train during the loading for example. Or we calculate eligibility traces upon seeing a done.
+        # TODO: maybe preprocess the data somehow. We could train during the gading for example. Or we calculate eligibility traces upon seeing a done.
         pbar.close()
 
 
@@ -241,6 +240,8 @@ class Trainer:
         else:
             action, raw_action = self.policy.exploit(state)
 
+        self.log.add("ActionIdx", action, make_distribution=True, skip_steps=10000)
+
         # Apply the action:
         next_state, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
@@ -295,8 +296,12 @@ class Trainer:
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
         print()
 
-    def run(self, n_steps, verbose=False, render=False, on_server=True):
+    def run(self, n_hours=0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
+        assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
+
         steps_done = 0
+        i_episode = 0
+        start_time = time.time()
         # Fill replay buffer with random actions:
         if not self.use_expert_data:
             self.fill_replay_buffer(n_actions=self.n_initial_random_actions)
@@ -307,8 +312,11 @@ class Trainer:
 
         if self.use_expert_data and self.do_pretrain:
             pretrain_steps = int(self.pretrain_percentage * n_steps)
-            self.pretrain(pretrain_steps)
+            pretrain_episodes = int(self.pretrain_percentage * n_episodes)
+            pretrain_time = int(self.pretrain_percentage * n_episodes)
+            self.pretrain(pretrain_steps, pretrain_episodes, pretrain_time)
             steps_done += pretrain_steps
+            i_episode += pretrain_episodes
 
         # Initialize test environment:
         # test_env = gym.make(self.env_name).unwrapped
@@ -317,9 +325,9 @@ class Trainer:
 
         # Do the actual training:
         time_after_optimize = None
-        i_episode = 0
         pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
-        while steps_done < n_steps:
+        while (n_steps and steps_done < n_steps) or (n_episodes and i_episode < n_episodes) or\
+                (n_hours and (time.time() - start_time) / 360 < n_hours):
             i_episode += 1
             # Initialize the environment and state
             state = self.env.reset()
@@ -347,8 +355,10 @@ class Trainer:
 
                 time_before_optimize = time.time()
                 # Log time between optimizations:
+                non_optimize_time = 0
                 if time_after_optimize is not None:
-                    self.log.add("Non-Optimize_Time", time_before_optimize - time_after_optimize, skip_steps=10000)
+                    non_optimize_time = time_before_optimize - time_after_optimize
+                self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=10000, store_episodic=True)
 
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else n_steps % int(1 / self.updates_per_step) == 0
@@ -361,19 +371,21 @@ class Trainer:
                 time_after_optimize = time.time()
 
                 # Log reward and time:
-                self.log.add("Train_Reward", reward.item(), skip_steps=10000)
+                self.log.add("Train_Reward", reward.item(), skip_steps=10000, store_episodic=True)
                 self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")), skip_steps=10000)
-                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=10000)
+                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=10000,
+                             store_episodic=True)
 
                 if render:
                     self.env.render()
 
                 self.log.step()
                 if done or (self.max_steps_per_episode > 0 and t >= self.max_steps_per_episode) \
-                        or steps_done >= n_steps:
+                        or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
+                        (n_hours and (time.time() - start_time) / 360 >= n_hours):
                     pbar.update(t)
 
-                    self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode)
+                    self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
                     if verbose:
                         self._display_debug_info(i_episode, steps_done)
                     self.log.flush_episodic()

@@ -102,6 +102,27 @@ def one_hot_encode(x, num_actions):
     y = torch.zeros(x.shape[0], num_actions).float()
     return y.scatter(1, x, 1)
 
+def calc_gradient_norm(layers):
+    total_norm = 0
+    for p in layers.parameters():
+        param_norm = p.grad.data.norm(2)
+        total_norm += param_norm.item() ** 2
+    return total_norm ** (1. / 2)
+
+def calc_norm(layers):
+    total_norm = torch.tensor(0.)
+    for param in layers.parameters():
+        total_norm += torch.norm(param)
+    return total_norm
+
+def soft_update(net, net_target, tau):
+    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
+        param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
+
+
+def hard_update(net, net_target):
+    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
+        param_target.data.copy_(param.data)
 
 class OptimizableNet(nn.Module):
     # def __repr__(self):
@@ -197,12 +218,16 @@ class OptimizableNet(nn.Module):
             target_net.eval()
         return target_net
 
-    def record_nn_data(self, layers, name, extra_name=""):
-        weight_norm = calc_norm(layers)
-        grad_norm = calc_gradient_norm(layers)
-        self.log.add(name + " Weight Norm", weight_norm)
-        self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
-
+    def log_layer_data(self, layers, name, extra_name=""):
+        #weight_norm = calc_norm(layers)
+        #grad_norm = calc_gradient_norm(layers)
+        #self.log.add(name + " Weight Norm", weight_norm)
+        #self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
+        name += "_" + extra_name + "_" if extra_name else ""
+        weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])
+        gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])
+        self.log.add(name + "Weights", weights, distribution=True, skip_steps=10000)
+        self.log.add(name + "Gradients", gradients, distribution=True, skip_steps=10000)
 
 class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, is_target_net=False):
@@ -225,14 +250,13 @@ class ProcessState(OptimizableNet):
         merge_layers = hyperparameters["layers_feature_merge"]
         self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
 
-        # TODO: the following does not work because we still have the weird (vector, matrix) input and matrix cannot be none here
+        # TODO: the following does not work yet, make it work at some point
         # self.log.writer.add_graph(self, input_to_model=[torch.rand(vector_len), None], verbose=True)
 
         # Set feature extractor to GPU if possible:
         self.to(device)
 
         self.target_net = self.create_target_net()
-        # TODO: set normalizers of target net equal to normalizers of current net.
         if self.target_net is not None:
             for proc_dict, proc_dict_target in zip(self.processing_list, self.target_net.processing_list):
                 proc_dict_target["Normalizer"] = proc_dict["Normalizer"]
@@ -263,7 +287,12 @@ class ProcessState(OptimizableNet):
             outputs.append(x)
         return outputs
 
-    def update_processing_list(self, obs, proc_list):
+    def create_layer_dict(self, obs, name=""):
+        """
+        Creates a list of layers that operates on an observation in a dict of observations
+        :param obs: numpy or PyTorch tensor
+        :return: processing list
+        """
         # Create feedforward layers:
         if len(obs.shape) <= 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
@@ -274,7 +303,6 @@ class ProcessState(OptimizableNet):
 
             # Add to lists:
             layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
-            proc_list.append(layer_dict)
         # Create conv layers:
         elif 1 < len(obs.shape) <= 4:
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
@@ -282,10 +310,10 @@ class ProcessState(OptimizableNet):
             matrix_normalizer = Normalizer(obs.shape, self.device)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
-            proc_list.append(layer_dict)
         else:
             raise NotImplementedError("Four dimensional input data not yet supported.")
-        return output_size
+        layer_dict["Name"] = name
+        return layer_dict, output_size
 
     def create_input_layers(self, env):
         # Get a sample to assess the shape of the observations easily:
@@ -300,11 +328,13 @@ class ProcessState(OptimizableNet):
         if isinstance(sample, dict):
             for key in sample:
                 obs = sample[key][0]
-                output_size = self.update_processing_list(obs, processing_list)
+                layer_dict, output_size = self.create_layer_dict(obs, name=key)
+                processing_list.append(layer_dict)
                 merge_input_size += output_size
         # If the obs is simply a np array:
         elif isinstance(sample, np.ndarray):
-            output_size = self.update_processing_list(sample, processing_list)
+            layer_dict, output_size = self.create_layer_dict(sample, name="input_array")
+            processing_list.append(layer_dict)
             merge_input_size += output_size
 
         return processing_list, merge_input_size
@@ -326,8 +356,9 @@ class ProcessState(OptimizableNet):
         self.target_net.freeze_normalizer = True
 
     def log_nn_data(self, name):
-        self.record_nn_data(self.layers_vector, "F_s Vector", extra_name=name)
-        self.record_nn_data(self.layers_merge, "F_s Merge", extra_name=name)
+        for layers in self.processing_list:
+            self.log_layer_data(layers["Layers"], "F_s-" + layers["Name"], extra_name=name)
+        self.log_layer_data(self.layers_merge, "F_s Merge", extra_name=name)
 
     def recreate_self(self):
         return self.__class__(self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
@@ -377,9 +408,11 @@ class ProcessStateAction(OptimizableNet):
         else:
             return self(state_features, action)
 
-    def log_nn_data(self, name):
-        self.record_nn_data(self.layers_action, "F_sa Action", extra_name=name)
-        self.record_nn_data(self.layers_merge, "F_sa Merge", extra_name=name)
+    def log_nn_data(self, name=""):
+        self.log_layer_data(self.layers_action, "F_sa_Action", extra_name=name)
+        self.log_layer_data(self.layers_merge, "F_sa_Merge", extra_name=name)
+
+
 
     def recreate_self(self):
         return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters,
@@ -458,7 +491,7 @@ class TempDiffNet(OptimizableNet):
         # Compute the updated expected values. Do not add the reward, if the critic is split
         return (self.predictions_next_state * self.gamma) + (reward_batch if not self.split else 0)
 
-    def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None):
+    def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]
         state_action_features = transitions["state_action_features"]
         action_batch = transitions["action_argmax"]
@@ -474,13 +507,14 @@ class TempDiffNet(OptimizableNet):
         # print("Current state features: ", state_features)
         # print("Prediction current state: ", predictions_current.detach())
 
-        # TODO: separate reward net from Q and V nets, to have them share one
         # Train reward net if it exists:
         if self.split:
             self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
             TDE_r = reward_batch - reward_prediction
+            self.log_nn_data(policy_name + "_r-net_")
         else:
             TDE_r = 0
+
 
         # Compute the expected values. Do not add the reward, if the critic is split
         expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
@@ -492,15 +526,15 @@ class TempDiffNet(OptimizableNet):
         # TD must be stored for actor-critic updates:
         self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
+        self.log_nn_data(policy_name + "_TD-net")
         TDE_TD = expected_value_next_state - predictions_current
         self.TDE = (TDE_r + TDE_TD).detach()
         return self.TDE
 
     def calculate_TDE(self, state, action_batch, next_state, reward_batch, done):
         return torch.tensor([0])
-        # TODO fix
+        # TODO fix. should return both TDE and Q val estimation!
 
-        # TODO: replace the None for matrix as soon as we have the function in policies.py of state2parts
         state_features = self.F_s(state, None)
         if next_state is not None:
             non_final_next_state_features = self.F_s(next_state, None)
@@ -521,14 +555,14 @@ class TempDiffNet(OptimizableNet):
         expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
         return expected_value_next_state - current_prediction
 
-    def log_nn_data(self):
-        self.record_nn_data(self.layers_TD, self.name + "_TD")
+    def log_nn_data(self, name=""):
+        self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)
         if self.split:
-            self.record_nn_data(self.layers_r, self.name + "_r")
+            self.log_layer_data(self.layers_r, self.name + "_r", extra_name=name)
         if self.F_s is not None:
-            self.F_s.log_nn_data(self.name)
+            self.F_s.log_nn_data(self.name + name)
         if self.F_sa is not None:
-            self.F_sa.log_nn_data(self.name)
+            self.F_sa.log_nn_data(self.name + name)
 
     def get_updateable_params(self):
         return self.layers_TD.parameters()
@@ -638,8 +672,6 @@ class Q(TempDiffNet):
             return self.forward(state_action_features)  # self.F_s_A(state_features, actions))
 
 
-# TODO: At the moment if we use Bellman split V and Q have separate reward networks (layers_r)... why?
-
 class V(TempDiffNet):
     def __init__(self, input_size, env, F_s, F_sa, device, log, hyperparameters, is_target_net=False):
         super(V, self).__init__(env, device, log, hyperparameters, is_target_net=is_target_net)
@@ -693,6 +725,7 @@ class V(TempDiffNet):
         if self.split:
             reward_prediction = self.forward_r(state_features)
         return self.forward_R(state_features), reward_prediction
+
 
 
 class Actor(OptimizableNet):
@@ -831,7 +864,7 @@ class Actor(OptimizableNet):
 
         return self.output_function_continuous
 
-    def optimize(self, transitions):
+    def optimize(self, transitions, policy_name=""):
         # Only for debugging:
         # torch.autograd.set_detect_anomaly(True)
 
@@ -975,6 +1008,8 @@ class Actor(OptimizableNet):
         if len(output) > 0:
             # Train actor towards better actions (loss = better - current)
             error = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
+            self.log_nn_data(policy_name)
+
         else:
             pass
             # TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
@@ -985,10 +1020,11 @@ class Actor(OptimizableNet):
 
         return error
 
-    def log_nn_data(self):
-        self.record_nn_data(self.layers, "Actor")
+    def log_nn_data(self, name=""):
+        self.log_layer_data(self.layers, "Actor", extra_name=name)
         if self.F_s is not None:
-            self.F_s.log_nn_data(self.name)
+            self.F_s.log_nn_data("_Actor_" + name)
+
 
     def recreate_self(self):
         return self.__class__(self.F_s, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)

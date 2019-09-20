@@ -136,12 +136,12 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                         for camera_x in self.camera_x_options:
                             for camera_y in self.camera_y_options:
                                 # To later on map from dict to idx:
-                                add_to_set_in_dict(self.word2idx_set, lateral, idx)
-                                add_to_set_in_dict(self.word2idx_set, straight, idx)
-                                add_to_set_in_dict(self.word2idx_set, attack, idx)
-                                add_to_set_in_dict(self.word2idx_set, jump, idx)
-                                camera_name = "camera_" + str(camera_x) + "_" + str(camera_y)
-                                add_to_set_in_dict(self.word2idx_set, camera_name, idx)
+                                #add_to_set_in_dict(self.word2idx_set, lateral, idx)
+                                #add_to_set_in_dict(self.word2idx_set, straight, idx)
+                                #add_to_set_in_dict(self.word2idx_set, attack, idx)
+                                #add_to_set_in_dict(self.word2idx_set, jump, idx)
+                                #camera_name = "camera_" + str(camera_x) + "_" + str(camera_y)
+                                #add_to_set_in_dict(self.word2idx_set, camera_name, idx)
 
                                 # Create op that maps from idx to dict:
                                 op = copy.deepcopy(self.noop)

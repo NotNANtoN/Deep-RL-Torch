@@ -134,6 +134,7 @@ class BasePolicy:
         self.log = log
         self.hyperparameters = hyperparameters
         self.ground_policy = ground_policy
+        self.name = ""
 
         # Check env:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
@@ -294,12 +295,14 @@ class BasePolicy:
         TDE_V = 0
         if self.V is not None:
             V.retain_graph = True
-            TDE_V = V.optimize(transitions, transitions["PER_importance_weights"], self.actor, Q, None)
+            TDE_V = V.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+                               Q=Q, V=None, policy_name=self.name)
 
         # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
         TDE_Q = 0
         if self.Q is not None:
-            TDE_Q = Q.optimize(transitions, self.importance_weights, self.actor, None, V)
+            TDE_Q = Q.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+                               Q=None, V=V, policy_name=self.name)
 
         TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
 
@@ -375,7 +378,6 @@ class BasePolicy:
         else:
             state_batch = torch.cat(batch.state)
 
-
         # print("non_final mask: ", non_final_mask)
         # print("state batch: ", state_batch)
         # print("next state batch: ", next_state_batch)
@@ -393,7 +395,7 @@ class BasePolicy:
             non_final_next_states = None
 
         # Create action batch:
-        #print(batch.action)
+        # print(batch.action)
         action_batch = torch.cat(batch.action)
 
         # Create Reward batch:
@@ -448,11 +450,13 @@ class BasePolicy:
 
 class ActorCritic(BasePolicy):
     def __repr__(self):
-        return "Actor"
+        return "Actor-Critic"
 
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.F_s = F_s
+
+        self.set_name("")
 
     def optimize_networks(self, transitions):
         # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
@@ -482,8 +486,12 @@ class ActorCritic(BasePolicy):
         return actor
 
     def train_actor(self, transitions):
-        error = self.actor.optimize(transitions)
+        error = self.actor.optimize(transitions, self.name)
         return abs(error)
+
+    def set_name(self, name):
+        self.name = "_Actor-Critic_" + str(name)
+
 
 
 class Q_Policy(BasePolicy):
@@ -491,12 +499,17 @@ class Q_Policy(BasePolicy):
         super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.critic = self.Q
 
+        self.set_name("")
+
     def optimize_networks(self, transitions, retain_graph=False):
         TDE = self.train_critic(self.Q, self.V, transitions)
         return TDE
 
     def init_actor(self, Q, V, F_s):
         return Q
+
+    def set_name(self, name):
+        self.name = "_Q-Policy_" + str(name)
 
 
 # 1. For ensemble: simply create many base policies, train them all with .optimize() and sum action output.
@@ -507,6 +520,7 @@ class REM(BasePolicy):
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(REM, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
 
+        self.name = "REM"
         self.num_heads = hyperparameters["REM_num_heads"]
         self.num_samples = hyperparameters["REM_num_samples"]
 
@@ -516,6 +530,12 @@ class REM(BasePolicy):
                              for _ in range(self.num_heads)]
         for head in self.policy_heads:
             head.set_retain_graph(True)
+        self.set_name("")
+
+    def set_name(self, name):
+        self.name = "REM" + str(name)
+        for idx, head in enumerate(self.policy_heads):
+            head.name += "REM" + str(idx)
 
     def init_actor(self, Q, V, F_s):
         return None
@@ -590,7 +610,7 @@ class MineRLPolicy(BasePolicy):
         self.num_move_actions = self.num_jump_actions * self.num_attack_actions * self.num_lateral_actions * \
                                 self.num_straight_actions * self.num_camera_actions
 
-    def create_adjusted_action_policy(self, num_actions, shift, action_mapping, counter, move_policy=False):
+    def create_adjusted_action_policy(self, num_actions, shift, action_mapping, counter, move_policy=False, name=""):
         action_space = Discrete(num_actions)
         real_action_space = self.env.action_space
         self.env.action_space = action_space
@@ -603,6 +623,7 @@ class MineRLPolicy(BasePolicy):
                                           self.hyperparameters)
         new_policy.set_retain_graph(True)
         new_policy.shift = shift
+        new_policy.set_name(name)
         action_mapping.extend([counter for _ in range(num_actions)])
         self.env.action_space = real_action_space
         return new_policy, shift + num_actions
@@ -740,23 +761,24 @@ class MineRLMovePolicy(MineRLPolicy):
 
         self._noop_template = env.noop
         print("Creating Move Policy: ")
-        self.attacker = self.create_adjusted_action_policy(self.attack_options)
-        self.lateralus = self.create_adjusted_action_policy(self.lateral_options)
-        self.straightener = self.create_adjusted_action_policy(self.straight_options)
-        self.jumper = self.create_adjusted_action_policy(self.jump_options)
-        self.camera_xer = self.create_adjusted_action_policy(self.camera_x_options)
-        self.camera_yer = self.create_adjusted_action_policy(self.camera_y_options)
+        self.attacker = self.create_adjusted_action_policy(self.attack_options, name="attacker")
+        self.lateralus = self.create_adjusted_action_policy(self.lateral_options, name="lateralus")
+        self.straightener = self.create_adjusted_action_policy(self.straight_options, name="straightener")
+        self.jumper = self.create_adjusted_action_policy(self.jump_options, name="jumper")
+        self.camera_xer = self.create_adjusted_action_policy(self.camera_x_options, name="camera_x")
+        self.camera_yer = self.create_adjusted_action_policy(self.camera_y_options, name="camera_y")
         self.policies = [self.attacker, self.lateralus, self.straightener, self.jumper, self.camera_xer,
                          self.camera_yer]
         print()
 
-    def create_adjusted_action_policy(self, options):
+    def create_adjusted_action_policy(self, options, name=""):
         action_space = Discrete(len(options))
         real_action_space = self.env.action_space
         self.env.action_space = action_space
         new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
                                       self.hyperparameters)
         new_policy.set_retain_graph(True)
+        new_policy.set_name(name)
         for idx, option in enumerate(options):
             if "none" in option:
                 options[idx] = None
@@ -871,29 +893,29 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         self.lower_level_policies = [self.mover]
         if "place" in noop:
             num_choices = self.env.wrapping_action_space.spaces["place"].n - 1
-            self.placer, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.placer, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count, name="placer")
             self.lower_level_policies.append(self.placer)
             count += 1
         if "equip" in noop:
             num_choices = self.env.wrapping_action_space.spaces["equip"].n - 1
-            self.equipper, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.equipper, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count, name="equipper")
             self.lower_level_policies.append(self.equipper)
             count += 1
         if "craft" in noop:
             num_choices = self.env.wrapping_action_space.spaces["craft"].n - 1
-            self.crafter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count)
+            self.crafter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping, count, name="crafter")
             self.lower_level_policies.append(self.crafter)
             count += 1
         if "nearbyCraft" in noop:
             num_choices = self.env.wrapping_action_space.spaces["nearbyCraft"].n - 1
             self.nearby_crafter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping,
-                                                                            count)
+                                                                            count, name="nearbyCrafter")
             self.lower_level_policies.append(self.nearby_crafter)
             count += 1
         if "nearbySmelt" in noop:
             num_choices = self.env.wrapping_action_space.spaces["nearbySmelt"].n - 1
             self.nearby_smelter, shift = self.create_adjusted_action_policy(num_choices, shift, self.action_mapping,
-                                                                            count)
+                                                                            count, name="nearbySmelter")
             self.lower_level_policies.append(self.nearby_smelter)
             count += 1
         if len(self.lower_level_policies) > 1:
@@ -921,6 +943,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         return high_lvl, low_lvl
 
     def get_masks(self, actions, num_low_lvl=6):
+        # TODO: num_low_lvl needs to be determined properly when calling this function!
         # Aggregate idxs for lower-level policies to operate on:
         idxs = [[] for _ in range(num_low_lvl)]
         for idx, action in enumerate(actions):
@@ -956,7 +979,8 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
             non_finals = transitions["non_final_next_states"]
             masked_transitions["non_final_next_states"] = {key: non_finals[key][transformed_mask] for key in non_finals}
-            masked_transitions["non_final_next_state_features"] = transitions["non_final_next_state_features"][transformed_mask]
+            masked_transitions["non_final_next_state_features"] = transitions["non_final_next_state_features"][
+                transformed_mask]
             masked_transitions["non_final_mask"] = transitions["non_final_mask"][idx_mask]
 
         # Deal with the rest:

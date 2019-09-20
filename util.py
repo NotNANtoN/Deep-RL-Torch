@@ -3,6 +3,8 @@ import matplotlib
 import numpy as np
 import os
 import random
+import tracemalloc
+import linecache
 import sys
 import torch
 
@@ -54,12 +56,10 @@ class Log(object):
         self.episodic_storage = {}
         self.storage = {}
         self.short_term_storage = {}
+        self.short_term_count = {}
         self.global_step = 0
         self.tb_path = 'runs'
         #self.run_tb()
-
-        # TODO: add option to only store every Nth (maybe 100th or 1000th) event in tensorboard (average over skipped values)
-        # TODO: N should be defined in the function call of .add s.t. every variable can have a different time window
 
     def flush_episodic(self):
         self.episodic_storage = {}
@@ -90,23 +90,50 @@ class Log(object):
         sys.stdout.write('TensorBoard at %s \n' % url)
         sys.stdout.write('TensorBoard log dir %s\n' % self.tb_path)
 
-    def add(self, name, value, distribution=None, steps=None, skip_steps=0):
+    def store_running_mean(self, storage, name, value, count):
+        n = count[name]
+        try:
+            storage[name] = (storage[name] * (n - 1) + value) / n
+        except KeyError:
+            storage[name] = value
+
+    def add(self, name, value, distribution=False, make_distribution=False, steps=None, skip_steps=0,
+            store_episodic=False):
         #self._add_to_storage(self.storage, name, value)
-        self._add_to_storage(self.short_term_storage, name, value)
-        self._add_to_storage(self.episodic_storage, name, value)
+        if store_episodic:
+            self._add_to_storage(self.episodic_storage, name, value)
 
         if self.do_logging:
-            if len(self.short_term_storage[name]) > skip_steps:
-                mean_value = np.mean(self.short_term_storage[name])
-                del self.short_term_storage[name]
+            try:
+                self.short_term_count[name] += 1
+            except KeyError:
+                self.short_term_count[name] = 1
 
+            if make_distribution:
+                try:
+                    self.short_term_storage[name].append(value)
+                except KeyError:
+                    self.short_term_storage[name] = [value]
+            else:
+                self.store_running_mean(self.short_term_storage, name, value, self.short_term_count)
+            #if "Gradient" in name:
+            #    print(name)
+            #    print(value)
+            #    print(self.short_term_storage[name])
+            if self.short_term_count[name] >= skip_steps:
+                tb_value = self.short_term_storage[name]#np.mean(self.short_term_storage[name])
+                tb_value = torch.tensor(tb_value)
+                del self.short_term_storage[name]
+                del self.short_term_count[name]
+
+                # Add to tensorboard:
                 if steps is None:
                     steps = self.global_step
-                # Add to tensorboard:
-                if distribution is None:
-                    self.writer.add_scalar(name, mean_value, global_step=steps)
+                if distribution or make_distribution:
+                    add_func = self.writer.add_histogram
                 else:
-                    self.writer.add_histogram(name, distribution, global_step=steps)
+                    add_func = self.writer.add_scalar
+                add_func(name, tb_value, global_step=steps)
 
     def get(self):
         return self.storage
@@ -159,28 +186,6 @@ def display_top_memory_users(key_type='lineno', limit=3, censored=True):
     print("Total allocated size: %.1f KiB" % (total / 1024))
     print()
 
-def calc_gradient_norm(layers):
-    total_norm = 0
-    for p in layers.parameters():
-        param_norm = p.grad.data.norm(2)
-        total_norm += param_norm.item() ** 2
-    return total_norm ** (1. / 2)
-
-def calc_norm(layers):
-    total_norm = torch.tensor(0.)
-    for param in layers.parameters():
-        total_norm += torch.norm(param)
-    return total_norm
-
-
-def soft_update(net, net_target, tau):
-    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
-        param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
-
-
-def hard_update(net, net_target):
-    for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
-        param_target.data.copy_(param.data)
 
 def calculate_reduced_idxs(len_of_point_list, max_points):
     if max_points != 0:
