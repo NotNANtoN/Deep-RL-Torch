@@ -128,6 +128,9 @@ class Trainer:
             if raw_action["right"] and raw_action["left"]:
                 raw_action["right"] = 0
                 raw_action["left"] = 0
+            if raw_action["forward"] and raw_action["back"]:
+                raw_action["forward"] = 0
+                raw_action["back"] = 0
             if ("place" in raw_action and raw_action["place"]) or\
                     ("craft" in raw_action and raw_action["craft"]) or\
                     ("nearbyCraft" in raw_action and raw_action["nearbyCraft"]) or\
