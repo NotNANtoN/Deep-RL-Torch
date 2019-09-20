@@ -195,16 +195,32 @@ class Trainer:
         else:
             raise NotImplementedError("No expert data loading for this environment is implemented at the moment.")
 
-    def pretrain(self, steps):
+    def pretrain(self, steps, hours, start_time):
         print("Pretraining on expert data...")
+        # TODO: implement supervised leanring according to DQfD
+
         # TODO: implement weight decay according to DQfD
         #self.policy.set_weight_decay(self.pretrain_weight_decay)
-        for step in tqdm(range(steps), disable=self.disable_tqdm):
-            # Perform one step of the optimization
-            self.policy.optimize()
+        if steps:
+            for step in tqdm(range(steps), disable=self.disable_tqdm):
+                # Perform one step of the optimization
+                self.policy.optimize()
 
-            # Update the target network
-            self.policy.update_targets(step)
+                # Update the target network
+                self.policy.update_targets(step)
+        elif time:
+            # TODO: add some tqdm option here
+            for t in count():
+                # Perform one step of the optimization
+                self.policy.optimize()
+
+                # Update the target network
+                self.policy.update_targets(t)
+
+                if (time.time() - start_time) / 360 > hours:
+                    break
+
+
         #self.policy.set_weight_decay(0)
 
     def fill_replay_buffer(self, n_actions):
@@ -313,8 +329,12 @@ class Trainer:
         if self.use_expert_data and self.do_pretrain:
             pretrain_steps = int(self.pretrain_percentage * n_steps)
             pretrain_episodes = int(self.pretrain_percentage * n_episodes)
-            pretrain_time = int(self.pretrain_percentage * n_episodes)
-            self.pretrain(pretrain_steps, pretrain_episodes, pretrain_time)
+            pretrain_time = int(self.pretrain_percentage * n_hours)
+            if pretrain_episodes:
+                pretrain_steps = pretrain_episodes * 5000
+                # TODO: insetad of hardcoding 5000 get an expective episode duration from somewhere
+
+            self.pretrain(pretrain_steps, pretrain_time, start_time)
             steps_done += pretrain_steps
             i_episode += pretrain_episodes
 
