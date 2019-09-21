@@ -394,11 +394,12 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
                 obs = torch.cat([torch.tensor(inv_dict[key], dtype=torch.float).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
-                obs = torch.tensor(np.flip(obs_dict[key], axis=0).copy(), dtype=torch.uint8)
+                obs = torch.tensor(np.flip(obs_dict[key], axis=0).copy(), dtype=torch.float)
                 if self.rgb2gray:
-                    obs = obs.mean(dim=-1).unsqueeze(0)
+                    obs = np.round(obs.mean(dim=-1)).unsqueeze(0)
                 else:
                     obs = obs.permute(2, 0, 1)
+                obs = torch.tensor(obs, dtype=torch.uint8)
 
                 # TODO: instead of normalizing here, normalize later and use a more efficient data type
             elif key == "compassAngle":
