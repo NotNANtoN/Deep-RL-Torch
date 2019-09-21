@@ -263,7 +263,7 @@ if __name__ == "__main__":
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
     # TODO: Instead of specifying a certain number of steps, specify a number of seconds/hours to run the algorithm for
-    trainer.run(n_episodes=300, render=parameters["render"], verbose=parameters["verbose"])
+    trainer.run(n_steps=25000, render=parameters["render"], verbose=parameters["verbose"])
 
     # TODO: log more important details: hist over actions idx used in an episode (maybe every tenth episode).
     # TODO: also log TDE of new incoming transitions and expected Q-vals

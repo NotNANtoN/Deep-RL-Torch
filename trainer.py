@@ -361,7 +361,6 @@ class Trainer:
                 (n_hours and (time.time() - start_time) / 360 < n_hours):
             i_episode += 1
             # Initialize the environment and state. Do not reset
-            print("state: ", state)
             if state is None:
                 state = self.env.reset()
                 if not isinstance(state, dict):

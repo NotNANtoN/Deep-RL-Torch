@@ -130,7 +130,7 @@ class ReplayBuffer(object):
             for i in sorted(idxes, reverse=True):
                 del self._storage[i]
             
-        return samples
+        return samples, idxes
 
     def get_all_episodes(self):
         # TODO: this method does not take into account that an episode might span from the end of the buffer to the start - so the trace of one episode will likely be cut if the buffer is full. Not sure how bad this is

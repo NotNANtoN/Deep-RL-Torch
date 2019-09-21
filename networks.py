@@ -475,12 +475,13 @@ class TempDiffNet(OptimizableNet):
     def forward_R(self, x):
         return apply_layers(x, self.layers_TD, self.act_functs_TD)
 
-    def calculate_next_state_values(self, non_final_next_state_features, non_final_mask, actor=None):
+    def calculate_next_state_values(self, non_final_next_state_features, non_final_mask, actor=None, use_target_net=True):
         next_state_values = torch.zeros(len(non_final_mask), 1, device=self.device)
         if non_final_next_state_features is None:
             return next_state_values
         with torch.no_grad():
-            next_state_predictions = self.target_net.predict_state_value(non_final_next_state_features, self.F_sa,
+            predict_net = self.target_net if use_target_net else self
+            next_state_predictions = predict_net.predict_state_value(non_final_next_state_features, self.F_sa,
                                                                          actor)
         next_state_values[non_final_mask] = next_state_predictions
         return next_state_values
@@ -507,7 +508,8 @@ class TempDiffNet(OptimizableNet):
         # Pre-calculate next-state-values in a large batch:
         next_state_vals = None
         if non_final_next_state_features is not None:
-            next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q, V)
+            next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor=actor, Q=Q,
+                                                      V=V, use_target_net=False)
 
         traces = torch.empty(num_steps_in_episode)
         last_trace_value = 0
@@ -552,19 +554,21 @@ class TempDiffNet(OptimizableNet):
 
         # Compute the expected values. Do not add the reward, if the critic is split
         if self.use_efficient_traces:
-            expected_value_next_state = self.traces[idxs]
+            expected_value_next_state = self.traces[idxs].unsqueeze(1)
             # TODO: A possible extension could be to update the traces of the sampled transitions in this method
         else:
             expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
                                                                                 non_final_next_state_features,
                                                                                 non_final_mask, actor, Q, V)
-
+        print(predictions_current)
+        print("expected_val: ", expected_value_next_state)
+        print()
         # TD must be stored for actor-critic updates:
         self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
         self.log_nn_data(policy_name + "_TD-net")
         TDE_TD = expected_value_next_state - predictions_current
-        self.TDE = (TDE_r + TDE_TD).detach()
+        self.TDE = (abs(TDE_r) + abs(TDE_TD)).detach()
         return self.TDE
 
     def calculate_TDE(self, state, action_batch, next_state, reward_batch, done):
@@ -658,14 +662,14 @@ class Q(TempDiffNet):
             self.target_net.layers_r = self.layers_r
 
 
-    def predict_next_state(self, non_final_next_state_features, non_final_mask, actor=None, Q=None, V=None):
+    def predict_next_state(self, non_final_next_state_features, non_final_mask, actor=None, Q=None, V=None, use_target_net=True):
         if self.use_QVMAX:
-            return V.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor)
+            return V.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor, use_target_net=use_target_net)
         elif self.use_QV:
             # This assumes that V is always trained directly before Q
             return V.predictions_next_state
         else:
-            return self.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor)
+            return self.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor, use_target_net=use_target_net)
 
     def predict_current_state(self, state_features, state_action_features, actions):
         if not self.use_actor_critic:
