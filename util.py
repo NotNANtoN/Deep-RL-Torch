@@ -29,6 +29,7 @@ class Normalizer():
 
 
     def observe(self, x):
+        x = x.float()
         self.n += 1.
         last_mean = self.mean.clone()
         self.mean += (x - self.mean).mean(dim=0) / self.n
@@ -37,11 +38,11 @@ class Normalizer():
 
     def normalize(self, inputs):
         obs_std = torch.sqrt(self.var)
-        return (inputs - self.mean) / obs_std
+        return (inputs.float() - self.mean) / obs_std
 
     def denormalize(self, inputs):
         obs_std = torch.sqrt(self.var)
-        return (inputs * obs_std) + self.mean
+        return (inputs.float() * obs_std) + self.mean
 
 
 class Log(object):

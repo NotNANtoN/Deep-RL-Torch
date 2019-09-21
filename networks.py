@@ -560,9 +560,9 @@ class TempDiffNet(OptimizableNet):
             expected_value_next_state = self.calculate_updated_value_next_state(reward_batch,
                                                                                 non_final_next_state_features,
                                                                                 non_final_mask, actor, Q, V)
-        print(predictions_current)
-        print("expected_val: ", expected_value_next_state)
-        print()
+        #print(predictions_current)
+        #print("expected_val: ", expected_value_next_state)
+        #print()
         # TD must be stored for actor-critic updates:
         self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)

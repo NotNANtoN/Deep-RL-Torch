@@ -450,7 +450,6 @@ class BasePolicy:
             self.memory.add(state, action, reward, next_state, done)
 
     def update_targets(self, n_steps):
-        # TODO: maybe move to optimize???
         if self.use_efficient_traces:
             self.update_traces(n_steps)
 

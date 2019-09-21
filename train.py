@@ -155,7 +155,7 @@ if __name__ == "__main__":
                            {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 2, "act_func": "relu"},
                            {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 2, "act_func": "relu"}
                            ]
-    # TODO: define R2D2 architecture! (IMPALA uses the same)
+    # TODO: define R2D2 conv architecture! (IMPALA uses the same)
 
     layers_conv = standard_hidden_block
 
@@ -262,9 +262,7 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    # TODO: Instead of specifying a certain number of steps, specify a number of seconds/hours to run the algorithm for
     trainer.run(n_steps=25000, render=parameters["render"], verbose=parameters["verbose"])
 
-    # TODO: log more important details: hist over actions idx used in an episode (maybe every tenth episode).
-    # TODO: also log TDE of new incoming transitions and expected Q-vals
+    # TODO: log TDE of new incoming transitions and expected Q-vals
 
