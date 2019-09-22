@@ -387,12 +387,13 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if key == "equipped_items":
                 mainhand_dict = obs_dict[key]["mainhand"]
                 obs = process_equipped(mainhand_dict)
+
                 # obs = torch.cat(
                 #    [torch.from_numpy(process_equipped(equip_dict["mainhand"])) for equip_dict in equip_dict_list])
             elif key == "inventory":
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
-                obs = torch.cat([torch.tensor(inv_dict[key], dtype=torch.float).unsqueeze(0) for key in inv_dict])
+                obs = torch.cat([torch.tensor(inv_dict[key], dtype=torch.uint8).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
                 obs = torch.tensor(np.flip(obs_dict[key], axis=0).copy(), dtype=torch.float)
                 if self.rgb2gray:

@@ -182,8 +182,8 @@ class OptimizableNet(nn.Module):
 
         optimizer.zero_grad()
         loss.backward(retain_graph=self.retain_graph + retain_graph)
-        if self.max_norm:
-            torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
+        #if self.max_norm:
+            #torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
         optimizer.step()
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
@@ -301,7 +301,6 @@ class ProcessState(OptimizableNet):
             layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
             vector_normalizer = Normalizer(obs.shape, self.device)
-            # TODO: for both normalizers (vector normalizer above too) extract max and min obs value somehow for good normalization
 
             # Add to lists:
             layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
@@ -413,8 +412,6 @@ class ProcessStateAction(OptimizableNet):
     def log_nn_data(self, name=""):
         self.log_layer_data(self.layers_action, "F_sa_Action", extra_name=name)
         self.log_layer_data(self.layers_merge, "F_sa_Merge", extra_name=name)
-
-
 
     def recreate_self(self):
         return self.__class__(self.state_features_len, self.env, self.log, self.device, self.hyperparameters,
@@ -529,8 +526,6 @@ class TempDiffNet(OptimizableNet):
 
         self.traces[idxs] = traces
 
-
-
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]
         state_action_features = transitions["state_action_features"]
@@ -605,7 +600,10 @@ class TempDiffNet(OptimizableNet):
             self.F_sa.log_nn_data(self.name + name)
 
     def get_updateable_params(self):
-        return self.layers_TD.parameters()
+        params =  list(self.layers_TD.parameters())
+        if self.split:
+            params += list(self.layers_r.parameters())
+        return params
 
     def weights_init(self, m):
         # if isinstance(m, nn.Conv2d):
@@ -634,7 +632,7 @@ class Q(TempDiffNet):
         if is_target_net:
             updateable_parameters = []
         else:
-            updateable_parameters = list(F_s.parameters()) + (list(F_sa.parameters()) if self.use_actor_critic else [])
+            updateable_parameters = list(F_s.get_updateable_parameters()) + (list(F_sa.get_updateable_params()) if self.use_actor_critic else [])
 
         # Create split net:
         self.create_split_net(self.input_size, updateable_parameters, device, hyperparameters)
@@ -734,7 +732,7 @@ class V(TempDiffNet):
         if is_target_net:
             updateable_parameters = []
         else:
-            updateable_parameters = list(F_s.parameters())
+            updateable_parameters = list(F_s.get_updateable_parameters())
 
         # Create split net:
         self.create_split_net(input_size, updateable_parameters, device, hyperparameters)
@@ -742,7 +740,7 @@ class V(TempDiffNet):
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(list(self.get_updateable_params()) + updateable_parameters, lr=self.lr_TD)
 
         # Create target net
         self.target_net = self.create_target_net()
@@ -797,10 +795,10 @@ class Actor(OptimizableNet):
         self.lr = hyperparameters["lr_actor"]
         if not is_target_net:
             self.F_s = F_s
-            updateable_parameters = list(self.F_s.parameters())
+            updateable_parameters = list(self.F_s.get_updateable_parameters())
         else:
             updateable_parameters = []
-        self.optimizer = self.optimizer(list(self.layers.parameters()) + updateable_parameters, lr=self.lr)
+        self.optimizer = self.optimizer(list(self.get_updateable_parameters()) + updateable_parameters, lr=self.lr)
 
         if self.use_target_net:
             self.target_net = self.create_target_net()

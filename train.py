@@ -227,7 +227,7 @@ if __name__ == "__main__":
 
 
     # Decide on env here:
-    env = cart
+    env = tree
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
     for arg in sys.argv[1:]:
@@ -262,7 +262,7 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    trainer.run(n_steps=25000, render=parameters["render"], verbose=parameters["verbose"])
+    trainer.run(n_episodes=300, render=parameters["render"], verbose=parameters["verbose"])
 
     # TODO: log TDE of new incoming transitions and expected Q-vals
 
