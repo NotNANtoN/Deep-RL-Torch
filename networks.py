@@ -632,7 +632,7 @@ class Q(TempDiffNet):
         if is_target_net:
             updateable_parameters = []
         else:
-            updateable_parameters = list(F_s.get_updateable_parameters()) + (list(F_sa.get_updateable_params()) if self.use_actor_critic else [])
+            updateable_parameters = list(F_s.get_updateable_params()) + (list(F_sa.get_updateable_params()) if self.use_actor_critic else [])
 
         # Create split net:
         self.create_split_net(self.input_size, updateable_parameters, device, hyperparameters)
@@ -732,7 +732,7 @@ class V(TempDiffNet):
         if is_target_net:
             updateable_parameters = []
         else:
-            updateable_parameters = list(F_s.get_updateable_parameters())
+            updateable_parameters = list(F_s.get_updateable_params())
 
         # Create split net:
         self.create_split_net(input_size, updateable_parameters, device, hyperparameters)
@@ -795,10 +795,10 @@ class Actor(OptimizableNet):
         self.lr = hyperparameters["lr_actor"]
         if not is_target_net:
             self.F_s = F_s
-            updateable_parameters = list(self.F_s.get_updateable_parameters())
+            updateable_parameters = list(self.F_s.get_updateable_params())
         else:
             updateable_parameters = []
-        self.optimizer = self.optimizer(list(self.get_updateable_parameters()) + updateable_parameters, lr=self.lr)
+        self.optimizer = self.optimizer(list(self.get_updateable_params()) + updateable_parameters, lr=self.lr)
 
         if self.use_target_net:
             self.target_net = self.create_target_net()
