@@ -111,7 +111,7 @@ class Agent(AgentInterface):
     def decay_exploration(self, n_steps):
         self.policy.decay_exploration(n_steps)
 
-    def calculate_TDE(self, state, action, next_state, reward, done):
+    def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         return self.policy.calculate_TDE(state, action, next_state, reward, done)
 
     def update_targets(self, n_steps):
@@ -418,10 +418,10 @@ class BasePolicy:
     def display_debug_info(self):
         pass
 
-    def calculate_TDE(self, state, action, next_state, reward, done):
-        return torch.tensor([0])
-        # TODO fix
-        return self.critic.calculate_TDE(state, action, next_state, reward, done)
+    def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
+        return self.critic.calculate_Q_and_TDE(state, action, next_state, reward, done, actor=self.actor, Q=self.Q,
+                                               V=self.V)
+
 
     def set_retain_graph(self, val):
         if self.Q is not None:
@@ -476,6 +476,9 @@ class BasePolicy:
     def update_traces(self, n_steps):
         if n_steps % self.elig_traces_update_steps == 0:
             episodes, idx_list = self.memory.get_all_episodes()
+            # TODO: improve the upper command: instead of creating episode lists, just have episode lists stored in replay buffer
+            #print(episodes)
+            #print(idx_list)
             for episode, idxs in zip(episodes, idx_list):
                 self.update_episode_trace(episode, idxs)
 
@@ -620,8 +623,14 @@ class REM(BasePolicy):
             self.policy_heads[idx].update_targets(n_steps)
 
     def calculate_TDE(self, state, action, next_state, reward, done):
-        # TOOD: implement
-        return torch.tensor([0])
+        q = 0
+        tde = 0
+        for policy in self.policy_heads:
+            q_current, tde_current = policy.calculate_Q_and_TDE(state, action, next_state, reward, done)
+            q += q_current
+            tde += tde_current
+        return q, tde_current
+
 
     def display_debug_info(self):
         pass
@@ -674,9 +683,8 @@ class MineRLPolicy(BasePolicy):
     def init_critic(self, F_s, F_sa):
         return None, None
 
-    def calculate_TDE(self, state, action, next_state, reward, done):
-        # TODO: implement
-        return torch.tensor([0])
+    def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
+        return 0, 0
 
     def display_debug_info(self):
         pass
@@ -914,6 +922,15 @@ class MineRLMovePolicy(MineRLPolicy):
         for policy in self.policies:
             policy.update_targets(n_steps)
 
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        q = 0
+        tde = 0
+        for policy in self.policies:
+            q_current, tde_current = policy.calculate_Q_and_TDE(state, action, next_state, reward, done)
+            q += q_current
+            tde += tde_current
+        return q, tde_current
+
 
 class MineRLHierarchicalPolicy(MineRLPolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -1072,6 +1089,8 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         transitions["action_argmax"] = original_actions
         return error
 
+        # TODO: this needs to be debugged for environments such as tree, because it is not sure if it works without a decider
+
     def apply_lower_level_policy(self, policy, state):
         with torch.no_grad():
             actions_vals = policy(state)
@@ -1111,12 +1130,28 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             action_q_vals[0][shift: shift + len(low_lvl_action[0])] = low_lvl_action[0]
         return action_q_vals
 
+    def calculate_TDE(self, state, action, next_state, reward, done):
+        # Preprocess:
+        with torch.no_grad():
+            state_features = self.F_s(state)
+        high_level_actions, low_level_actions = self.action2high_low_level(action)
+        if self.decider is not None:
+            q, tde = self.decider.calculate_Q_and_TDE(state_features, high_level_actions, next_state, reward, done)
+        else:
+            q, tde = 0, 0
+
+        policy = self.lower_level_policies[high_level_actions[0]]
+        q_lower, tde_lower = policy.calculate_Q_and_TDE(state_features, low_level_actions, next_state, reward, done)
+        return q + q_lower, tde + tde_lower
+        # TODO: check
+
+
     def update_targets(self, n_steps):
         self.decider.update_targets(n_steps)
         for policy in self.lower_level_policies:
             policy.update_targets(n_steps)
 
-    def calculate_TDE(self, state, action, next_state, reward, done):
+    def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         # TODO: implement
         return torch.tensor([0])
 

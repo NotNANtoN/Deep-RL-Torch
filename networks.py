@@ -566,29 +566,28 @@ class TempDiffNet(OptimizableNet):
         self.TDE = (abs(TDE_r) + abs(TDE_TD)).detach()
         return self.TDE
 
-    def calculate_TDE(self, state, action_batch, next_state, reward_batch, done):
-        return torch.tensor([0])
-        # TODO fix. should return both TDE and Q val estimation!
-
-        state_features = self.F_s(state, None)
-        if next_state is not None:
-            non_final_next_state_features = self.F_s(next_state, None)
-            non_final_mask = [0]
+    def calculate_Q_and_TDE(self, state, action, next_state, reward, done, actor=None, Q=None, V=None):
+        tde = 0
+        state_features = self.F_s(state.unsqueeze(0))
+        if self.F_sa is None:
+            state_action_features = None
         else:
-            non_final_mask = []
-        state_action_features = None
-        if not self.discrete:
-            state_action_features = self.F_sa(state_features, action_batch)
-        # Compute V(s_t) or Q(s_t, a_t)
+            state_action_features = self.F_sa(state_features, action.unsqueeze(0))
         predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,
-                                                                            action_batch).detach()
-        # Compute current prediction for reward plus state value:
-        current_prediction = reward_prediction + self.gamma * predictions_current
-        # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        predictions_next_state = self.predict_next_state(non_final_next_states, non_final_mask)
-        # Compute the expected values. Do not add the reward, if the critic is split
-        expected_value_next_state = (predictions_next_state * self.gamma) + (reward_batch if self.split else 0)
-        return expected_value_next_state - current_prediction
+                                                                            action)
+        q_val = predictions_current + reward_prediction
+        # TDE for split:
+        if self.split:
+            tde += reward - reward_prediction
+        # TDE for normal:
+        non_final_mask = [False if done else True]
+        non_final_next_state_features = self.F_s(state.unsqueeze(0)) if not done else None
+        expected_value_next_state = self.calculate_updated_value_next_state(reward, non_final_next_state_features,
+                                                                            non_final_mask, actor, Q, V)
+        tde += expected_value_next_state - predictions_current
+
+        return q_val, tde
+
 
     def log_nn_data(self, name=""):
         self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)

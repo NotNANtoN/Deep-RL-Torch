@@ -148,8 +148,10 @@ class ReplayBuffer(object):
                 current_episode = [transition]
                 current_idxs = [real_idx]
             else:
-                current_episode.append(transition)
-                current_idxs.append(real_idx)
+                #current_episode.append(transition)
+                #current_idxs.append(real_idx)
+                current_episode.insert(0, transition)
+                current_idxs.insert(0, real_idx)
         if len(current_episode) != 0:
             episodes.append(current_episode)
             idx_list.append(current_idxs)
@@ -164,8 +166,10 @@ class ReplayBuffer(object):
             if idx != 0 and (transition.done or real_idx == self._next_idx - 1):
                 return episode, idxs
             else:
-                episode.append(transition)
-                idxs.append(real_idx)
+                #episode.append(transition)
+                #idxs.append(real_idx)
+                episode.insert(0, transition)
+                idxs.insert(0, real_idx)
         return episode, idxs
 
 class PrioritizedReplayBuffer(ReplayBuffer):

@@ -284,8 +284,9 @@ class Trainer:
             self.policy.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
         # TODO: implement logging of predicted Q value and TDE
-        #TDE = self.policy.calculate_TDE(state, raw_action, next_state, reward, done)
-        #self.log.add("TDE_live", TDE.item())
+        #q_val, tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
+        #self.log.add("TDE_live", tde)
+        #self.log.add("Q(s,a)_live", q_val)
         # Render:
         if render:
             self.env.render()

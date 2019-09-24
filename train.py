@@ -14,6 +14,7 @@ def create_parser():
 
     parser = argparse.ArgumentParser()
     # General:
+    parser.add_argument("--env", help="Env name", default="cart")
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
     parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
@@ -227,7 +228,11 @@ if __name__ == "__main__":
 
 
     # Decide on env here:
-    env = tree
+    env_short = parameters["env"]
+    if env_short == "cart":
+        env = cart
+    else:
+        raise NotImplementedError
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
     for arg in sys.argv[1:]:
