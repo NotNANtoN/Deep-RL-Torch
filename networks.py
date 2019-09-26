@@ -440,7 +440,6 @@ class TempDiffNet(OptimizableNet):
 
         # Eligibility traces:
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
-        self.elig_traces_lambda = hyperparameters["elig_traces_lambda"]
         if self.use_efficient_traces:
             self.traces = torch.empty(hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"])
 
@@ -495,7 +494,7 @@ class TempDiffNet(OptimizableNet):
         # Compute the updated expected values. Do not add the reward, if the critic is split
         return (reward_batch if not self.split else 0) + (self.predictions_next_state * self.gamma)
 
-    def update_traces(self, episode_transitions, actor=None, V=None, Q=None):
+    def update_traces(self, episode_transitions, lambda_val, actor=None, V=None, Q=None):
         num_steps_in_episode = len(episode_transitions["state"])
         non_final_next_state_features = episode_transitions["non_final_next_state_features"]
         non_final_mask = episode_transitions["non_final_mask"]
@@ -515,8 +514,8 @@ class TempDiffNet(OptimizableNet):
             reversed_idx = num_steps_in_episode - 1 - step_idx
             current_trace_val = rewards[reversed_idx]
             if non_final_mask[step_idx]:
-                current_trace_val += self.gamma * (self.elig_traces_lambda * last_trace_value +
-                                                  (1 - self.elig_traces_lambda) * next_state_vals[reversed_idx][0])
+                current_trace_val += self.gamma * (lambda_val * last_trace_value +
+                                                  (1 - lambda_val) * next_state_vals[reversed_idx][0])
             traces[reversed_idx] = current_trace_val
             last_trace_value = current_trace_val
 

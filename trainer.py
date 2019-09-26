@@ -15,6 +15,15 @@ from env_wrappers import FrameSkip
 from util import display_top_memory_users
 
 
+def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
+    if n_steps:
+        fraction = steps_done / n_steps
+    elif n_episodes:
+        fraction = i_episode / n_episodes
+    else:
+        time_diff = (time.time() - start_time) / 360
+        fraction = time_diff / n_hours
+    return fraction
 
 class Trainer:
     def __init__(self, env_name, hyperparameters, log=True, tb_comment="", log_NNs=False):
@@ -305,10 +314,11 @@ class Trainer:
 
         return next_state
 
-    def _display_debug_info(self, i_episode, steps_done):
+    def _display_debug_info(self, i_episode, steps_done, train_fraction):
         episode_return = self.log.get_episodic("Return")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
+        print(round(train_fraction * 100, 2), "% of training.")
         print("#Episode ", i_episode)
         print("#Steps: ", steps_done)
         print(" Return:", episode_return[0])
@@ -323,7 +333,7 @@ class Trainer:
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
         print()
 
-    def run(self, n_hours=0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
+    def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
         assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
 
         steps_done = 0
@@ -354,12 +364,14 @@ class Trainer:
         # test_env = gym.make(self.env_name).unwrapped
         # test_state = test_env.reset()
         # test_state = torch.tensor([test_state], device=self.device).float()
+        # TODO: For MineRL only train for a certain amount of time: stop after something like 99% of all training time at least leave 10-30 mins empty
 
         # Do the actual training:
         time_after_optimize = None
         pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
-        while (n_steps and steps_done < n_steps) or (n_episodes and i_episode < n_episodes) or\
-                (n_hours and (time.time() - start_time) / 360 < n_hours):
+        train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+
+        while train_fraction < 1:
             i_episode += 1
             # Initialize the environment and state. Do not reset
             if state is None:
@@ -400,7 +412,7 @@ class Trainer:
                     self.policy.optimize()
 
                     # Update the target network
-                    self.policy.update_targets(steps_done)
+                    self.policy.update_targets(steps_done, train_fraction=train_fraction)
                 time_after_optimize = time.time()
 
                 # Log reward and time:
@@ -419,73 +431,13 @@ class Trainer:
 
                     self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
                     if verbose:
-                        self._display_debug_info(i_episode, steps_done)
+                        self._display_debug_info(i_episode, steps_done, train_fraction)
                     self.log.flush_episodic()
                     state = None
                     break
-
+            train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
         print('Done.')
         self.env.close()
         pbar.close()
         return i_episode
 
-
-
-class TrainerOld(object):
-    def __init__(self, env_name, device):
-        num_initial_states = 5
-        self.initial_states = torch.tensor([self.env.reset() for _ in range(num_initial_states)], device=self.device,
-                                           dtype=torch.float)
-
-
-    def initialize_workers(self):
-        self.workers = [{"env": gym.make(self.env_name).unwrapped, "episode length": 0} for i in range(self.batch_size)]
-        for worker in self.workers:
-            worker["state"] = worker["env"].reset()
-            worker["state"] = torch.tensor([worker["state"]], device=self.device).float()
-
-    def collect_experiences(self):
-        # Do one step with each worker and return transition batch
-        transition_list = []
-        dones = 0
-        for idx in range(len(self.workers)):
-            worker = self.workers[idx]
-            worker_env = worker["env"]
-            worker_state = worker["state"]
-            action = self.select_action(worker_state, self.epsilon)
-            worker["episode length"] += 1
-            next_state, reward, done, _ = worker_env.step(action.item())
-
-            if done:
-                next_state = None
-            else:
-                next_state = torch.tensor([next_state], device=self.device).float()
-            reward = torch.tensor([reward], device=self.device, dtype=torch.float)
-            if self.TDEC_ENABLED:
-                TDE = self.calculateTDE(self.workers[idx]["state"], action, next_state, reward)
-            else:
-                TDE = None
-
-            trans = Transition(self.workers[idx]["state"], action, next_state, reward, TDE)
-            transition_list.append(trans)
-
-            if done or worker["episode length"] > self.max_steps_per_episode > 0:
-                dones += 1
-                worker["episode length"] = 0
-                worker["state"] = worker["env"].reset()
-                worker["state"] = torch.tensor([worker["state"]], device=self.device).float()
-            else:
-                worker["state"] = next_state
-
-        return transition_list
-
-    def calculate_initial_state_val(self):
-        with torch.no_grad():
-            predictions_inital_states = self.target_net(self.initial_states).view(-1, self.num_actions,
-                                                                                  self.num_Q_output_slots)
-            initial_state_value = torch.mean(predictions_inital_states[:, :, 1]).item()
-        return initial_state_value
-
-    # should not be needed anymore: check if it is used anywhere before deleting
-    # def getActionIdxs(self, action_batch):
-    #    return torch.cat([action_batch * self.num_Q_output_slots + i for i in range(self.num_Q_output_slots)], dim=1)

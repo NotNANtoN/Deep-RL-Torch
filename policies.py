@@ -114,11 +114,11 @@ class Agent(AgentInterface):
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         return self.policy.calculate_TDE(state, action, next_state, reward, done)
 
-    def update_targets(self, n_steps):
+    def update_targets(self, n_steps, train_fraction=None):
         self.policy.F_s.update_targets(n_steps)
         if self.policy.F_sa is not None:
             self.policy.F_sa.update_targets(n_steps)
-        self.policy.update_targets(n_steps)
+        self.policy.update_targets(n_steps, train_fraction)
 
     def display_debug_info(self):
         self.policy.display_debug_info()
@@ -179,6 +179,8 @@ class BasePolicy:
         self.current_episode = []
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
         self.elig_traces_update_steps = hyperparameters["elig_traces_update_steps"]
+        self.elig_traces_anneal_lambda = hyperparameters["elig_traces_anneal_lambda"]
+        self.lambda_val = hyperparameters["elig_traces_lambda"]
         # Set up replay buffer:
         self.buffer_size = hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"]
         self.use_PER = hyperparameters["use_PER"]
@@ -440,7 +442,7 @@ class BasePolicy:
             self.current_episode.append(transition)
             if done:
                 for state, action, reward, next_state, done in self.current_episode:
-                    self.memory.add(state, action, reward, next_state, done)
+                    self.memory.add(state, action, reward, next_state, done, store_episodes=True)
                 self.current_episode = []
                 # Update episode trace:
                 most_recent_episode, idxs = self.memory.get_most_recent_episode()
@@ -449,9 +451,9 @@ class BasePolicy:
         else:
             self.memory.add(state, action, reward, next_state, done)
 
-    def update_targets(self, n_steps):
+    def update_targets(self, n_steps, train_fraction=None):
         if self.use_efficient_traces:
-            self.update_traces(n_steps)
+            self.update_traces(n_steps, train_fraction=train_fraction)
 
         if self.Q is not None:
             self.Q.update_targets(n_steps)
@@ -465,20 +467,28 @@ class BasePolicy:
             self.F_sa.update_targets(n_steps)
 
     def update_episode_trace(self, episode, idxs):
+        if episode == []:
+            return
         episode_transitions = self.extract_batch(episode)
         episode_transitions["idxs"] = idxs
         self.extract_features(episode_transitions)
         if self.Q is not None:
-            self.Q.update_traces(episode_transitions, actor=self.actor, V=self.V, Q=None)
+            self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None)
         if self.V is not None:
-            self.V.update_traces(episode_transitions, actor=None, V=None, Q=self.Q)
+            self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q)
 
-    def update_traces(self, n_steps):
+        # TODO: anneal eligilibility trace lambda from 1 to 0 over training time
+
+        # TODO: when calculating eligibility traces we could also estimate the TD error for PER
+
+    def update_traces(self, n_steps, train_fraction=None):
+        # Update lambda val:
+        if self.elig_traces_anneal_lambda and train_fraction is not None:
+            self.lambda_val = 1.0 * (1 - train_fraction)
+        # Update traces if its time:
         if n_steps % self.elig_traces_update_steps == 0:
             episodes, idx_list = self.memory.get_all_episodes()
-            # TODO: improve the upper command: instead of creating episode lists, just have episode lists stored in replay buffer
-            #print(episodes)
-            #print(idx_list)
+            # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
             for episode, idxs in zip(episodes, idx_list):
                 self.update_episode_trace(episode, idxs)
 

@@ -14,6 +14,10 @@ def create_parser():
 
     parser = argparse.ArgumentParser()
     # General:
+    train_time_group = parser.add_mutually_exclusive_group()
+    train_time_group.add_argument("--n_steps", type=int, default=0)
+    train_time_group.add_argument("--n_episodes", type=int, default=0)
+    train_time_group.add_argument("--n_hours", type=float, default=0.0)
     parser.add_argument("--env", help="Env name", default="cart")
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
     parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
@@ -56,6 +60,7 @@ def create_parser():
     parser.add_argument("--use_efficient_traces", type=int, default=0)
     parser.add_argument("--elig_traces_lambda", type=float, default=0)
     parser.add_argument("--elig_traces_update_steps", type=int, default=0)
+    parser.add_argument("--elig_traces_anneal_lambda", type=int, default=0)
     # Input Normalization:
     parser.add_argument("--normalize_obs", type=int, default=1)
     parser.add_argument("--freeze_normalize_after_initial", type=int, default=1)
@@ -231,8 +236,12 @@ if __name__ == "__main__":
     env_short = parameters["env"]
     if env_short == "cart":
         env = cart
+    elif env_short == "lunar":
+        env = lunar
+    elif env_short == "acro":
+        env = acro
     else:
-        raise NotImplementedError
+        raise NotImplementedError("Env does not exist")
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
     for arg in sys.argv[1:]:
@@ -267,7 +276,8 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
-    trainer.run(n_episodes=300, render=parameters["render"], verbose=parameters["verbose"])
+    trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
+                render=parameters["render"], verbose=parameters["verbose"])
 
     # TODO: log TDE of new incoming transitions and expected Q-vals
 

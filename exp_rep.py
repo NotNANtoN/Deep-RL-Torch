@@ -19,6 +19,9 @@ class ReplayBuffer(object):
         self.use_CER = use_CER
         self.size_expert_data = size_expert_data
 
+        self.episodic_transitions = [[]]
+        self.episodic_idxs = [[]]
+
     def __len__(self):
         return len(self._storage)
 
@@ -50,13 +53,27 @@ class ReplayBuffer(object):
         """
         return len(self) == self.buffer_size
 
-    def add(self, *args):
-        data = Transition(*args)
+    def add(self, state, action, next_state, reward, done, store_episodes=False):
+        data = Transition(state, action, next_state, reward, done)
 
+        # Store data:
         if self._next_idx >= len(self._storage):
             self._storage.append(data)
         else:
             self._storage[self._next_idx] = data
+
+        # Also store pointer to transitions aggregated per episode for stuff like eligibility traces:
+        if store_episodes:
+            self.episodic_transitions[-1].append(data)
+            self.episodic_idxs[-1].append(self._next_idx)
+            if data.done:
+                self.episodic_transitions.append([])
+                self.episodic_idxs.append([])
+
+            if len(self._storage) == self._maxsize:
+                del self.episodic_transitions[0][0]
+                del self.episodic_idxs[0][0]
+
         self._next_idx += 1
         remainder = self._next_idx % self._maxsize
         self._next_idx = 0 + self.size_expert_data if remainder == 0 else remainder
@@ -133,6 +150,15 @@ class ReplayBuffer(object):
         return samples, idxes
 
     def get_all_episodes(self):
+        return self.episodic_transitions, self.episodic_idxs
+
+    def get_most_recent_episode(self):
+        if self.episodic_transitions[-1] == []:
+            return self.episodic_transitions[-2], self.episodic_idxs[-2]
+        else:
+            return self.episodic_transitions[-1], self.episodic_idxs[-1]
+
+    def get_all_episodes_old(self):
         # TODO: this method does not take into account that an episode might span from the end of the buffer to the start - so the trace of one episode will likely be cut if the buffer is full. Not sure how bad this is
         episodes = []
         current_episode = []
@@ -158,7 +184,7 @@ class ReplayBuffer(object):
 
         return episodes, idx_list
 
-    def get_most_recent_episode(self):
+    def get_most_recent_episode_old(self):
         episode = []
         idxs = []
         for idx, transition in enumerate(self._storage[::-1]):
@@ -201,7 +227,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         self._it_min[idx] = self._max_priority ** self._alpha
         # TODO: this should be changed such that the cpu calculates the priority directly (or just use CER)
 
-    def add(self, *args):
+    def add(self, state, action, next_state, reward, done, store_episodes=False):
         """
         add a new transition to the buffer
 
@@ -212,7 +238,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         :param done: (bool) is the episode done
         """
         idx = self._next_idx
-        super().add(*args)
+        super().add(state, action, next_state, reward, done, store_episodes=store_episodes)
         self.calculate_priority_of_last_add(idx)
 
     def _sample_proportional(self, batch_size):
