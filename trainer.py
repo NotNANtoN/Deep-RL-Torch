@@ -318,10 +318,10 @@ class Trainer:
         episode_return = self.log.get_episodic("Return")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
-        print(round(train_fraction * 100, 2), "% of training.")
+        print(" Return:", episode_return[0])
+        print(round(train_fraction * 100, 1), "%")
         print("#Episode ", i_episode)
         print("#Steps: ", steps_done)
-        print(" Return:", episode_return[0])
         print(" Opt-time: ", round(np.mean(optimize_time), 4), "s")
         print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:

@@ -333,7 +333,7 @@ class BasePolicy:
         error = self.optimize_networks(transitions)
 
         error = abs(error) + 0.0001
-        error_np = error.cpu().detach().numpy()
+        error_np = error
 
         if self.use_PER:
             self.memory.update_priorities(transitions["idxs"], error_np)
@@ -472,10 +472,11 @@ class BasePolicy:
         episode_transitions = self.extract_batch(episode)
         episode_transitions["idxs"] = idxs
         self.extract_features(episode_transitions)
-        if self.Q is not None:
-            self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None)
         if self.V is not None:
             self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q)
+        if self.Q is not None:
+            self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None)
+
 
         # TODO: anneal eligilibility trace lambda from 1 to 0 over training time
 
@@ -625,12 +626,12 @@ class REM(BasePolicy):
                 summed_action += action
         return summed_action / self.num_samples
 
-    def update_targets(self, n_steps):
+    def update_targets(self, n_steps, train_fraction=None):
         # TODO: test whether sampling here could also be beneficially (might need to drop target network update steps for it)
         idxes = range(self.num_heads)
         # idxes = random.sample(range(self.num_heads), self.num_samples)
         for idx in idxes:
-            self.policy_heads[idx].update_targets(n_steps)
+            self.policy_heads[idx].update_targets(n_steps, train_fraction=train_fraction)
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         q = 0
@@ -807,10 +808,10 @@ class MineRLObtainPolicy(MineRLPolicy):
             action_q_vals[0][shift: shift + len(low_lvl_action[0])] = low_lvl_action[0]
         return action_q_vals
 
-    def update_targets(self, n_steps):
-        self.decider.update_targets(n_steps)
+    def update_targets(self, n_steps, train_fraction=None):
+        self.decider.update_targets(n_steps, train_fraction=train_fraction)
         for policy in self.lower_level_policies:
-            policy.update_targets(n_steps)
+            policy.update_targets(n_steps, train_fraction=train_fraction)
 
 
 class MineRLMovePolicy(MineRLPolicy):
@@ -928,9 +929,9 @@ class MineRLMovePolicy(MineRLPolicy):
         transitions["action_argmax"] = original_actions
         return error
 
-    def update_targets(self, n_steps):
+    def update_targets(self, n_steps, train_fraction=None):
         for policy in self.policies:
-            policy.update_targets(n_steps)
+            policy.update_targets(n_steps, train_fraction=train_fraction)
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         q = 0
@@ -1156,10 +1157,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         # TODO: check
 
 
-    def update_targets(self, n_steps):
-        self.decider.update_targets(n_steps)
+    def update_targets(self, n_steps, train_fraction=None):
+        self.decider.update_targets(n_steps, train_fraction=train_fraction)
         for policy in self.lower_level_policies:
-            policy.update_targets(n_steps)
+            policy.update_targets(n_steps, train_fraction=train_fraction)
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         # TODO: implement

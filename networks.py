@@ -45,7 +45,6 @@ def string2layer(name, input_size, neurons):
         return nn.GRU(input_size, neurons)
 
 
-# TODO: possibly put activation functions per layer into some other list...
 def create_ff_layers(input_size, layer_dict, output_size):
     layers = nn.ModuleList()
     act_functs = []
@@ -173,29 +172,36 @@ class OptimizableNet(nn.Module):
     def compute_loss(self, output, target, sample_weights):
         loss = F.smooth_l1_loss(output, target, reduction='none')
         if sample_weights is None:
-            return loss.mean()
+            reduced_loss = loss.mean()
         else:
-            return (loss * sample_weights).mean()
+            reduced_loss = (loss * sample_weights).mean()
+        return loss, reduced_loss
 
     def optimize_net(self, output, target, optimizer, name="", sample_weights=None, retain_graph=False):
-        loss = self.compute_loss(output, target, sample_weights)
+        #print("output: ", output)
+        #print("target: ", target)
+        loss, reduced_loss = self.compute_loss(output, target, sample_weights)
 
         optimizer.zero_grad()
-        loss.backward(retain_graph=self.retain_graph + retain_graph)
+        reduced_loss.backward(retain_graph=self.retain_graph + retain_graph)
         #if self.max_norm:
             #torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
         optimizer.step()
+        # TODO: we should test the option of not stepping the optimizer here, but instead returning the loss and only stepping once per policy for all networks at the same time (averaging the losses of all networks)
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
-        detached_loss = loss.detach().clone().item()
+        detached_loss = reduced_loss.detach().clone().item()
         self.log.add(name, detached_loss, skip_steps=100)
-        # TODO: we might need to test the option of not stepping the optimizer here, but instead returning the loss and only stepping once per policy for all networks at the same time (averaging the losses of all networks)
+        #print("detached loss: ", detached_loss)
+        #print("loss: ", loss)
+
+        PER_weights = loss.detach().clone().numpy()
 
         # Log weight and gradient norms:
         if self.log.do_logging and self.log.log_NNs:
             self.log_nn_data()
 
-        return detached_loss
+        return PER_weights
 
     def get_updateable_params(self):
         return self.parameters()
@@ -227,6 +233,8 @@ class OptimizableNet(nn.Module):
         #self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
         name += "_" + extra_name + "_" if extra_name else ""
         weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])
+        #for layer in layers.parameters():
+        #    print(layer.grad)
         gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])
         self.log.add(name + "Weights", weights, distribution=True, skip_steps=10000)
         self.log.add(name + "Gradients", gradients, distribution=True, skip_steps=10000)
@@ -444,12 +452,13 @@ class TempDiffNet(OptimizableNet):
             self.traces = torch.empty(hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"])
 
     def create_split_net(self, input_size, updateable_parameters, device, hyperparameters):
-        if self.split:
-            self.lr_r = hyperparameters["lr_r"]
-            reward_layers = hyperparameters["layers_r"]
-            self.layers_r, self.act_functs_r = create_ff_layers(input_size, reward_layers, self.output_neurons)
-            self.to(device)
-            self.optimizer_r = self.optimizer(list(self.layers_r.parameters()) + updateable_parameters, lr=self.lr_r)
+        lr_r = hyperparameters["lr_r"]
+        reward_layers = hyperparameters["layers_r"]
+        layers_r, act_functs_r = create_ff_layers(input_size, reward_layers, self.output_neurons)
+        layers_r.to(device)
+        optimizer_r = self.optimizer(list(layers_r.parameters()) + updateable_parameters, lr=lr_r)
+        return layers_r, act_functs_r, optimizer_r
+
 
     def recreate_self(self):
         new_self = self.__class__(self.input_size, self.env, None, None, self.device, self.log,
@@ -485,7 +494,7 @@ class TempDiffNet(OptimizableNet):
     def calculate_updated_value_next_state(self, reward_batch, non_final_next_state_features, non_final_mask,
                                            actor=None, Q=None, V=None):
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        self.predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q,
+        predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q,
                                                               V)
         # self.log.add(self.name + " Prediction_next_state", self.predictions_next_state[0].item())
         # print("Next state features: ", non_final_next_state_features)
@@ -512,8 +521,8 @@ class TempDiffNet(OptimizableNet):
         # Iterate backwards through transitions in the episode:
         for step_idx in range(0, num_steps_in_episode):
             reversed_idx = num_steps_in_episode - 1 - step_idx
-            current_trace_val = rewards[reversed_idx]
-            if non_final_mask[step_idx]:
+            current_trace_val = rewards[reversed_idx].clone()
+            if non_final_mask[reversed_idx]:
                 current_trace_val += self.gamma * (lambda_val * last_trace_value +
                                                   (1 - lambda_val) * next_state_vals[reversed_idx][0])
             traces[reversed_idx] = current_trace_val
@@ -521,7 +530,8 @@ class TempDiffNet(OptimizableNet):
 
         # If split the direct reward prediction is taken care of another network
         if self.split:
-            traces = [trace - rewards[idx] for idx, trace in enumerate(traces)]
+            traces -= rewards.squeeze()
+            #traces = [trace - rewards[idx] for idx, trace in enumerate(traces)]
 
         self.traces[idxs] = traces
 
@@ -540,9 +550,10 @@ class TempDiffNet(OptimizableNet):
 
         # Train reward net if it exists:
         if self.split:
-            self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
-            TDE_r = reward_batch - reward_prediction
-            self.log_nn_data(policy_name + "_r-net_")
+            print("r:")
+            print(self.optimizer_r.state_dict()["state"].keys())
+            TDE_r = self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
+            #self.log_nn_data(policy_name + "_r-net_", r_net=True)
         else:
             TDE_r = 0
 
@@ -558,11 +569,13 @@ class TempDiffNet(OptimizableNet):
         #print("expected_val: ", expected_value_next_state)
         #print()
         # TD must be stored for actor-critic updates:
-        self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
+        #print("TD:")
+        #print(self.optimizer_TD.state_dict()["state"].keys())
+
+        TDE_TD = self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
-        self.log_nn_data(policy_name + "_TD-net")
-        TDE_TD = expected_value_next_state - predictions_current
-        self.TDE = (abs(TDE_r) + abs(TDE_TD)).detach()
+        self.log_nn_data(policy_name + "_TD-net", r_net=False)
+        self.TDE = (abs(TDE_r) + abs(TDE_TD))
         return self.TDE
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done, actor=None, Q=None, V=None):
@@ -588,9 +601,10 @@ class TempDiffNet(OptimizableNet):
         return q_val, tde
 
 
-    def log_nn_data(self, name=""):
-        self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)
-        if self.split:
+    def log_nn_data(self, name="", r_net=False):
+        if not r_net:
+            self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)
+        if r_net and self.split:
             self.log_layer_data(self.layers_r, self.name + "_r", extra_name=name)
         if self.F_s is not None:
             self.F_s.log_nn_data(self.name + name)
@@ -633,13 +647,22 @@ class Q(TempDiffNet):
             updateable_parameters = list(F_s.get_updateable_params()) + (list(F_sa.get_updateable_params()) if self.use_actor_critic else [])
 
         # Create split net:
-        self.create_split_net(self.input_size, updateable_parameters, device, hyperparameters)
+        if self.split and not is_target_net:
+            self.layers_r, self.act_functs_r, self.optimizer_r = self.create_split_net(self.input_size,
+                                                                                       updateable_parameters,
+                                                                                       device, hyperparameters)
+            #print("RRRRRR:")
+            #print(list(self.layers_r.state_dict().keys()) + list(F_s.get_updateable_params()))
+            #print(type(next(self.layers_r.parameters())))
+        else:
+            self.layers_r, self.act_functs_r, self.optimizer_r = None, None, None
 
-        # Create layers
+
+            # Create layers
         layers = hyperparameters["layers_Q"]
         self.layers_TD, self.act_functs_TD = create_ff_layers(self.input_size, layers, self.output_neurons)
         # Put feature extractor on GPU if possible:
-        self.to(device)
+        self.layers_TD.to(device)
 
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_Q"]
@@ -650,22 +673,29 @@ class Q(TempDiffNet):
         # with SummaryWriter(comment='Q') as w:
         #    random_input = torch.rand(self.input_size)
         #    w.add_graph(self, input_to_model=random_input, verbose=True)
+        #if not is_target_net:
+        #    print("TD::::")
+        #    print(list(self.layers_TD.state_dict().keys()) + list(F_s.state_dict().keys()))
 
         self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
         if self.target_net and self.split:
             self.target_net.layers_r = self.layers_r
+            self.target_net.act_functs_r = self.act_functs_r
 
 
     def predict_next_state(self, non_final_next_state_features, non_final_mask, actor=None, Q=None, V=None, use_target_net=True):
         if self.use_QVMAX:
-            return V.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor, use_target_net=use_target_net)
+            self.predictions_next_state = V.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor, use_target_net=use_target_net)
         elif self.use_QV:
             # This assumes that V is always trained directly before Q
-            return V.predictions_next_state
+            self.predictions_next_state = V.predictions_next_state
         else:
-            return self.calculate_next_state_values(non_final_next_state_features, non_final_mask, actor=actor, use_target_net=use_target_net)
+            self.predictions_next_state = self.calculate_next_state_values(non_final_next_state_features,
+                                                                           non_final_mask, actor=actor,
+                                                                           use_target_net=use_target_net)
+        return self.predictions_next_state
 
     def predict_current_state(self, state_features, state_action_features, actions):
         if not self.use_actor_critic:
@@ -733,7 +763,12 @@ class V(TempDiffNet):
             updateable_parameters = list(F_s.get_updateable_params())
 
         # Create split net:
-        self.create_split_net(input_size, updateable_parameters, device, hyperparameters)
+        if self.split and not is_target_net:
+            self.layers_r, self.act_functs_r, self.optimizer_r = self.create_split_net(self.input_size,
+                                                                                       updateable_parameters,
+                                                                                       device, hyperparameters)
+        else:
+            self.layers_r, self.act_functs_r, self.optimizer_r = None, None, None
 
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
@@ -744,13 +779,15 @@ class V(TempDiffNet):
         self.target_net = self.create_target_net()
         if self.target_net and self.split:
             self.target_net.layers_r = self.layers_r
+            self.target_net.act_functs_r = self.act_functs_r
 
 
-    def predict_next_state(self, non_final_next_states, non_final_mask, actor=None, Q=None, V=None):
+    def predict_next_state(self, non_final_next_states, non_final_mask, actor=None, Q=None, V=None, use_target_net=True):
         if self.use_QVMAX:
-            return Q.calculate_next_state_values(non_final_next_states, non_final_mask, actor=actor)
+            self.predictions_next_state = Q.calculate_next_state_values(non_final_next_states, non_final_mask, actor=actor, use_target_net=use_target_net)
         else:
-            return self.calculate_next_state_values(non_final_next_states, non_final_mask, actor=actor)
+            self.predictions_next_state = self.calculate_next_state_values(non_final_next_states, non_final_mask, actor=actor, use_target_net=use_target_net)
+        return self.predictions_next_state
 
     def predict_state_value(self, state_features, F_sa, actor):
         with torch.no_grad():
