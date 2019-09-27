@@ -2,9 +2,10 @@
 *.pyc
 .idea
 /logs
-/runs
+/runs*
 *~
 /Experiments
 *.pdf
 init_vm.sh
 Azure.txt
+/data

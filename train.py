@@ -240,6 +240,8 @@ if __name__ == "__main__":
         env = lunar
     elif env_short == "acro":
         env = acro
+    elif env_short == "tree":
+        env = tree
     else:
         raise NotImplementedError("Env does not exist")
     print("Env: ", env)
