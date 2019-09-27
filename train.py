@@ -23,6 +23,7 @@ def create_parser():
     parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
+    parser.add_argument("--debug", action="store_true", default=0)
     parser.add_argument("--log", action="store_true", default=0)
     parser.add_argument("--log_NNs", action="store_true", default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
@@ -269,12 +270,10 @@ if __name__ == "__main__":
         if "Pickaxe" in env or "Diamond" in env:
             parameters["use_MineRL_policy"] = True
 
-    # Set up logging:
-    if not os.path.exists("logs"):
-        os.mkdir("logs")
-    log_setup = parameters["log"]
+    # Set up debugging:
+    log_setup = parameters["debug"]
     if log_setup:
-        logging.basicConfig(filename="logs/" + tensorboard_comment + ".log", filemode='w', level=logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG)
 
     trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
     # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
