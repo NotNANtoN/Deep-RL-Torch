@@ -634,9 +634,9 @@ def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samp
             plt.xlabel("Hyperparameter Value")
             plt.ylabel("Score")
             plt.show()
-            
+
             #TODO: save plot in correct folder
-            
+            plt.savefig('Results/Hyperparam Value and Score for paramn' + hyperparam + '.png')
             
         #TODO: add loading if folder already exists
         
