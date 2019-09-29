@@ -195,7 +195,7 @@ class OptimizableNet(nn.Module):
         #print("detached loss: ", detached_loss)
         #print("loss: ", loss)
 
-        PER_weights = loss.detach().clone().numpy()
+        PER_weights = loss.detach().clone().cpu().numpy()
 
         # Log weight and gradient norms:
         if self.log.do_logging and self.log.log_NNs:
