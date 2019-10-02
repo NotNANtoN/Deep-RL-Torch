@@ -72,7 +72,11 @@ class ReplayBuffer(object):
 
             if len(self._storage) == self._maxsize:
                 del self.episodic_transitions[0][0]
+                if self.episodic_transitions[0] == []:
+                    del self.episodic_transitions[0]
                 del self.episodic_idxs[0][0]
+                if self.episodic_idxs[0] == []:
+                    del self.episodic_idxs[0]
 
         self._next_idx += 1
         remainder = self._next_idx % self._maxsize
