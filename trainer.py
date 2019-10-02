@@ -13,6 +13,7 @@ from networks import *
 from policies import Agent
 from env_wrappers import FrameSkip
 from util import display_top_memory_users
+from verify_or_download_data import ver_or_download_data
 
 
 def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
@@ -190,10 +191,10 @@ class Trainer:
     def load_expert_data_MineRL(self):
         print("Loading expert MineRL data...")
 
+        ver_or_download_data(self.env_name)
         #env_name_data = 'MineRLObtainDiamond-v0'
-        env_name_data = self.env_name
         data_pipeline = minerl.data.make(
-            env_name_data,
+            self.env_name,
             data_dir='data')
         data = self.use_data_pipeline_MineRL(data_pipeline)
 
