@@ -449,7 +449,8 @@ class TempDiffNet(OptimizableNet):
         # Eligibility traces:
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
         if self.use_efficient_traces:
-            self.traces = torch.empty(hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"])
+            self.traces = torch.empty(hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"],
+                                      device=device)
 
     def create_split_net(self, input_size, updateable_parameters, device, hyperparameters):
         lr_r = hyperparameters["lr_r"]
