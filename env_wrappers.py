@@ -20,8 +20,10 @@ def add_to_set_in_dict(dict_to_add, name, val):
     except KeyError:
         dict_to_add[name] = {val}
 
+
 def map2closest_val(val, number_list):
     return min(number_list, key=lambda x: abs(x - val))
+
 
 class HierarchicalActionWrapper(gym.ActionWrapper):
     """Convert MineRL env's `Dict` action space as a serial discrete action space.
@@ -117,7 +119,6 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
 
         self.dict2id_set = {}
 
-
         self.lateral_options = ["left", "none_lateral", "right"]
         self.straight_options = ["back", "none_straight", "forward"]
         self.attack_options = ["none_attack", "attack"]
@@ -136,12 +137,12 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                         for camera_x in self.camera_x_options:
                             for camera_y in self.camera_y_options:
                                 # To later on map from dict to idx:
-                                #add_to_set_in_dict(self.word2idx_set, lateral, idx)
-                                #add_to_set_in_dict(self.word2idx_set, straight, idx)
-                                #add_to_set_in_dict(self.word2idx_set, attack, idx)
-                                #add_to_set_in_dict(self.word2idx_set, jump, idx)
-                                #camera_name = "camera_" + str(camera_x) + "_" + str(camera_y)
-                                #add_to_set_in_dict(self.word2idx_set, camera_name, idx)
+                                # add_to_set_in_dict(self.word2idx_set, lateral, idx)
+                                # add_to_set_in_dict(self.word2idx_set, straight, idx)
+                                # add_to_set_in_dict(self.word2idx_set, attack, idx)
+                                # add_to_set_in_dict(self.word2idx_set, jump, idx)
+                                # camera_name = "camera_" + str(camera_x) + "_" + str(camera_y)
+                                # add_to_set_in_dict(self.word2idx_set, camera_name, idx)
 
                                 # Create op that maps from idx to dict:
                                 op = copy.deepcopy(self.noop)
@@ -361,12 +362,13 @@ def one_hot_encode_single(number, num_actions):
     y[number] = 1.0
     return y
 
+
 def process_equipped(mainhand_dict):
     dmg = torch.tensor(mainhand_dict["damage"], dtype=torch.float).unsqueeze(0)
     max_dmg = torch.tensor(mainhand_dict["maxDamage"], dtype=torch.float).unsqueeze(0)
     obj_type = mainhand_dict["type"]
     if np.any(obj_type != 0):
-        possible_non_none_types = ("air", "wooden_axe", "wooden_pickaxe", "stone_axe", "stone_pickaxe", "iron_axe" ,
+        possible_non_none_types = ("air", "wooden_axe", "wooden_pickaxe", "stone_axe", "stone_pickaxe", "iron_axe",
                                    "iron_pickaxe")
         if obj_type != 0 and obj_type not in range(1, 8) and obj_type not in possible_non_none_types:
             obj_type = 8
@@ -625,7 +627,6 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
         original_space_action = self._actions[action]
         logger.debug('discrete action {} -> original action {}'.format(action, original_space_action))
         return original_space_action
-
 
 
 class CombineActionWrapper(gym.ActionWrapper):
