@@ -127,6 +127,10 @@ class Trainer:
             pbar.update(1)
             state, action, reward, next_state, done = data[0]
 
+            # To initialize the normalizer:
+            if self.normalize_observations:
+                self.policy.F_s(state)
+
             self.policy.remember(state, action, next_state, reward, done)
             # Delete data from data list when processed to save memory
             del data[0]
@@ -177,9 +181,6 @@ class Trainer:
 
             state = self.env.observation(state, expert_data=True)
             next_state = self.env.observation(next_state, expert_data=True)
-            # To initialize the normalizer:
-            if self.normalize_observations:
-                self.policy.F_s(state)
 
             sample = (state, action, reward, next_state, done)
             data.append(sample)
