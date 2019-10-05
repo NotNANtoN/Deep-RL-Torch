@@ -1019,8 +1019,8 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             # print("low level action: ", low_lvl_action)
             high_lvl.append(high_lvl_action)
             low_lvl.append(low_lvl_action)
-        high_lvl = torch.tensor(high_lvl).unsqueeze(1)
-        low_lvl = torch.tensor(low_lvl).unsqueeze(1)
+        high_lvl = torch.tensor(high_lvl, device=self.device).unsqueeze(1)
+        low_lvl = torch.tensor(low_lvl, device=self.device).unsqueeze(1)
         return high_lvl, low_lvl
 
     def get_masks(self, actions, num_low_lvl=6):

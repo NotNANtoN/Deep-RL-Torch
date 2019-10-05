@@ -157,7 +157,7 @@ class Trainer:
                 raw_action["attack"] = 0
 
             # TODO: move as many of those checks above into the dict2idx function!
-            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.float)
+            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.uint8)
             action_idx = self.env.dict2idx(raw_action)
             action[0][action_idx] = 1.0
             reward = self.modify_env_reward(reward)[0]
@@ -171,7 +171,6 @@ class Trainer:
             self.policy.remember(state, action, next_state, reward, done)
             # Delete data from data list when processed to save memory
             del data[0]
-        # TODO: maybe preprocess the data somehow. We could train during the gading for example. Or we calculate eligibility traces upon seeing a done.
         pbar.close()
 
 
