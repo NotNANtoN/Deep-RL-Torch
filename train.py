@@ -45,7 +45,7 @@ def create_parser():
     parser.add_argument("--use_CER", type=int, default=1)
     # Expert Data:
     parser.add_argument("--use_expert_data", type=int, default=0)
-    parser.add_argument("--pretrain_percentage", type=float, default=0.0)
+    parser.add_argument("--pretrain_percentage", type=float, default=0.1)
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
@@ -59,8 +59,8 @@ def create_parser():
     group_QV.add_argument("--use_QVMAX", type=int, default=0)
     # Eligibility traces:
     parser.add_argument("--use_efficient_traces", type=int, default=0)
-    parser.add_argument("--elig_traces_lambda", type=float, default=0)
-    parser.add_argument("--elig_traces_update_steps", type=int, default=0)
+    parser.add_argument("--elig_traces_lambda", type=float, default=0.8)
+    parser.add_argument("--elig_traces_update_steps", type=int, default=5000)
     parser.add_argument("--elig_traces_anneal_lambda", type=int, default=0)
     # Input Normalization:
     parser.add_argument("--normalize_obs", type=int, default=1)
@@ -82,7 +82,7 @@ def create_parser():
     # REM:
     parser.add_argument("--use_REM", type=int, default=0)
     parser.add_argument("--REM_num_heads", type=int, default=5)
-    parser.add_argument("--REM_num_samples", type=int, default=2)
+    parser.add_argument("--REM_num_samples", type=int, default=3)
     # AC:
     parser.add_argument("--use_actor_critic", action="store_true", default=0)
     group_AC = parser.add_mutually_exclusive_group()
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     nav_extreme_dense = "MineRLNavigateExtremeDense-v0"
     nav_extreme = "MineRLNavigateExtreme-v0"
     pickaxe = "MineRLObtainIronPickaxe-v0"
-    pickaxe_denes = "MineRLObtainIronPickaxeDense-v0"
+    pickaxe_dense = "MineRLObtainIronPickaxeDense-v0"
     diamond = "MineRLObtainDiamond-v0"
     diamond_dense = "MineRLObtainDiamondDense-v0"
 
@@ -243,10 +243,18 @@ if __name__ == "__main__":
         env = acro
     elif env_short == "tree":
         env = tree
+    elif env_short == "diamond":
+        env = diamond
+    elif env_short == "pickaxe":
+        env = pickaxe
+    elif env_short == "nav":
+        env = nav
+    elif env_short == "nav_dense":
+        env = nav_dense
     else:
         raise NotImplementedError("Env does not exist")
     print("Env: ", env)
-    tensorboard_comment = parameters["tb_comment"] + "_" + env + "_"
+    tensorboard_comment = parameters["tb_comment"] + "_"
     for arg in sys.argv[1:]:
         if arg[:2] == "--":
             arg = arg[2:]
@@ -267,8 +275,10 @@ if __name__ == "__main__":
             parameters["action_wrapper"] = HierarchicalActionWrapper
         else:
             parameters["action_wrapper"] = SerialDiscreteActionWrapper
-        if "Pickaxe" in env or "Diamond" in env:
-            parameters["use_MineRL_policy"] = True
+
+        parameters["use_MineRL_policy"] = True
+        #if "Pickaxe" in env or "Diamond" in env:
+        #    parameters["use_MineRL_policy"] = True
 
     # Set up debugging:
     log_setup = parameters["debug"]

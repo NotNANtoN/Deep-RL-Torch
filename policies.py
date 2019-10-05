@@ -589,7 +589,7 @@ class REM(BasePolicy):
     def set_name(self, name):
         self.name = "REM" + str(name)
         for idx, head in enumerate(self.policy_heads):
-            head.name += "REM" + str(idx)
+            head.set_name(self.name + str(idx))
 
     def init_actor(self, Q, V, F_s):
         return None
@@ -699,6 +699,9 @@ class MineRLPolicy(BasePolicy):
 
     def display_debug_info(self):
         pass
+
+    def set_name(self, name):
+        self.name = "MineRL" + str(name)
 
 
 class MineRLObtainPolicy(MineRLPolicy):
@@ -829,6 +832,11 @@ class MineRLMovePolicy(MineRLPolicy):
         self.policies = [self.attacker, self.lateralus, self.straightener, self.jumper, self.camera_xer,
                          self.camera_yer]
         print()
+
+    def set_name(self, name):
+        self.name = "MineRL" + str(name)
+        for idx, head in enumerate(self.policies):
+            head.set_name(self.name + str(idx))
 
     def create_adjusted_action_policy(self, options, name=""):
         action_space = Discrete(len(options))
@@ -993,6 +1001,11 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             self.decider = None
         print()
 
+    def set_name(self, name):
+        self.name = "MineRL" + str(name)
+        for idx, head in enumerate(self.lower_level_policies):
+            head.set_name(self.name + str(idx))
+
     def action2high_low_level(self, actions):
         high_lvl = []
         low_lvl = []
@@ -1084,7 +1097,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             transitions["action_argmax"] = high_level_actions
             error += self.decider.optimize_networks(transitions)
         else:
-            error = torch.zeros(len(transitions, device=self.device))
+            error = torch.zeros(len(original_actions), 1, device=self.device)
         # Get mask of which low-level policy trains on which part of the transitions:
         mask_list = self.get_masks(high_level_actions)
         # Train low-level policies:
@@ -1095,7 +1108,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             # Apply mask to transition dict and dicts within dict:
             partial_transitions = self.apply_mask_to_transitions(transitions, idx_mask)
             policy = self.lower_level_policies[policy_idx]
-            error[idx_mask] += policy.optimize_networks(partial_transitions)
+            policy_error = policy.optimize_networks(partial_transitions)
+
+            error[idx_mask] += policy_error
+
         # Reset actions just in case:
         transitions["action_argmax"] = original_actions
         return error
@@ -1115,7 +1131,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         action_q_vals = torch.zeros(state_features.shape[0], self.num_actions)
         # Apply high-level policy:
         with torch.no_grad():
-            action = self.decider.choose_action(state_features, calc_state_features=False)
+            if self.decider is not None:
+                action = self.decider.choose_action(state_features, calc_state_features=False)
+            else:
+                action = torch.tensor([[0]])
         high_level_actions = torch.argmax(action, dim=1)
         # print("High level actions: ", high_level_actions)
         masks = self.get_masks(high_level_actions)
@@ -1158,7 +1177,8 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
 
     def update_targets(self, n_steps, train_fraction=None):
-        self.decider.update_targets(n_steps, train_fraction=train_fraction)
+        if self.decider is not None:
+            self.decider.update_targets(n_steps, train_fraction=train_fraction)
         for policy in self.lower_level_policies:
             policy.update_targets(n_steps, train_fraction=train_fraction)
 
