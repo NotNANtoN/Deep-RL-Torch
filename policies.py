@@ -378,7 +378,7 @@ class BasePolicy:
         # Create state batch:
         if isinstance(batch.state[0], dict):
             # Concat the states per key:
-            state_batch = {key: torch.cat([x[key] for x in batch.state]) for key in batch.state[0]}
+            state_batch = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in batch.state]) for key in batch.state[0]}
         else:
             state_batch = torch.cat(batch.state)
 
@@ -391,7 +391,7 @@ class BasePolicy:
         non_final_next_states = [s for s in batch.next_state if s is not None]
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key] for x in non_final_next_states]) for key in
+                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]) for key in
                                          non_final_next_states[0]}
             else:
                 non_final_next_states = torch.cat(non_final_next_states)
@@ -1097,7 +1097,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             transitions["action_argmax"] = high_level_actions
             error += self.decider.optimize_networks(transitions)
         else:
-            error = torch.zeros(len(original_actions), 1, device=self.device)
+            error = torch.zeros(len(original_actions), 1)
         # Get mask of which low-level policy trains on which part of the transitions:
         mask_list = self.get_masks(high_level_actions)
         # Train low-level policies:

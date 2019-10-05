@@ -125,7 +125,20 @@ class Trainer:
         pbar = tqdm(total=len(data), disable=self.disable_tqdm)
         while len(data) > 0:
             pbar.update(1)
-            state, raw_action, reward, next_state, done = data[0]
+            state, action, reward, next_state, done = data[0]
+
+            self.policy.remember(state, action, next_state, reward, done)
+            # Delete data from data list when processed to save memory
+            del data[0]
+        pbar.close()
+
+
+    def use_data_pipeline_MineRL(self, pipeline):
+        #return [sample for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm)]
+
+        data = []
+        for state, raw_action, reward, next_state, done in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm):
+
             # TODO: think about filtering out the end of an episode that did not lead to a reward. So if [0,0,1,2,0, 0,1,0 0 ,0] are the episode rewards, it should be cut to [0, 0, 1, 2, 0, 0, 1]
             # TODO: this could be good because it filters unsuccesfull runs... but maybe it is good to have some unsucessfull runs if we assume that the player handled the difficulties in a relatively good way
 
@@ -157,7 +170,7 @@ class Trainer:
                 raw_action["attack"] = 0
 
             # TODO: move as many of those checks above into the dict2idx function!
-            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.uint8)
+            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.float)
             action_idx = self.env.dict2idx(raw_action)
             action[0][action_idx] = 1.0
             reward = self.modify_env_reward(reward)[0]
@@ -168,17 +181,7 @@ class Trainer:
             if self.normalize_observations:
                 self.policy.F_s(state)
 
-            self.policy.remember(state, action, next_state, reward, done)
-            # Delete data from data list when processed to save memory
-            del data[0]
-        pbar.close()
-
-
-    def use_data_pipeline_MineRL(self, pipeline):
-        return [sample for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm)]
-
-        data = []
-        for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm):
+            sample = (state, action, reward, next_state, done)
             data.append(sample)
 
             #if len(data) > 10000:
