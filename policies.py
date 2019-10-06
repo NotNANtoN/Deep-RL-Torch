@@ -882,7 +882,7 @@ class MineRLMovePolicy(MineRLPolicy):
         else:
             state_features = state
         # Init q val tensor and action templates
-        action_q_vals = torch.zeros(self.num_actions)
+        action_q_vals = torch.zeros(self.num_actions, device=self.device)
         noops = [copy.deepcopy(self._noop_template) for _ in range(state_features.shape[0])]
         # Apply policies and extract semantics:
         options = [self.get_policy_options(policy, state_features) for policy in self.policies]
@@ -1128,7 +1128,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         # Preprocess:
         state_features = self.F_s(state)
         # Preprocess:
-        action_q_vals = torch.zeros(state_features.shape[0], self.num_actions)
+        action_q_vals = torch.zeros(state_features.shape[0], self.num_actions, device=self.device)
         # Apply high-level policy:
         with torch.no_grad():
             if self.decider is not None:
