@@ -280,6 +280,11 @@ class BasePolicy:
         return action
 
     def choose_action(self, state, calc_state_features=True):
+        if isinstance(state, dict):
+            apply_rec_to_dict(lambda x: x.to(self.device), state)
+        else:
+            state.to(self.device)
+
         with torch.no_grad():
             if calc_state_features:
                 state_features = self.F_s(state)
