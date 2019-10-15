@@ -118,7 +118,7 @@ class Agent(AgentInterface):
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         return self.policy.calculate_TDE(state, action, next_state, reward, done)
 
-    def update_targets(self, n_steps, train_fraction=None):
+    def update_targets(self, n_steps, train_fraction):
         self.policy.F_s.update_targets(n_steps)
         if self.policy.F_sa is not None:
             self.policy.F_sa.update_targets(n_steps)

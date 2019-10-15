@@ -240,8 +240,9 @@ class Trainer:
                 # Perform one step of the optimization
                 self.policy.optimize()
 
+                train_fraction = step / steps
                 # Update the target network
-                self.policy.update_targets(step)
+                self.policy.update_targets(step, train_fraction)
 
                 self.log.step()
         elif time:
@@ -253,8 +254,9 @@ class Trainer:
                 # Perform one step of the optimization
                 self.policy.optimize()
 
+                train_fraction = (time.time() - start_time) / hours
                 # Update the target network
-                self.policy.update_targets(t)
+                self.policy.update_targets(t, train_fraction)
 
                 self.log.step()
 
