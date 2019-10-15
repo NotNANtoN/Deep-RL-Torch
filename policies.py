@@ -280,11 +280,6 @@ class BasePolicy:
         return action
 
     def choose_action(self, state, calc_state_features=True):
-        if isinstance(state, dict):
-            apply_rec_to_dict(lambda x: x.to(self.device), state)
-        else:
-            state.to(self.device)
-
         with torch.no_grad():
             if calc_state_features:
                 state_features = self.F_s(state)
@@ -294,6 +289,11 @@ class BasePolicy:
         return action
 
     def explore(self, state, fully_random=False):
+        if isinstance(state, dict):
+            apply_rec_to_dict(lambda x: x.to(self.device), state)
+        else:
+            state.to(self.device)
+
         # Epsilon-Greedy:
         sample = random.random()
         if fully_random or sample < self.epsilon:
@@ -317,6 +317,11 @@ class BasePolicy:
         return self.explore(state)
 
     def exploit(self, state):
+        if isinstance(state, dict):
+            apply_rec_to_dict(lambda x: x.to(self.device), state)
+        else:
+            state.to(self.device)
+
         raw_action = self.choose_action(state)
         if self.discrete_env:
             action = torch.argmax(raw_action).item()
