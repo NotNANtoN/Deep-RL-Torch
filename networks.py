@@ -372,6 +372,7 @@ class ProcessState(OptimizableNet):
     # observe a state to update the state normalizers:
     def observe(self, state):
         if isinstance(state, dict):
+            apply_rec_to_dict(lambda x: x.to(self.device), state)
             for key, proc_dict in zip(state, self.processing_list):
                 # For e.g. MineRL we need to extract the obs from the key in-depth:
                 obs = state[key]
@@ -380,6 +381,7 @@ class ProcessState(OptimizableNet):
                     normalizer.observe(obs)
         # If the obs is simply a torch tensor:
         else:
+            state = state.to(self.device)
             proc_dict = self.processing_list[0]
             normalizer = proc_dict["Normalizer"]
             if self.normalize_obs and not self.freeze_normalizer:

@@ -140,7 +140,7 @@ class Trainer:
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.policy.F_s.observe(state.to(self.device))
+                self.policy.F_s.observe(state)
                 # TODO: normalize actions too # self.policy.F_sa.observe(action)
 
             self.policy.remember(state, action, next_state, reward, done)
@@ -279,7 +279,7 @@ class Trainer:
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.policy.F_s.observe(state.to(self.device))
+                self.policy.F_s.observe(state)
                 # TODO: normalize actions too
 
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
