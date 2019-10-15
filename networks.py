@@ -304,7 +304,7 @@ class ProcessState(OptimizableNet):
         :return: processing list
         """
 
-        normalizer_device = None if self.pin_tensors else self.device
+        normalizer_device = self.device #None if self.pin_tensors else self.device
 
         # Create feedforward layers:
         if len(obs.shape) <= 1:

@@ -365,9 +365,13 @@ class BasePolicy:
     def extract_features(self, transitions):
         # Extract features:
         state_batch = transitions["state"]
-        apply_rec_to_dict(lambda x: x.to(self.device), state_batch)
         non_final_next_states = transitions["non_final_next_states"]
-        apply_rec_to_dict(lambda x: x.to(self.device), state_batch)
+        if isinstance(state_batch, dict):
+            apply_rec_to_dict(lambda x: x.to(self.device), state_batch)
+            apply_rec_to_dict(lambda x: x.to(self.device), non_final_next_states)
+        else:
+            state_batch.to(self.device)
+            non_final_next_states.to(self.device)
         state_feature_batch = self.F_s(state_batch)
         non_final_next_state_features = None
         if non_final_next_states is not None:
