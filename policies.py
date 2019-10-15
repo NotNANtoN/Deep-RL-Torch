@@ -364,14 +364,16 @@ class BasePolicy:
 
     def extract_features(self, transitions):
         # Extract features:
-        state_batch = transitions["state"]
-        non_final_next_states = transitions["non_final_next_states"]
+        state_batch = transitions["state"].to(self.device)
+        non_final_next_states = transitions["non_final_next_states"].to(self.device)
         state_feature_batch = self.F_s(state_batch)
         non_final_next_state_features = None
         if non_final_next_states is not None:
             non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
         transitions["state_features"] = state_feature_batch
         transitions["non_final_next_state_features"] = non_final_next_state_features
+        transitions["action"].to(self.device)
+        transitions["reward"].to(self.device)
 
     def optimize(self):
         # Get Batch:
