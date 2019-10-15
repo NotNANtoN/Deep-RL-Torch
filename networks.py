@@ -245,6 +245,7 @@ class ProcessState(OptimizableNet):
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_conv"]
         self.normalize_obs = hyperparameters["normalize_obs"]
+        self.pin_tensors = hyperparameters["pin_tensors"]
 
         self.freeze_normalizer = False
 
@@ -302,12 +303,15 @@ class ProcessState(OptimizableNet):
         :param obs: numpy or PyTorch tensor
         :return: processing list
         """
+
+        normalizer_device = None if self.pin_tensors else self.device
+
         # Create feedforward layers:
         if len(obs.shape) <= 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
-            vector_normalizer = Normalizer(obs.shape, self.device)
+            vector_normalizer = Normalizer(obs.shape, normalizer_device)
 
             # Add to lists:
             layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
@@ -315,7 +319,7 @@ class ProcessState(OptimizableNet):
         elif 1 < len(obs.shape) <= 4:
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
             layers_matrix.to(self.device)
-            matrix_normalizer = Normalizer(obs.shape, self.device)
+            matrix_normalizer = Normalizer(obs.shape, normalizer_device)
             # Add to lists:
             layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
         else:
@@ -362,6 +366,8 @@ class ProcessState(OptimizableNet):
     def freeze_normalizers(self):
         self.freeze_normalizer = True
         self.target_net.freeze_normalizer = True
+        for proc_dict in self.processing_list:
+            proc_dict["Normalizer"].to(self.device)
 
     def log_nn_data(self, name):
         for layers in self.processing_list:
@@ -445,6 +451,7 @@ class ProcessStateAction(OptimizableNet):
     def freeze_normalizers(self):
         self.freeze_normalizer = True
         self.target_net.freeze_normalizer = True
+
 
     def save(self, path):
         if not os.path.exists(path):

@@ -52,6 +52,11 @@ class Normalizer():
         obs_std = torch.sqrt(self.var)
         return (inputs.float() * obs_std) + self.mean
 
+    def to(self, device):
+        self.mean.to(device)
+        self.mean_diff.to(device)
+        self.var.to(device)
+
 
 class Log(object):
     def __init__(self, path, log, comment, log_NNs):
