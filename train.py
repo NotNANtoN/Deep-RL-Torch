@@ -265,7 +265,7 @@ if __name__ == "__main__":
     unfiltered_arguments = iter(sys.argv[1:])
     arguments = []
     filter_single = ("log", "debug")
-    filter_double = ("save", "load", "log", "verbose", "tqdm", "render")
+    filter_double = ("save", "load", "verbose", "tqdm", "render")
     for arg in unfiltered_arguments:
         next_word = False
         for word in filter_single:
