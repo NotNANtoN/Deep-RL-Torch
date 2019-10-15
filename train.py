@@ -19,13 +19,20 @@ def create_parser():
     train_time_group.add_argument("--n_episodes", type=int, default=0)
     train_time_group.add_argument("--n_hours", type=float, default=0.0)
     parser.add_argument("--env", help="Env name", default="cart")
+    # User experience:
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
-    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
+    parser.add_argument("--save_path", default="train/")
+    parser.add_argument("--save_percentage", type=float, default=0.05)
+    parser.add_argument("--load", type=int, default=0)
+    parser.add_argument("--load_path", default="")
+    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=0)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
     parser.add_argument("--debug", action="store_true", default=0)
     parser.add_argument("--log", action="store_true", default=0)
     parser.add_argument("--log_NNs", action="store_true", default=0)
+    # Train basics:
+    parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=1)
@@ -254,8 +261,31 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError("Env does not exist")
     print("Env: ", env)
-    tensorboard_comment = parameters["tb_comment"] + "_"
-    for arg in sys.argv[1:]:
+    tensorboard_comment = parameters["tb_comment"] + "_" if parameters["tb_comment"] else ""
+    unfiltered_arguments = iter(sys.argv[1:])
+    arguments = []
+    filter_single = ("log", "debug")
+    filter_double = ("save", "load", "log", "verbose", "tqdm", "render")
+    for arg in unfiltered_arguments:
+        next_word = False
+        for word in filter_single:
+            if word in arg:
+                next_word = True
+                break
+        for word in filter_double:
+            if word in arg:
+                next(unfiltered_arguments)
+                next_word = True
+                break
+        if next_word:
+            continue
+        value = next(unfiltered_arguments)
+        word = arg + str(value)
+        arguments.append(word)
+
+    arguments.sort()
+
+    for arg in arguments:
         if arg[:2] == "--":
             arg = arg[2:]
         modified_arg = ""
@@ -265,6 +295,7 @@ if __name__ == "__main__":
             else:
                 modified_arg += char
         tensorboard_comment += modified_arg
+    parameters["tb_comment"] = tensorboard_comment
     print("Tensorboard comment: ", tensorboard_comment)
 
     if "MineRL" in env:

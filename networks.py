@@ -207,7 +207,6 @@ class OptimizableNet(nn.Module):
         return self.parameters()
 
     def update_targets(self, steps):
-        # TODO: add option to update eligibility traces of all episodes
         if self.target_network_polyak:
             soft_update(self, self.target_net, self.tau)
         else:
@@ -378,6 +377,19 @@ class ProcessState(OptimizableNet):
             params += list(layer["Layers"].parameters())
         return params
 
+    def save(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        torch.save(self.layers_merge, path + "merge.pth")
+        for idx, layer in enumerate(self.processing_list):
+            torch.save(layer["Layers"], path + layer["Name"] + ".pth")
+
+    def load(self, path):
+        loaded_merge = torch.load(path + "merge.pth")
+        self.layers_merge = loaded_merge
+        for layer in self.processing_list:
+            loaded_model = torch.load(path + layer["Name"] + ".pth")
+            layer["Layers"] = loaded_model
 
 class ProcessStateAction(OptimizableNet):
     def __init__(self, state_features_len, env, log, device, hyperparameters, is_target_net=False):
@@ -433,6 +445,18 @@ class ProcessStateAction(OptimizableNet):
     def freeze_normalizers(self):
         self.freeze_normalizer = True
         self.target_net.freeze_normalizer = True
+
+    def save(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        torch.save(self.layers_merge, path + "merge.pth")
+        torch.save(self.layers_action, path + "action.pth")
+
+    def load(self, path):
+        loaded_merge = torch.load(path + "merge.pth")
+        self.layers_merge = loaded_merge
+        loaded_action = torch.load(path + "action.pth")
+        self.layers_action = loaded_action
 
 
 class TempDiffNet(OptimizableNet):
@@ -613,7 +637,7 @@ class TempDiffNet(OptimizableNet):
             self.F_sa.log_nn_data(self.name + name)
 
     def get_updateable_params(self):
-        params =  list(self.layers_TD.parameters())
+        params = list(self.layers_TD.parameters())
         if self.split:
             params += list(self.layers_r.parameters())
         return params
@@ -624,6 +648,19 @@ class TempDiffNet(OptimizableNet):
 
     def predict_current_state(self, state_features, state_action_features, actions):
         raise NotImplementedError
+
+    def save(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        torch.save(self.layers_TD, path + "TD.pth")
+        if self.split:
+            torch.save(self.layers_r, path + "r.pth")
+
+    def load(self, path):
+        loaded_TD = torch.load(path + "TD.pth")
+        self.layers_TD = loaded_TD
+        loaded_r = torch.load(path + "r.pth")
+        self.layers_r = loaded_r
 
 
 class Q(TempDiffNet):
@@ -1105,3 +1142,14 @@ class Actor(OptimizableNet):
 
     def get_updateable_params(self):
         return self.layers.parameters()
+
+    def save(self, path):
+        if not os.path.exists(path):
+            os.mkdir(path)
+        torch.save(self.layers, path + "actor.pth")
+
+
+    def load(self, path):
+        loaded_model= torch.load(path + "actor.pth")
+        self.layers = loaded_model
+

@@ -53,6 +53,10 @@ class Agent(AgentInterface):
         self.hyperparameters = hyperparameters
 
         self.use_actor_critic = hyperparameters["use_actor_critic"]
+        self.save_path = hyperparameters["save_path"]
+        self.save_threshold = hyperparameters["save_percentage"]
+        self.stored_percentage = 0
+        self.load_path = hyperparameters["load_path"]
 
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
@@ -119,6 +123,54 @@ class Agent(AgentInterface):
         if self.policy.F_sa is not None:
             self.policy.F_sa.update_targets(n_steps)
         self.policy.update_targets(n_steps, train_fraction)
+
+        # Check if a certain percentage of training time was reached:
+        if self.save_threshold and train_fraction - self.stored_percentage >= self.save_threshold:
+            self.stored_percentage = train_fraction
+
+            self.save(train_fraction)
+
+    def save(self, train_fraction):
+        # "train" folder
+        if not os.path.exists(self.save_path):
+            os.mkdir(self.save_path)
+        # tb_comment folder (model specific):
+        tb_folder = self.save_path + self.hyperparameters["tb_comment"] + "/"
+        if not os.path.exists(tb_folder):
+            os.mkdir(tb_folder)
+        # Folder of the current training percentage
+        current_folder = tb_folder + str(int(train_fraction * 100)) + "/"
+        if not os.path.exists(current_folder):
+            os.mkdir(current_folder)
+
+        # Save models:
+        # torch.save(self.policy.F_s, current_folder + "F_s.pth")
+        self.policy.F_s.save(current_folder + "F_s/")
+        # self.policy.F_s.save(self.save_path)
+        if self.policy.F_sa is not None:
+            self.policy.F_sa.save(current_folder + "F_sa/")
+        self.policy.save(current_folder)
+
+        # TODO: track performance of the model from every last checkpoint and save the model as "best" if it had the best performance so far
+
+    def load(self):
+        if self.load_path:
+            path = self.load_path
+        else:
+            path = self.save_path + self.hyperparameters["tb_comment"] + "/"
+            saved_models = os.listdir(path)
+            best = ""
+            for dir in saved_models:
+                if best == "" or int(dir) > int(best):
+                    best = dir
+            path += best + "/"
+            # TODO: best could/should also be the model with the highest test score instead of the latest model
+        print("Loading model from: ", path)
+
+        self.policy.F_s.load(path + "F_s/")
+        if self.policy.F_sa is not None:
+            self.policy.F_sa.load(path + "F_sa/")
+        self.policy.load(path)
 
     def display_debug_info(self):
         self.policy.display_debug_info()
@@ -378,9 +430,9 @@ class BasePolicy:
         # Create state batch:
         if isinstance(batch.state[0], dict):
             # Concat the states per key:
-            state_batch = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in batch.state]) for key in batch.state[0]}
+            state_batch = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in batch.state]).to(self.device, non_blocking=True) for key in batch.state[0]}
         else:
-            state_batch = torch.cat(batch.state)
+            state_batch = torch.cat(batch.state).to(self.device, non_blocking=True)
 
         # print("non_final mask: ", non_final_mask)
         # print("state batch: ", state_batch)
@@ -391,21 +443,21 @@ class BasePolicy:
         non_final_next_states = [s for s in batch.next_state if s is not None]
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]) for key in
+                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]).to(self.device, non_blocking=True) for key in
                                          non_final_next_states[0]}
             else:
-                non_final_next_states = torch.cat(non_final_next_states)
+                non_final_next_states = torch.cat(non_final_next_states).to(self.device, non_blocking=True)
         else:
             non_final_next_states = None
 
         # Create action batch:
         # print(batch.action)
-        action_batch = torch.cat(batch.action)
+        action_batch = torch.cat(batch.action).to(self.device, non_blocking=True)
 
         action_argmax = torch.argmax(action_batch, 1).unsqueeze(1)
 
         # Create Reward batch:
-        reward_batch = torch.cat(batch.reward).unsqueeze(1)
+        reward_batch = torch.cat(batch.reward).unsqueeze(1).to(self.device, non_blocking=True)
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
@@ -461,10 +513,6 @@ class BasePolicy:
             self.V.update_targets(n_steps)
         if self.actor is not None and self.use_actor_critic:
             self.actor.update_targets(n_steps)
-        if self.F_s is not None:
-            self.F_s.update_targets(n_steps)
-        if self.F_sa is not None:
-            self.F_sa.update_targets(n_steps)
 
     def update_episode_trace(self, episode, idxs):
         if episode == []:
@@ -500,6 +548,11 @@ class BasePolicy:
 
     def init_actor(self, Q, V, F_s):
         raise NotImplementedError
+
+    def save(self, path):
+        raise NotImplementedError
+
+
 
 
 class ActorCritic(BasePolicy):
@@ -546,6 +599,12 @@ class ActorCritic(BasePolicy):
     def set_name(self, name):
         self.name = "_Actor-Critic_" + str(name)
 
+    def save(self, path):
+        if self.Q is not None:
+            self.Q.save(path + "Q/")
+        if self.V is not None:
+            self.V.save(path + "V/")
+        self.actor.save(path + "actor/")
 
 
 class Q_Policy(BasePolicy):
@@ -564,6 +623,12 @@ class Q_Policy(BasePolicy):
 
     def set_name(self, name):
         self.name = "_Q-Policy_" + str(name)
+
+    def save(self, path):
+        if self.Q is not None:
+            self.Q.save(path + "Q/")
+        if self.V is not None:
+            self.V.save(path + "V/")
 
 
 # 1. For ensemble: simply create many base policies, train them all with .optimize() and sum action output.
@@ -646,6 +711,14 @@ class REM(BasePolicy):
     def display_debug_info(self):
         pass
 
+    def save(self, path):
+        path += "REM/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        for idx, policy in enumerate(self.policy_heads):
+            policy.save(path + str(idx) + "/")
+
 
 class MineRLPolicy(BasePolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -701,7 +774,7 @@ class MineRLPolicy(BasePolicy):
         pass
 
     def set_name(self, name):
-        self.name = "MineRL" + str(name)
+        self.name = str(name)
 
 
 class MineRLObtainPolicy(MineRLPolicy):
@@ -834,9 +907,9 @@ class MineRLMovePolicy(MineRLPolicy):
         print()
 
     def set_name(self, name):
-        self.name = "MineRL" + str(name)
+        self.name = str(name)
         for idx, head in enumerate(self.policies):
-            head.set_name(self.name + str(idx))
+            head.set_name(head.name + self.name)
 
     def create_adjusted_action_policy(self, options, name=""):
         action_space = Discrete(len(options))
@@ -950,6 +1023,10 @@ class MineRLMovePolicy(MineRLPolicy):
             tde += tde_current
         return q, tde_current
 
+    def save(self, path):
+        for idx, policy in enumerate(self.policies):
+            policy.save(path + policy.name + "/")
+
 
 class MineRLHierarchicalPolicy(MineRLPolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -1001,10 +1078,6 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             self.decider = None
         print()
 
-    def set_name(self, name):
-        self.name = "MineRL" + str(name)
-        for idx, head in enumerate(self.lower_level_policies):
-            head.set_name(self.name + str(idx))
 
     def action2high_low_level(self, actions):
         high_lvl = []
@@ -1188,3 +1261,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
     def display_debug_info(self):
         pass
+
+    def save(self, path):
+        if self.decider is not None:
+            self.decider.save(path + "decider/")
+        for idx, policy in enumerate(self.lower_level_policies):
+            policy.save(path + policy.name + "/")
+

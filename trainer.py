@@ -12,7 +12,7 @@ import time
 from networks import *
 from policies import Agent
 from env_wrappers import FrameSkip
-from util import display_top_memory_users
+from util import display_top_memory_users, apply_rec_to_dict
 from verify_or_download_data import ver_or_download_data
 
 
@@ -34,6 +34,7 @@ class Trainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]
+        self.pin_tensors = hyperparameters["pin_tensors"]
 
         # Init env:
         self.env_name = env_name
@@ -43,7 +44,7 @@ class Trainer:
             self.env = FrameSkip(self.env, skip=hyperparameters["frameskip"])
         if hyperparameters["convert_2_torch_wrapper"]:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
-            self.env = wrapper(self.env, self.device, self.max_val, self.rgb2gray)
+            self.env = wrapper(self.env, self.rgb2gray)
 
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
@@ -101,6 +102,8 @@ class Trainer:
             hyperparameters["num_expert_samples"] = 0
         # Init Policy:
         self.policy = Agent(self.env, self.device, self.log, hyperparameters)
+        if hyperparameters["load"]:
+            self.policy.load()
         # Load expert data into policy buffer:
         if self.use_expert_data:
             self.move_expert_data_into_buffer(expert_data)
@@ -114,11 +117,19 @@ class Trainer:
         self.policy.optimize()
 
     def modify_env_reward(self, reward):
-        reward = torch.tensor([reward], device=self.device, dtype=torch.float)
+        reward = torch.tensor([reward], dtype=torch.float)
+        reward = self.prep_for_GPU(reward)
         if self.reward_std:
             reward += torch.tensor(np.random.normal(0, self.reward_std))
         return reward
 
+    def prep_for_GPU(self, tensor):
+        if torch.cuda.is_available():
+            if self.pin_tensors:
+                tensor = tensor.pin_memory()
+            else:
+                tensor = tensor.cuda()
+        return tensor
 
     def move_expert_data_into_buffer(self, data):
         print("Moving Expert Data into the replay buffer...")
@@ -174,13 +185,17 @@ class Trainer:
                 raw_action["attack"] = 0
 
             # TODO: move as many of those checks above into the dict2idx function!
-            action = torch.zeros(1, self.env.action_space.n, device=self.device, dtype=torch.float)
+            action = torch.zeros(1, self.env.action_space.n, dtype=torch.float)
+            action = self.prep_for_GPU(action)
+
             action_idx = self.env.dict2idx(raw_action)
             action[0][action_idx] = 1.0
             reward = self.modify_env_reward(reward)[0]
 
             state = self.env.observation(state, expert_data=True)
             next_state = self.env.observation(next_state, expert_data=True)
+            apply_rec_to_dict(self.prep_for_GPU, state)
+            apply_rec_to_dict(self.prep_for_GPU, next_state)
 
             sample = (state, action, reward, next_state, done)
             data.append(sample)
@@ -226,18 +241,25 @@ class Trainer:
 
                 # Update the target network
                 self.policy.update_targets(step)
+
+                self.log.step()
         elif time:
             # TODO: add some tqdm option here
+            pbar = tqdm(disable=self.disable_tqdm, total=hours)
             for t in count():
+                pbar.update((time.time() - start_time) / 360)
+
                 # Perform one step of the optimization
                 self.policy.optimize()
 
                 # Update the target network
                 self.policy.update_targets(t)
 
-                if (time.time() - start_time) / 360 > hours:
-                    break
+                self.log.step()
 
+                if (time.time() - start_time) / 360 >= hours:
+                    break
+        print("Done Pretraining.")
 
         #self.policy.set_weight_decay(0)
 
@@ -246,7 +268,10 @@ class Trainer:
         print("Filling Replay Buffer....")
         state = self.env.reset()
         if not isinstance(state, dict):
-            state = torch.tensor([state], device=self.device).float()
+            state = torch.tensor([state], dtype=torch.float)
+            state = self.prep_for_GPU(state)
+        else:
+            apply_rec_to_dict(self.prep_for_GPU, state)
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in tqdm(range(n_steps), disable=self.disable_tqdm):
@@ -262,7 +287,10 @@ class Trainer:
             if done:
                 state = self.env.reset()
                 if not isinstance(state, dict):
-                    state = torch.tensor([state], device=self.device).float()
+                    state = torch.tensor([state], dtype=torch.float)
+                    state = self.prep_for_GPU(state)
+                else:
+                    apply_rec_to_dict(self.prep_for_GPU, state)
         print("Done with filling replay buffer.")
         print()
         if done:
@@ -290,8 +318,11 @@ class Trainer:
             next_state = None
         else:
             if not isinstance(next_state, dict):
-                next_state = torch.tensor([next_state], device=self.device).float()
-            #next_state = torch.tensor([next_state], device=self.device).float()
+                next_state = torch.tensor([next_state], dtype=torch.float)
+                next_state = self.prep_for_GPU(next_state)
+            else:
+                apply_rec_to_dict(self.prep_for_GPU, next_state)
+            # TODO: make prep for GPU usable on dicts
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
             self.policy.remember(state, raw_action, next_state, reward, done)
@@ -330,7 +361,7 @@ class Trainer:
         print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:
             pass
-            # TODO: do an extensive test in test_env every N steps
+            # TODO: do an extensive test in test_env every N percentage points of training
             # Not needed anymore, because he have tensorboard now
             #plot_rewards(rewards)
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
@@ -371,6 +402,7 @@ class Trainer:
         # TODO: For MineRL only train for a certain amount of time: stop after something like 99% of all training time at least leave 10-30 mins empty
 
         # Do the actual training:
+        print("Start training in the env:")
         time_after_optimize = None
         pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
         train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
@@ -381,7 +413,10 @@ class Trainer:
             if state is None:
                 state = self.env.reset()
                 if not isinstance(state, dict):
-                    state = torch.tensor([state], device=self.device).float()
+                    state = torch.tensor([state], dtype=torch.float)
+                    state = self.prep_for_GPU(state)
+                else:
+                    apply_rec_to_dict(self.prep_for_GPU, state)
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1
@@ -440,6 +475,8 @@ class Trainer:
                     state = None
                     break
             train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+        # Save the model:
+        self.policy.update_targets(steps_done, train_fraction=1.0)
         print('Done.')
         self.env.close()
         pbar.close()

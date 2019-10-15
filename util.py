@@ -19,6 +19,14 @@ from collections import namedtuple
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
+def apply_rec_to_dict(func, tensor_dict):
+    for key in tensor_dict:
+        content = tensor_dict[key]
+        if isinstance(content, dict):
+            apply_rec_to_dict(func, content)
+        else:
+            tensor_dict[key] = func(content)
+
 class Normalizer():
     def __init__(self, input_shape, device):
         self.n = 0

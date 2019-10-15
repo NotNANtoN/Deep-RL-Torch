@@ -377,10 +377,8 @@ def process_equipped(mainhand_dict):
 
 
 class Convert2TorchWrapper(gym.ObservationWrapper):
-    def __init__(self, env, device, max_val, rgb2gray):
+    def __init__(self, env, rgb2gray):
         super().__init__(env)
-        self.device = device
-        self.max_val = max_val
         self.rgb2gray = rgb2gray
 
     def observation(self, obs_dict, expert_data=False):
@@ -395,14 +393,14 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             elif key == "inventory":
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
-                obs = torch.cat([torch.tensor(inv_dict[key], dtype=torch.uint8).unsqueeze(0) for key in inv_dict])
+                obs = torch.cat([torch.tensor(inv_dict[key]).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
                 obs = torch.tensor(np.flip(obs_dict[key], axis=0).copy(), dtype=torch.float)
                 if self.rgb2gray:
                     obs = np.round(obs.mean(dim=-1)).unsqueeze(0)
                 else:
                     obs = obs.permute(2, 0, 1)
-                obs = torch.tensor(obs, dtype=torch.uint8)
+                obs = obs.byte().clone()
             elif key == "compassAngle":
                 obs = torch.tensor(obs_dict[key], dtype=torch.float).unsqueeze(0)
             else:
@@ -410,7 +408,7 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                 raise NotImplementedError
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
-            new_obs[key] = obs.to(self.device).unsqueeze(0)
+            new_obs[key] = obs.unsqueeze(0)
         return new_obs
 
 
