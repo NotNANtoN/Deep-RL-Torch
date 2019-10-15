@@ -369,6 +369,22 @@ class ProcessState(OptimizableNet):
         for proc_dict in self.processing_list:
             proc_dict["Normalizer"].to(self.device)
 
+    # observe a state to update the state normalizers:
+    def observe(self, state):
+        if isinstance(state, dict):
+            for key, proc_dict in zip(state, self.processing_list):
+                # For e.g. MineRL we need to extract the obs from the key in-depth:
+                obs = state[key]
+                normalizer = proc_dict["Normalizer"]
+                if self.normalize_obs and not self.freeze_normalizer:
+                    normalizer.observer(obs)
+        # If the obs is simply a torch tensor:
+        else
+            proc_dict = self.processing_list[0]
+            normalizer = proc_dict["Normalizer"]
+            if self.normalize_obs and not self.freeze_normalizer:
+                normalizer.observe(state)
+
     def log_nn_data(self, name):
         for layers in self.processing_list:
             self.log_layer_data(layers["Layers"], "F_s-" + layers["Name"], extra_name=name)
