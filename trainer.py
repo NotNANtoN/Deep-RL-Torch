@@ -35,6 +35,7 @@ class Trainer:
         self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]
         self.pin_tensors = hyperparameters["pin_tensors"]
+        self.store_on_gpu = hyperparameters["store_on_gpu"]
 
         # Init env:
         self.env_name = env_name
@@ -125,10 +126,12 @@ class Trainer:
 
     def prep_for_GPU(self, tensor):
         if torch.cuda.is_available():
-            if self.pin_tensors:
+            if self.store_on_gpu:
+                tensor = tensor.cuda()
+            elif self.pin_tensors:
                 tensor = tensor.pin_memory()
             else:
-                tensor = tensor.cuda()
+                tensor = tensor.cpu()
         return tensor
 
     def move_expert_data_into_buffer(self, data):

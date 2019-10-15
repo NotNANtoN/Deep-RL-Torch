@@ -32,6 +32,7 @@ def create_parser():
     parser.add_argument("--log", action="store_true", default=0)
     parser.add_argument("--log_NNs", action="store_true", default=0)
     # Train basics:
+    parser.add_argument("--store_on_gpu", type=int, default=0)
     parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
