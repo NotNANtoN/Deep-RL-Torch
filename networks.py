@@ -377,7 +377,7 @@ class ProcessState(OptimizableNet):
                 obs = state[key]
                 normalizer = proc_dict["Normalizer"]
                 if self.normalize_obs and not self.freeze_normalizer:
-                    normalizer.observer(obs)
+                    normalizer.observe(obs)
         # If the obs is simply a torch tensor:
         else:
             proc_dict = self.processing_list[0]
