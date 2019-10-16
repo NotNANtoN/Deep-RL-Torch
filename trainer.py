@@ -257,7 +257,7 @@ class Trainer:
                 # Perform one step of the optimization
                 self.policy.optimize()
 
-                train_fraction = (time.time() - start_time) / hours
+                train_fraction = (time.time() - start_time) / 360 / hours
                 # Update the target network
                 self.policy.update_targets(t, train_fraction)
 

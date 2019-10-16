@@ -400,7 +400,8 @@ class BasePolicy:
         if self.use_world_model:
             self.world_model.optimize()
             # TODO: create a world model at some point
-        error, loss = self.optimize_networks(transitions)
+        error = self.optimize_networks(transitions)
+        # TODO: also return loss and do update (maybe not in this function, maybe in optimize_networks)
 
         error = abs(error) + 0.0001
         error_np = error
