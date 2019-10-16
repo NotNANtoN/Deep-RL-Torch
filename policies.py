@@ -400,7 +400,7 @@ class BasePolicy:
         if self.use_world_model:
             self.world_model.optimize()
             # TODO: create a world model at some point
-        error = self.optimize_networks(transitions)
+        error, loss = self.optimize_networks(transitions)
 
         error = abs(error) + 0.0001
         error_np = error
@@ -409,6 +409,8 @@ class BasePolicy:
             self.memory.update_priorities(transitions["idxs"], error_np)
 
         self.display_debug_info()
+
+        return loss
 
     def decay_exploration(self, n_steps):
         if self.eps_decay:
@@ -581,7 +583,7 @@ class ActorCritic(BasePolicy):
         super(ActorCritic, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
         self.F_s = F_s
 
-        self.set_name("")
+        self.set_name("Actor-Critic")
 
     def optimize_networks(self, transitions):
         # TODO: possible have an action normalizer? For state_features we could have a batchnorm layer, maybe it is better for both
@@ -615,9 +617,10 @@ class ActorCritic(BasePolicy):
         return abs(error)
 
     def set_name(self, name):
-        self.name = "_Actor-Critic_" + str(name)
+        self.name = str(name) + "_ActorCritic" if str(name) != "" else "ActorCritic"
 
     def save(self, path):
+        path += self.name + "/"
         if self.Q is not None:
             self.Q.save(path + "Q/")
         if self.V is not None:
@@ -640,9 +643,10 @@ class Q_Policy(BasePolicy):
         return Q
 
     def set_name(self, name):
-        self.name = "_Q-Policy_" + str(name)
+        self.name = str(name) + "_Q-Policy" if str(name) != "" else "Q-Policy"
 
     def save(self, path):
+        path += self.name + "/"
         if self.Q is not None:
             self.Q.save(path + "Q/")
         if self.V is not None:
@@ -912,6 +916,8 @@ class MineRLMovePolicy(MineRLPolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(MineRLMovePolicy, self).__init__(ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters)
 
+        self.name = "Mover"
+
         self._noop_template = env.noop
         print("Creating Move Policy: ")
         self.attacker = self.create_adjusted_action_policy(self.attack_options, name="attacker")
@@ -926,8 +932,6 @@ class MineRLMovePolicy(MineRLPolicy):
 
     def set_name(self, name):
         self.name = str(name)
-        for idx, head in enumerate(self.policies):
-            head.set_name(head.name + self.name)
 
     def create_adjusted_action_policy(self, options, name=""):
         action_space = Discrete(len(options))
@@ -1042,8 +1046,9 @@ class MineRLMovePolicy(MineRLPolicy):
         return q, tde_current
 
     def save(self, path):
+        path += self.name + "/"
         for idx, policy in enumerate(self.policies):
-            policy.save(path + policy.name + "/")
+            policy.save(path)
 
 
 class MineRLHierarchicalPolicy(MineRLPolicy):
@@ -1051,6 +1056,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         super(MineRLHierarchicalPolicy, self).__init__(ground_policy, base_policy, F_s, F_sa, env, device, log,
                                                        hyperparameters)
 
+        self.name = "HierarchicalMineRLPolicy"
         # Create policies:
         noop = self.env.noop
 
@@ -1059,7 +1065,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         self.action_mapping = []
         print("Creating low-level policies:")
         self.mover, shift = self.create_adjusted_action_policy(self.num_move_actions, shift, self.action_mapping, count,
-                                                               move_policy=True)
+                                                               move_policy=True, name="mover")
         count += 1
         self.lower_level_policies = [self.mover]
         if "place" in noop:
@@ -1281,8 +1287,9 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         pass
 
     def save(self, path):
+        path += self.name + "/"
         if self.decider is not None:
-            self.decider.save(path + "decider/")
+            self.decider.save(path)
         for idx, policy in enumerate(self.lower_level_policies):
-            policy.save(path + policy.name + "/")
+            policy.save(path)
 
