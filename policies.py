@@ -634,7 +634,8 @@ class Q_Policy(BasePolicy):
         super(Q_Policy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
 
         self.critic = self.Q
-        self.set_name("")
+
+        self.name = "Q-Policy"
 
     def optimize_networks(self, transitions, retain_graph=False):
         TDE = self.train_critic(self.Q, self.V, transitions)
@@ -672,7 +673,6 @@ class REM(BasePolicy):
                              for _ in range(self.num_heads)]
         for head in self.policy_heads:
             head.set_retain_graph(True)
-        self.set_name("")
 
     def set_name(self, name):
         self.name = "REM" + str(name)
