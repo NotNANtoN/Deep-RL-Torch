@@ -621,6 +621,9 @@ class ActorCritic(BasePolicy):
 
     def save(self, path):
         path += self.name + "/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
         if self.Q is not None:
             self.Q.save(path + "Q/")
         if self.V is not None:
@@ -648,6 +651,9 @@ class Q_Policy(BasePolicy):
 
     def save(self, path):
         path += self.name + "/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
         if self.Q is not None:
             self.Q.save(path + "Q/")
         if self.V is not None:
@@ -1047,6 +1053,9 @@ class MineRLMovePolicy(MineRLPolicy):
 
     def save(self, path):
         path += self.name + "/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
         for idx, policy in enumerate(self.policies):
             policy.save(path)
 
@@ -1288,6 +1297,9 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
     def save(self, path):
         path += self.name + "/"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
         if self.decider is not None:
             self.decider.save(path)
         for idx, policy in enumerate(self.lower_level_policies):
