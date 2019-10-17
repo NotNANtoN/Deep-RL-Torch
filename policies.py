@@ -411,7 +411,6 @@ class BasePolicy:
 
         self.display_debug_info()
 
-        return loss
 
     def decay_exploration(self, n_steps):
         if self.eps_decay:
