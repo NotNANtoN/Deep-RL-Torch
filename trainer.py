@@ -129,7 +129,7 @@ class Trainer:
             if self.store_on_gpu:
                 tensor = tensor.cuda()
             elif self.pin_tensors:
-                tensor = tensor.pin_memory()
+                tensor = tensor.cpu().pin_memory()
             else:
                 tensor = tensor.cpu()
         return tensor
@@ -320,6 +320,8 @@ class Trainer:
         next_state, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
         reward = self.modify_env_reward(reward)
+        # Move action to GPU if desired:
+        raw_action = self.prep_for_GPU(raw_action)
         # Define next state in case it is terminal:
         if done:
             next_state = None
