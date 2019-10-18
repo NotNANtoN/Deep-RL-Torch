@@ -745,7 +745,10 @@ class REM(BasePolicy):
             os.mkdir(path)
 
         for idx, policy in enumerate(self.policy_heads):
-            policy.save(path + str(idx) + "/")
+            policy_path = path + str(idx) + "/"
+            if not os.path.exists(policy_path):
+                os.mkdir(policy_path)
+            policy.save(policy_path)
 
 
 class MineRLPolicy(BasePolicy):
