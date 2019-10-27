@@ -292,7 +292,7 @@ class BasePolicy:
         if isinstance(state, dict):
             apply_rec_to_dict(lambda x: x.to(self.device), state)
         else:
-            state.to(self.device)
+            state =state.to(self.device)
 
         # Epsilon-Greedy:
         sample = random.random()
