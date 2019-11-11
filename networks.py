@@ -553,7 +553,7 @@ class TempDiffNet(OptimizableNet):
         return apply_layers(x, self.layers_TD, self.act_functs_TD)
 
     def calculate_next_state_values(self, non_final_next_state_features, non_final_mask, actor=None, use_target_net=True):
-        next_state_values = torch.zeros(len(non_final_mask), 1, device=self.device)
+        next_state_values = torch.zeros(len(non_final_mask), 1, device=self.device, dtype=non_final_next_state_features.dtype)
         if non_final_next_state_features is None:
             return next_state_values
         with torch.no_grad():

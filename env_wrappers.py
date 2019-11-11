@@ -49,7 +49,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
 
     BINARY_KEYS = ['forward', 'back', 'left', 'right', 'jump', 'sneak', 'sprint', 'attack']
 
-    def __init__(self, env, always_keys=None, reverse_keys=None, exclude_keys=None, exclude_noop=True):
+    def __init__(self, env, always_keys=None, reverse_keys=None, exclude_keys=None, exclude_noop=True, env_name=""):
         super().__init__(env)
 
         self.always_keys = [] if always_keys is None else always_keys
@@ -128,6 +128,11 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         self.camera_x_options_string = ["x_" + str(number) for number in self.camera_x_options]
         self.camera_y_options_string = ["y_" + str(number) for number in self.camera_x_options]
         self.num_camera_actions = len(self.camera_x_options)
+
+        if env_name == "MineRLTreechop-v0":
+           self.attack_options = ["attack"]
+           self.straight_options = ["forward"]
+           self.lateral_options = ["none_lateral"]
 
         # Create move possibilities:
         for lateral in self.lateral_options:

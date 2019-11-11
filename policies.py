@@ -10,6 +10,10 @@ from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
 from networks import Q, V, Actor, ProcessState, ProcessStateAction
 from util import *
 import copy
+try:
+    from apex import amp
+except:
+    print("WARNING: apex could not be imported.")
 
 
 # This is the interface for the agent being trained by a Trainer instance
@@ -53,6 +57,7 @@ class Agent(AgentInterface):
         self.hyperparameters = hyperparameters
 
         self.optimize_centrally = hyperparameters["optimize_centrally"]
+        self.mixed_precision_train = hyperparameters["mixed_precision_train"] and torch.cuda.is_available()
         self.use_actor_critic = hyperparameters["use_actor_critic"]
         self.save_path = hyperparameters["save_path"]
         self.save_threshold = hyperparameters["save_percentage"]
@@ -70,13 +75,19 @@ class Agent(AgentInterface):
                 params += self.F_sa.get_updateable_params()
             general_lr = hyperparameters["general_lr"]
             self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
+            if self.mixed_precision_train:
+                _, self.optimizer = amp.initialize([], self.optimizer)
 
     def init_feature_extractors(self):
         F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
+        if self.mixed_precision_train:
+            F_s = amp.initialize(F_s, verbosity=0)
         F_sa = None
         if self.use_actor_critic:
             state_feature_len = F_s.layers_merge[-1].out_features
             F_sa = ProcessStateAction(state_feature_len, self.env, self.log, self.device, self.hyperparameters)
+            if self.mixed_precision_train:
+                F_sa = amp.initialize(F_sa, verbosity=0)
         return F_s, F_sa
 
     def create_policy(self):
@@ -118,7 +129,11 @@ class Agent(AgentInterface):
 
         if self.optimize_centrally:
             self.optimizer.zero_grad()
-            loss.backward()
+            if self.mixed_precision_train:
+                with amp.scale_loss(loss, self.optimizer) as loss_scaled:
+                    loss_scaled.backward()
+            else:
+                loss.backward()
             self.F_s.scale_gradient()
             if self.F_sa is not None:
                 self.F_sa.scale_gradient()
@@ -279,6 +294,7 @@ class BasePolicy:
             self.state_action_feature_len = F_sa.layers_merge[-1].out_features
 
         # Set up Networks:
+        self.mixed_precision_train = hyperparameters["mixed_precision_train"] and torch.cuda.is_available()
         self.nets = []
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
 
@@ -289,8 +305,7 @@ class BasePolicy:
 
     def boltzmann_exploration(self, action):
         pass
-
-    # TODO: implement boltzman exploration
+        # TODO: implement boltzman exploration
 
     def explore_discrete_actions(self, action):
         if self.boltzmann_exploration_temp > 0:
@@ -373,12 +388,16 @@ class BasePolicy:
         Q_net = None
         if not (self.use_CACLA_V and not self.use_QVMAX):
             Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
+            if self.mixed_precision_train:
+                Q_net = amp.initialize(Q_net, verbosity=0)
             self.nets.append(Q_net)
 
         V_net = None
         if self.use_QV or self.use_QVMAX or (self.use_actor_critic and self.use_CACLA_V):
             # Init Networks:
             V_net = V(self.state_feature_len, self.env, F_s, None, self.device, self.log, self.hyperparameters)
+            if self.mixed_precision_train:
+                V_net = amp.initialize(V_net, verbosity=0)
             self.nets.append(V_net)
         return Q_net, V_net
 
@@ -648,6 +667,8 @@ class ActorCritic(BasePolicy):
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
+        if self.mixed_precision_train:
+            actor = amp.initialize(actor, verbosity=0)
         actor.Q = Q
         actor.V = V
         self.nets.append(actor)
@@ -721,13 +742,10 @@ class Q_Policy(BasePolicy):
             self.V.save(path + "V/")
 
     def get_updateable_params(self):
-        params = None
+        params = []
         for net in self.nets:
             new_params = list(net.get_updateable_params())
-            if params is None:
-                params = new_params
-            else:
-                params += new_params
+            params += new_params
         return params
 
 
@@ -1087,13 +1105,6 @@ class MineRLMovePolicy(MineRLPolicy):
         return action_q_vals.unsqueeze(0)
 
 
-
-
-    def test_some_stuff(self):
-        output = [1,2,3]
-        return output
-
-
     def get_action_idxs_for_policy(self, policy, action_dicts):
         action_idxs = torch.zeros(len(action_dicts), device=self.device).long()
         for dict_idx, action_dict in enumerate(action_dicts):
@@ -1123,6 +1134,7 @@ class MineRLMovePolicy(MineRLPolicy):
 
     def optimize_networks(self, transitions):
         error = 0
+        loss = 0
         # Save actions:
         original_actions = transitions["action_argmax"].clone()
         # Transform actions in dicts:
@@ -1130,9 +1142,11 @@ class MineRLMovePolicy(MineRLPolicy):
         for policy in self.policies:
             action_idxs = self.get_action_idxs_for_policy(policy, action_dicts)
             transitions["action_argmax"] = action_idxs
-            error += policy.optimize_networks(transitions)
+            error_it, loss_it = policy.optimize_networks(transitions)
+            error += error_it
+            loss += loss_it
         transitions["action_argmax"] = original_actions
-        return error
+        return error, loss
 
     def update_targets(self, n_steps, train_fraction=None):
         for policy in self.policies:
@@ -1156,7 +1170,10 @@ class MineRLMovePolicy(MineRLPolicy):
             policy.save(path)
 
     def get_updateable_params(self):
-        return [policy.get_updateable_params() for policy in self.policies]
+        params = []
+        for policy in self.policies:
+            params += list(policy.get_updateable_params())
+        return params
 
 
 
@@ -1409,8 +1426,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
     def get_updateable_params(self):
         if self.decider is not None:
-            params = [self.decider.get_updateable_params()]
+            params = list(self.decider.get_updateable_params())
         else:
             params = []
-        params.extend([policy.get_updateable_params() for policy in self.lower_level_policies])
+        for policy in self.lower_level_policies:
+            params += list(policy.get_updateable_params())
+        #params.extend([policy.get_updateable_params() for policy in self.lower_level_policies])
         return params

@@ -1,3 +1,5 @@
+import collections
+
 import minerl
 import gym
 
@@ -52,7 +54,7 @@ class Trainer:
             exclude_keys = hyperparameters["exclude_keys"]
             action_wrapper = hyperparameters["action_wrapper"]
 
-            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys)
+            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=env_name)
             print("Num actions after wrapping: ", self.env.action_space.n)
 
         if hyperparameters["max_episode_steps"] > 0:
@@ -69,7 +71,12 @@ class Trainer:
             self.max_steps_per_episode = 0
         self.reward_std = hyperparameters["reward_std"]
         self.use_exp_rep = hyperparameters["use_exp_rep"]
+
+        # Exploration
+        self.use_elig_traces = hyperparameters["use_efficient_traces"]
         self.n_initial_random_actions = hyperparameters["n_initial_random_actions"]
+        self.explore_until_reward = hyperparameters["explore_until_reward"]
+
         self.updates_per_step = hyperparameters["network_updates_per_step"]
 
         # copied from Old class:
@@ -79,6 +86,7 @@ class Trainer:
         #    self.normalizer = Normalizer(self.state_len)
         # else:
         #    self.normalizer = None
+        self.log_freq = hyperparameters["log_freq"]
 
         # Show proper tqdm progress if possible:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
@@ -204,8 +212,6 @@ class Trainer:
             sample = (state, action, reward, next_state, done)
             data.append(sample)
 
-            #if len(data) > 10000:
-            #    break
         return data
 
         # TODO: apply frameskip here! (if used)
@@ -279,26 +285,55 @@ class Trainer:
             state = apply_rec_to_dict(self.prep_for_GPU, state)
         #TODO: move these preparations to one place, add general env wrapper for easy envs
 
-        # Fill exp replay buffer so that we can start training immediately:
-        for _ in tqdm(range(n_steps), disable=self.disable_tqdm):
+        rewards = collections.defaultdict(int)
 
+        # Fill exp replay buffer so that we can start training immediately:
+        pbar = tqdm(disable=self.disable_tqdm)
+        i = 0
+        done = True
+        done_count = 0
+        do_break = False
+        while True:
+            pbar.update(1)
             # To initialize the normalizer:
             if self.normalize_observations:
-                #pass
-                self.policy.F_s.observe(state)
+                self.agent.F_s.observe(state)
                 # TODO: normalize (observe) actions too
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
                                                          explore=True, fully_random=True)
 
             state = next_state
             if done:
+                done_count += 1
                 state = self.env.reset()
                 
-            if not isinstance(state, dict):
-                state = torch.tensor([state], dtype=torch.float)
-                state = self.prep_for_GPU(state)
+                if not isinstance(state, dict):
+                    state = torch.tensor([state], dtype=torch.float)
+                    state = self.prep_for_GPU(state)
+                else:
+                    state = apply_rec_to_dict(self.prep_for_GPU, state)
+
+
+            if self.explore_until_reward and not do_break:
+                if isinstance(reward, torch.FloatTensor) or isinstance(reward, torch.LongTensor):
+                    reward = reward.item()
+                rewards[reward] += 1
+                if len(rewards) > 1:
+                    print("Encountered a new reward value. Rewards; ", rewards)
+                    do_break = True
             else:
-                state = apply_rec_to_dict(self.prep_for_GPU, state)
+                i += 1
+                if  i >= n_steps:
+                    do_break = True
+
+            # For eligibility traces we need to complete at least one episode to properly start training
+            if do_break:
+                if self.use_elig_traces:
+                    if done_count >= 1:
+                        break
+                else:
+                    break
+
 
         print("Done with filling replay buffer.")
         print()
@@ -316,7 +351,7 @@ class Trainer:
         else:
             action, raw_action = self.agent.exploit(state)
 
-        self.log.add("ActionIdx", action, make_distribution=True, skip_steps=10000)
+        self.log.add("ActionIdx", action, make_distribution=True, skip_steps=self.log_freq)
 
         # Apply the action:
         next_state, reward, done, _ = env.step(action)
@@ -417,7 +452,7 @@ class Trainer:
         # Do the actual training:
         print("Start training in the env:")
         time_after_optimize = None
-        pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
+        #pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
         train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
 
         while train_fraction < 1:
@@ -455,7 +490,7 @@ class Trainer:
                 non_optimize_time = 0
                 if time_after_optimize is not None:
                     non_optimize_time = time_before_optimize - time_after_optimize
-                self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=10000, store_episodic=True)
+                self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
 
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else n_steps % int(1 / self.updates_per_step) == 0
@@ -468,9 +503,10 @@ class Trainer:
                 time_after_optimize = time.time()
 
                 # Log reward and time:
-                self.log.add("Train_Reward", reward.item(), skip_steps=10000, store_episodic=True)
-                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")), skip_steps=10000)
-                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=10000,
+                self.log.add("Train_Reward", reward.item(), skip_steps=self.log_freq, store_episodic=True)
+                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")),
+                             skip_steps=self.log_freq)
+                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
                              store_episodic=True)
 
                 if render:
@@ -479,7 +515,7 @@ class Trainer:
                 self.log.step()
                 if done or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
                         (n_hours and (time.time() - start_time) / 360 >= n_hours):
-                    pbar.update(t)
+                    #pbar.update(t)
 
                     self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
                     if verbose:
@@ -492,6 +528,6 @@ class Trainer:
         self.agent.update_targets(steps_done, train_fraction=1.0)
         print('Done.')
         self.env.close()
-        pbar.close()
+        #pbar.close()
         return i_episode
 

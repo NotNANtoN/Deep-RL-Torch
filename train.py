@@ -25,12 +25,13 @@ def create_parser():
     parser.add_argument("--save_percentage", type=float, default=0.05)
     parser.add_argument("--load", type=int, default=0)
     parser.add_argument("--load_path", default="")
-    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=0)
+    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
     parser.add_argument("--debug", action="store_true", default=0)
-    parser.add_argument("--log", action="store_true", default=0)
-    parser.add_argument("--log_NNs", action="store_true", default=0)
+    parser.add_argument("--log", type=int, default=0)
+    #parser.add_argument("--log_NNs", action="store_true", default=0)
+    parser.add_argument("--log_freq", type=int, default=10000)
     # Train basics:
     parser.add_argument("--store_on_gpu", type=int, default=0)
     parser.add_argument("--pin_tensors", type=int,  default=0)
@@ -58,8 +59,9 @@ def create_parser():
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
+    parser.add_argument("--explore_until_reward", type=int, default=1)
     parser.add_argument("--action_sigma", type=float, default=0.0)
-    parser.add_argument("--n_initial_random_actions", type=int, default=10000)
+    parser.add_argument("--n_initial_random_actions", type=int, default=1000)
     # Split reward:
     parser.add_argument("--split_Bellman", type=int, default=0)
     # QV:
@@ -81,6 +83,7 @@ def create_parser():
     parser.add_argument("--layers_conv", default="mnhi_later")
     # NN Training:
     parser.add_argument("--optimize_centrally", type=int, default=1)
+    parser.add_argument("--mixed_precision_train", type=int, default=0)
     parser.add_argument("--general_lr", type=float, default=0.0002)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--optimizer", default="RAdam")
@@ -140,7 +143,7 @@ if __name__ == "__main__":
     # NN architectures:
 
     standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
-                              {"name": "linear", "neurons": 256, "act_func": "tanh"}]
+                              {"name": "linear", "neurons": 256}]
     standard_hidden_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
                              {"name": "linear", "neurons": 256, "act_func": "relu"}]
 
@@ -268,8 +271,8 @@ if __name__ == "__main__":
     tensorboard_comment = parameters["tb_comment"] + "_" if parameters["tb_comment"] else ""
     unfiltered_arguments = iter(sys.argv[1:])
     arguments = []
-    filter_single = ("log", "debug")
-    filter_double = ("save", "load", "verbose", "tqdm", "render")
+    filter_single = ["debug"]
+    filter_double = ("log", "save", "load", "verbose", "tqdm", "render")
     for arg in unfiltered_arguments:
         next_word = False
         for word in filter_single:
@@ -320,8 +323,7 @@ if __name__ == "__main__":
     if log_setup:
         logging.basicConfig(level=logging.DEBUG)
 
-    trainer = Trainer(env, parameters, log=parameters["log"], log_NNs=parameters["log_NNs"], tb_comment=tensorboard_comment)
-    # TODO: (important) introduce the max number of steps parameter in the agent and policies, such that they can update their epsilon values, learn rates etc
+    trainer = Trainer(env, parameters, log=parameters["log"], tb_comment=tensorboard_comment)
     trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
                 render=parameters["render"], verbose=parameters["verbose"])
 
