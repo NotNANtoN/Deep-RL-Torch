@@ -198,8 +198,8 @@ class Trainer:
 
             state = self.env.observation(state, expert_data=True)
             next_state = self.env.observation(next_state, expert_data=True)
-            apply_rec_to_dict(self.prep_for_GPU, state)
-            apply_rec_to_dict(self.prep_for_GPU, next_state)
+            state = apply_rec_to_dict(self.prep_for_GPU, state)
+            state = apply_rec_to_dict(self.prep_for_GPU, next_state)
 
             sample = (state, action, reward, next_state, done)
             data.append(sample)
@@ -277,27 +277,30 @@ class Trainer:
             state = torch.tensor([state], dtype=torch.float)
             state = self.prep_for_GPU(state)
         else:
-            apply_rec_to_dict(self.prep_for_GPU, state)
+            state = apply_rec_to_dict(self.prep_for_GPU, state)
+        #TODO: move these preparations to one place, add general env wrapper for easy envs
 
         # Fill exp replay buffer so that we can start training immediately:
         for _ in tqdm(range(n_steps), disable=self.disable_tqdm):
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.agent.F_s.observe(state)
-                # TODO: normalize actions too
-
+                #pass
+                self.policy.F_s.observe(state)
+                # TODO: normalize (observe) actions too
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
                                                          explore=True, fully_random=True)
 
             state = next_state
             if done:
                 state = self.env.reset()
-                if not isinstance(state, dict):
-                    state = torch.tensor([state], dtype=torch.float)
-                    state = self.prep_for_GPU(state)
-                else:
-                    apply_rec_to_dict(self.prep_for_GPU, state)
+                
+            if not isinstance(state, dict):
+                state = torch.tensor([state], dtype=torch.float)
+                state = self.prep_for_GPU(state)
+            else:
+                state = apply_rec_to_dict(self.prep_for_GPU, state)
+
         print("Done with filling replay buffer.")
         print()
         if done:
@@ -330,7 +333,10 @@ class Trainer:
                 next_state = torch.tensor([next_state], dtype=torch.float)
                 next_state = self.prep_for_GPU(next_state)
             else:
-                apply_rec_to_dict(self.prep_for_GPU, next_state)
+                next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
+
+
+
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
             self.agent.remember(state, raw_action, next_state, reward, done)
@@ -424,7 +430,7 @@ class Trainer:
                     state = torch.tensor([state], dtype=torch.float)
                     state = self.prep_for_GPU(state)
                 else:
-                    apply_rec_to_dict(self.prep_for_GPU, state)
+                    state = apply_rec_to_dict(self.prep_for_GPU, state)
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1

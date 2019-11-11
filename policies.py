@@ -316,9 +316,9 @@ class BasePolicy:
 
     def explore(self, state, fully_random=False):
         if isinstance(state, dict):
-            apply_rec_to_dict(lambda x: x.to(self.device), state)
+            state = apply_rec_to_dict(lambda x: x.to(self.device, non_blocking=True), state)
         else:
-            state.to(self.device)
+            state = state.to(self.device, non_blocking=True)
 
         # Epsilon-Greedy:
         sample = random.random()
@@ -452,6 +452,7 @@ class BasePolicy:
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
+            #TODO: benchmark openai replaybuffer vs pytorch sampler! 
             transitions, importance_weights, idxs = self.memory.sample(sampling_size, self.PER_beta)
             # print(importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()
@@ -480,6 +481,7 @@ class BasePolicy:
 
         # Create state batch:
         if isinstance(batch.state[0], dict):
+            #print(batch.state)
             # Concat the states per key:
             state_batch = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in batch.state]).to(self.device, non_blocking=True) for key in batch.state[0]}
         else:
@@ -491,11 +493,13 @@ class BasePolicy:
         # print("non final next state batch: ", non_final_next_states)
 
         # Create next state batch:
+        
         non_final_next_states = [s for s in batch.next_state if s is not None]
+        #print(non_final_next_states)
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]).to(self.device, non_blocking=True) for key in
-                                         non_final_next_states[0]}
+                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]).to(self.device, non_blocking=True) 
+                                         for key in non_final_next_states[0]}
             else:
                 non_final_next_states = torch.cat(non_final_next_states).to(self.device, non_blocking=True)
         else:
