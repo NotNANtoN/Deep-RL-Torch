@@ -29,10 +29,10 @@ def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, sta
     return fraction
 
 class Trainer:
-    def __init__(self, env_name, hyperparameters, log=True, tb_comment="", log_NNs=False):
+    def __init__(self, env_name, hyperparameters, log=True, tb_comment=""):
         # Init logging:
         self.path = os.getcwd()
-        self.log = Log(self.path + '/tb_log', log, tb_comment, log_NNs)
+        self.log = Log(self.path + '/tb_log', log, tb_comment)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]

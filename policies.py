@@ -142,7 +142,7 @@ class Agent(AgentInterface):
             self.optimizer.step()
 
             #self.policy.lo
-            #TODO: important: log NN weights and gradients!
+            #TODO: important: log NN weights and gradients!!!!
 
     def explore(self, state, fully_random=False):
         return self.policy.explore(state, fully_random)

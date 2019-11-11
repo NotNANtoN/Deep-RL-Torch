@@ -62,12 +62,9 @@ class Normalizer():
 
 
 class Log(object):
-    def __init__(self, path, log, comment, log_NNs):
+    def __init__(self, path, log, comment):
         self.do_logging = log
-        print("Log tensorboard: ", log)
-        print("Log gradients and weights: ", log_NNs)
 
-        self.log_NNs = log_NNs
         self.comment = comment
         self.writer = SummaryWriter(comment=comment)
         self.episodic_storage = {}
