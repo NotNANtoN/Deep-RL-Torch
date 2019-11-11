@@ -409,6 +409,8 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
+            
+            
         return new_obs
 
 

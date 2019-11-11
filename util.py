@@ -20,12 +20,15 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
 def apply_rec_to_dict(func, tensor_dict):
+    return_dict = {}
     for key in tensor_dict:
         content = tensor_dict[key]
         if isinstance(content, dict):
-            apply_rec_to_dict(func, content)
+            return_dict[key] = apply_rec_to_dict(func, content)
         else:
-            tensor_dict[key] = func(content)
+            return_dict[key] = func(content)
+            #tensor_dict[key] = func(content)
+    return return_dict
 
 class Normalizer():
     def __init__(self, input_shape, device):
