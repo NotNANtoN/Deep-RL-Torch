@@ -3,8 +3,6 @@ import minerl.data
 import os
 import logging
 
-if __name__ == "__main__":
-    ver_or_download_data('MineRLObtainDiamond-v0')
 
 def ver_or_download_data(env_name):
     data_dir = os.getenv('MINERL_DATA_ROOT', 'data')
@@ -36,3 +34,7 @@ def ver_or_download_data(env_name):
         minerl.data.download(data_dir)
 
     print("Data verified! A+!")
+    
+    
+if __name__ == "__main__":
+    ver_or_download_data('MineRLObtainDiamond-v0')

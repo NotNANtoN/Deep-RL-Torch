@@ -549,9 +549,6 @@ class BasePolicy:
         if self.Q is not None:
             self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None)
 
-
-        # TODO: anneal eligilibility trace lambda from 1 to 0 over training time
-
         # TODO: when calculating eligibility traces we could also estimate the TD error for PER
 
     def update_traces(self, n_steps, train_fraction=None):

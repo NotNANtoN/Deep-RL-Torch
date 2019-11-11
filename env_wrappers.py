@@ -123,7 +123,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         self.straight_options = ["back", "none_straight", "forward"]
         self.attack_options = ["none_attack", "attack"]
         self.jump_options = ["none_jump", "jump"]
-        self.camera_x_options = [-10, -5, -1, 0, 1, 5, 10]
+        self.camera_x_options = [-10, 0, 10]#[-10, -5, -1, 0, 1, 5, 10]
         self.camera_y_options = self.camera_x_options
         self.camera_x_options_string = ["x_" + str(number) for number in self.camera_x_options]
         self.camera_y_options_string = ["y_" + str(number) for number in self.camera_x_options]

@@ -249,7 +249,6 @@ class Trainer:
 
                 self.log.step()
         elif time:
-            # TODO: add some tqdm option here
             pbar = tqdm(disable=self.disable_tqdm, total=hours)
             for t in count():
                 pbar.update((time.time() - start_time) / 360)

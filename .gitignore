@@ -1,3 +1,4 @@
+/train
 *.egg-info
 *.pyc
 .idea
