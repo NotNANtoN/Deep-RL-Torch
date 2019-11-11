@@ -102,9 +102,9 @@ class Trainer:
         else:
             hyperparameters["num_expert_samples"] = 0
         # Init Policy:
-        self.policy = Agent(self.env, self.device, self.log, hyperparameters)
+        self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
-            self.policy.load()
+            self.agent.load()
         # Load expert data into policy buffer:
         if self.use_expert_data:
             self.move_expert_data_into_buffer(expert_data)
@@ -112,10 +112,10 @@ class Trainer:
 
     def reset(self):
         self.episode_durations = []
-        self.policy.reset()
+        self.agent.reset()
 
     def optimize(self):
-        self.policy.optimize()
+        self.agent.optimize()
 
     def modify_env_reward(self, reward):
         reward = torch.tensor([reward], dtype=torch.float)
@@ -143,10 +143,10 @@ class Trainer:
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.policy.F_s.observe(state)
+                self.agent.F_s.observe(state)
                 # TODO: normalize actions too # self.policy.F_sa.observe(action)
 
-            self.policy.remember(state, action, next_state, reward, done)
+            self.agent.remember(state, action, next_state, reward, done)
             # Delete data from data list when processed to save memory
             del data[0]
         pbar.close()
@@ -241,11 +241,11 @@ class Trainer:
         if steps:
             for step in tqdm(range(steps), disable=self.disable_tqdm):
                 # Perform one step of the optimization
-                self.policy.optimize()
+                self.agent.optimize()
 
                 train_fraction = step / steps
                 # Update the target network
-                self.policy.update_targets(step, train_fraction)
+                self.agent.update_targets(step, train_fraction)
 
                 self.log.step()
         elif time:
@@ -255,11 +255,11 @@ class Trainer:
                 pbar.update((time.time() - start_time) / 360)
 
                 # Perform one step of the optimization
-                self.policy.optimize()
+                self.agent.optimize()
 
                 train_fraction = (time.time() - start_time) / 360 / hours
                 # Update the target network
-                self.policy.update_targets(t, train_fraction)
+                self.agent.update_targets(t, train_fraction)
 
                 self.log.step()
 
@@ -284,7 +284,7 @@ class Trainer:
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.policy.F_s.observe(state)
+                self.agent.F_s.observe(state)
                 # TODO: normalize actions too
 
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
@@ -310,9 +310,9 @@ class Trainer:
         # Select an action
         if explore:
             # Raw actions are the logits for the actions. Useful for e.g. DDPG training in discrete envs.
-            action, raw_action = self.policy.explore(state, fully_random=fully_random)
+            action, raw_action = self.agent.explore(state, fully_random=fully_random)
         else:
-            action, raw_action = self.policy.exploit(state)
+            action, raw_action = self.agent.exploit(state)
 
         self.log.add("ActionIdx", action, make_distribution=True, skip_steps=10000)
 
@@ -331,10 +331,9 @@ class Trainer:
                 next_state = self.prep_for_GPU(next_state)
             else:
                 apply_rec_to_dict(self.prep_for_GPU, next_state)
-            # TODO: make prep for GPU usable on dicts
         # Store the transition in memory
         if self.use_exp_rep and store_in_exp_rep:
-            self.policy.remember(state, raw_action, next_state, reward, done)
+            self.agent.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
         # TODO: implement logging of predicted Q value and TDE
         #q_val, tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
@@ -390,7 +389,7 @@ class Trainer:
 
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
-            self.policy.freeze_normalizers()
+            self.agent.freeze_normalizers()
 
         if self.use_expert_data and self.do_pretrain:
             pretrain_steps = int(self.pretrain_percentage * n_steps)
@@ -444,7 +443,7 @@ class Trainer:
                 state = next_state
 
                 # Reduce epsilon and other exploratory values:
-                self.policy.decay_exploration(steps_done)
+                self.agent.decay_exploration(steps_done)
 
                 time_before_optimize = time.time()
                 # Log time between optimizations:
@@ -457,10 +456,10 @@ class Trainer:
                                                     else n_steps % int(1 / self.updates_per_step) == 0
                 for _ in range(num_updates):
                     # Perform one step of the optimization (on the target network)
-                    self.policy.optimize()
+                    self.agent.optimize()
 
                     # Update the target network
-                    self.policy.update_targets(steps_done, train_fraction=train_fraction)
+                    self.agent.update_targets(steps_done, train_fraction=train_fraction)
                 time_after_optimize = time.time()
 
                 # Log reward and time:
@@ -485,7 +484,7 @@ class Trainer:
                     break
             train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
         # Save the model:
-        self.policy.update_targets(steps_done, train_fraction=1.0)
+        self.agent.update_targets(steps_done, train_fraction=1.0)
         print('Done.')
         self.env.close()
         pbar.close()

@@ -52,6 +52,7 @@ class Agent(AgentInterface):
         self.log = log
         self.hyperparameters = hyperparameters
 
+        self.optimize_centrally = hyperparameters["optimize_centrally"]
         self.use_actor_critic = hyperparameters["use_actor_critic"]
         self.save_path = hyperparameters["save_path"]
         self.save_threshold = hyperparameters["save_percentage"]
@@ -60,6 +61,15 @@ class Agent(AgentInterface):
 
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
+
+        # Set up Optimizer:
+        if self.optimize_centrally:
+            params = self.policy.get_updateable_params()
+            params += self.F_s.get_updateable_params()
+            if self.F_sa is not None:
+                params += self.F_sa.get_updateable_params()
+            general_lr = hyperparameters["general_lr"]
+            self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
 
     def init_feature_extractors(self):
         F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
@@ -104,7 +114,20 @@ class Agent(AgentInterface):
         self.policy.remember(state, action, next_state, reward, done)
 
     def optimize(self):
-        self.policy.optimize()
+        loss = self.policy.optimize()
+
+        if self.optimize_centrally:
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.F_s.scale_gradient()
+            if self.F_sa is not None:
+                self.F_sa.scale_gradient()
+            #self.policy.scale_gradient()
+            # TODO: do we need to scale the gradients of the policy? Could be scaled according to ratio of network lr to general_lr
+            self.optimizer.step()
+
+            #self.policy.lo
+            #TODO: important: log NN weights and gradients!
 
     def explore(self, state, fully_random=False):
         return self.policy.explore(state, fully_random)
@@ -238,9 +261,11 @@ class BasePolicy:
         self.use_PER = hyperparameters["use_PER"]
         self.use_CER = hyperparameters["use_CER"]
         self.PER_alpha = hyperparameters["PER_alpha"]
-        self.PER_beta = hyperparameters["PER_beta"]
+        self.PER_start_beta = hyperparameters["PER_beta"]
+        self.PER_beta = self.PER_start_beta
+        self.anneal_beta = hyperparameters["PER_anneal_beta"]
         self.importance_weights = None
-        # TODO: implement the option to linearly increase PER_beta to 1 over training time
+
         if self.use_PER:
             self.memory = PrioritizedReplayBuffer(self.buffer_size, self.PER_alpha, use_CER=self.use_CER)
         else:
@@ -254,6 +279,7 @@ class BasePolicy:
             self.state_action_feature_len = F_sa.layers_merge[-1].out_features
 
         # Set up Networks:
+        self.nets = []
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
 
     def random_action(self):
@@ -347,30 +373,35 @@ class BasePolicy:
         Q_net = None
         if not (self.use_CACLA_V and not self.use_QVMAX):
             Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
+            self.nets.append(Q_net)
 
         V_net = None
         if self.use_QV or self.use_QVMAX or (self.use_actor_critic and self.use_CACLA_V):
             # Init Networks:
             V_net = V(self.state_feature_len, self.env, F_s, None, self.device, self.log, self.hyperparameters)
+            self.nets.append(V_net)
         return Q_net, V_net
 
     def train_critic(self, Q, V, transitions):
         TDE_V = 0
+        loss = 0
         if self.V is not None:
             V.retain_graph = True
-            TDE_V = V.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+            TDE_V, loss_V = V.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
                                Q=Q, V=None, policy_name=self.name)
+            loss += loss_V
 
         # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
         TDE_Q = 0
         if self.Q is not None:
-            TDE_Q = Q.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+            TDE_Q, loss_Q = Q.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
                                Q=None, V=V, policy_name=self.name)
+            loss += loss_Q
 
         TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
 
         TDE_abs = abs(TDE)
-        return TDE_abs
+        return TDE_abs, loss
 
     def extract_features(self, transitions):
         # Extract features:
@@ -400,16 +431,16 @@ class BasePolicy:
         if self.use_world_model:
             self.world_model.optimize()
             # TODO: create a world model at some point
-        error = self.optimize_networks(transitions)
-        # TODO: also return loss and do update (maybe not in this function, maybe in optimize_networks)
+        error, loss = self.optimize_networks(transitions)
 
         error = abs(error) + 0.0001
-        error_np = error
 
         if self.use_PER:
-            self.memory.update_priorities(transitions["idxs"], error_np)
+            self.memory.update_priorities(transitions["idxs"], error)
 
         self.display_debug_info()
+
+        return loss
 
 
     def decay_exploration(self, n_steps):
@@ -489,13 +520,16 @@ class BasePolicy:
     def optimize_networks(self, transitions):
         raise NotImplementedError
 
+    def scale_gradient(self):
+        pass
+        # TODO important!: implement such that all policies can do this... is it necessary??
+
     def display_debug_info(self):
         pass
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         return self.critic.calculate_Q_and_TDE(state, action, next_state, reward, done, actor=self.actor, Q=self.Q,
                                                V=self.V)
-
 
     def set_retain_graph(self, val):
         if self.Q is not None:
@@ -526,6 +560,9 @@ class BasePolicy:
     def update_targets(self, n_steps, train_fraction=None):
         if self.use_efficient_traces:
             self.update_traces(n_steps, train_fraction=train_fraction)
+
+        if self.use_PER and self.anneal_beta:
+            self.PER_beta = self.PER_start_beta + (1 - self.PER_start_beta) * train_fraction
 
         if self.Q is not None:
             self.Q.update_targets(n_steps)
@@ -572,6 +609,9 @@ class BasePolicy:
     def save(self, path):
         raise NotImplementedError
 
+    def get_updateable_params(self):
+        raise NotImplementedError
+
 
 
 
@@ -597,24 +637,27 @@ class ActorCritic(BasePolicy):
             self.Q.retain_graph = True
         if self.V is not None:
             self.V.retain_graph = True
-        TDE = self.train_critic(self.Q, self.V, transitions)
+        TDE, loss_critic = self.train_critic(self.Q, self.V, transitions)
 
-        error = self.train_actor(transitions)
+        error, loss_actor = self.train_actor(transitions)
 
-        return TDE + error
+        loss = loss_critic + loss_actor
+
+        return TDE + error, loss
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
         actor.Q = Q
         actor.V = V
+        self.nets.append(actor)
         # Q.target_net.actor = actor
 
         # print(actor)
         return actor
 
     def train_actor(self, transitions):
-        error = self.actor.optimize(transitions, self.name)
-        return abs(error)
+        error, loss = self.actor.optimize(transitions, self.name)
+        return abs(error), loss
 
     def set_name(self, name):
         self.name = str(name) + "_ActorCritic" if str(name) != "" else "ActorCritic"
@@ -630,6 +673,23 @@ class ActorCritic(BasePolicy):
             self.V.save(path + "V/")
         self.actor.save(path + "actor/")
 
+    def get_updateable_params(self):
+        params = None
+        for net in self.nets:
+            new_params = list(net.get_updateable_params())
+            if params is None:
+                params = new_params
+            else:
+                params += new_params
+        return params
+
+
+        params = list(self.layers_TD.parameters())
+        if self.split:
+            params += list(self.layers_r.parameters())
+        return params
+
+
 
 class Q_Policy(BasePolicy):
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -640,8 +700,8 @@ class Q_Policy(BasePolicy):
         self.name = "Q-Policy"
 
     def optimize_networks(self, transitions, retain_graph=False):
-        TDE = self.train_critic(self.Q, self.V, transitions)
-        return TDE
+        TDE, loss = self.train_critic(self.Q, self.V, transitions)
+        return TDE, loss
 
     def init_actor(self, Q, V, F_s):
         return Q
@@ -658,6 +718,17 @@ class Q_Policy(BasePolicy):
             self.Q.save(path + "Q/")
         if self.V is not None:
             self.V.save(path + "V/")
+
+    def get_updateable_params(self):
+        params = None
+        for net in self.nets:
+            new_params = list(net.get_updateable_params())
+            if params is None:
+                params = new_params
+            else:
+                params += new_params
+        return params
+
 
 
 # 1. For ensemble: simply create many base policies, train them all with .optimize() and sum action output.
@@ -694,11 +765,14 @@ class REM(BasePolicy):
     def optimize_networks(self, transitions):
         idxes = random.sample(range(self.num_heads), self.num_samples)
         error = 0
+        loss = 0
         for idx in idxes:
             current_policy = self.policy_heads[idx]
             # TODO: here we might bootstrap over our batch to have slightly different training data per policy!
-            error += current_policy.optimize_networks(transitions)
-        return error / self.num_samples
+            error_current, loss_current = current_policy.optimize_networks(transitions)
+            error += error_current
+            loss += loss_current
+        return error / self.num_samples, loss
 
     def choose_action(self, state, calc_state_features=True):
         # Preprocess:
@@ -749,6 +823,16 @@ class REM(BasePolicy):
             if not os.path.exists(policy_path):
                 os.mkdir(policy_path)
             policy.save(policy_path)
+
+    def get_updateable_params(self):
+        params = None
+        for net in self.policy_heads:
+            new_params = list(net.get_updateable_params())
+            if params is None:
+                params = new_params
+            else:
+                params += new_params
+        return params
 
 
 class MineRLPolicy(BasePolicy):
@@ -1001,6 +1085,14 @@ class MineRLMovePolicy(MineRLPolicy):
         # print()
         return action_q_vals.unsqueeze(0)
 
+
+
+
+    def test_some_stuff(self):
+        output = [1,2,3]
+        return output
+
+
     def get_action_idxs_for_policy(self, policy, action_dicts):
         action_idxs = torch.zeros(len(action_dicts), device=self.device).long()
         for dict_idx, action_dict in enumerate(action_dicts):
@@ -1061,6 +1153,10 @@ class MineRLMovePolicy(MineRLPolicy):
 
         for idx, policy in enumerate(self.policies):
             policy.save(path)
+
+    def get_updateable_params(self):
+        return [policy.get_updateable_params() for policy in self.policies]
+
 
 
 class MineRLHierarchicalPolicy(MineRLPolicy):
@@ -1196,7 +1292,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         return masked_transitions
 
     def optimize_networks(self, transitions):
-        error = 0
+        loss = 0
         # Save actions:
         original_actions = transitions["action_argmax"].clone()
         # Transform action idx such as 34 into e.g. ([3], [8])
@@ -1204,7 +1300,8 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         # Train high-level policy:
         if self.decider is not None:
             transitions["action_argmax"] = high_level_actions
-            error += self.decider.optimize_networks(transitions)
+            error, decider_loss = self.decider.optimize_networks(transitions)
+            loss += decider_loss
         else:
             error = torch.zeros(len(original_actions), 1)
         # Get mask of which low-level policy trains on which part of the transitions:
@@ -1217,13 +1314,14 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             # Apply mask to transition dict and dicts within dict:
             partial_transitions = self.apply_mask_to_transitions(transitions, idx_mask)
             policy = self.lower_level_policies[policy_idx]
-            policy_error = policy.optimize_networks(partial_transitions)
+            policy_error, policy_loss = policy.optimize_networks(partial_transitions)
+            loss += policy_loss
 
             error[idx_mask] += policy_error
 
         # Reset actions just in case:
         transitions["action_argmax"] = original_actions
-        return error
+        return error, loss
 
         # TODO: this needs to be debugged for environments such as tree, because it is not sure if it works without a decider
 
@@ -1308,3 +1406,10 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         for idx, policy in enumerate(self.lower_level_policies):
             policy.save(path)
 
+    def get_updateable_params(self):
+        if self.decider is not None:
+            params = [self.decider.get_updateable_params()]
+        else:
+            params = []
+        params.extend([policy.get_updateable_params() for policy in self.lower_level_policies])
+        return params

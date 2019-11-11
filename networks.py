@@ -146,12 +146,16 @@ class OptimizableNet(nn.Module):
             self.action_low = torch.tensor(env.action_space.low)
             self.action_high = torch.tensor(env.action_space.high)
 
+        # To scale the gradient in optimization:
+        self.head_count = 0
+
         # Load hyperparameters:
         if is_target_net:
             self.use_target_net = False
         else:
             self.use_target_net = hyperparameters["use_target_net"]
         self.retain_graph = False
+        self.optimize_centrally = hyperparameters["optimize_centrally"]
         self.max_norm = hyperparameters["max_norm"]
         self.batch_size = hyperparameters["batch_size"]
         self.optimizer = hyperparameters["optimizer"]
@@ -182,11 +186,16 @@ class OptimizableNet(nn.Module):
         #print("target: ", target)
         loss, reduced_loss = self.compute_loss(output, target, sample_weights)
 
-        optimizer.zero_grad()
-        reduced_loss.backward(retain_graph=self.retain_graph + retain_graph)
-        #if self.max_norm:
-            #torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
-        optimizer.step()
+        if not self.optimize_centrally:
+            optimizer.zero_grad()
+            reduced_loss.backward(retain_graph=self.retain_graph + retain_graph)
+            #if self.max_norm:
+                #torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
+            optimizer.step()
+
+            # Log weight and gradient norms:
+            if self.log.do_logging and self.log.log_NNs:
+                self.log_nn_data()
         # TODO: we should test the option of not stepping the optimizer here, but instead returning the loss and only stepping once per policy for all networks at the same time (averaging the losses of all networks)
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
@@ -197,11 +206,13 @@ class OptimizableNet(nn.Module):
 
         PER_weights = loss.detach().clone().cpu()
 
-        # Log weight and gradient norms:
-        if self.log.do_logging and self.log.log_NNs:
-            self.log_nn_data()
+        # Increment counter in the feature extractors to scale their gradients later on:
+        if self.F_s is not None:
+            self.F_s.increment_head_counter()
+        if self.F_sa is not None:
+            self.F_sa.increment_head_counter()
 
-        return PER_weights
+        return PER_weights, reduced_loss
 
     def get_updateable_params(self):
         return self.parameters()
@@ -237,6 +248,17 @@ class OptimizableNet(nn.Module):
         gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])
         self.log.add(name + "Weights", weights, distribution=True, skip_steps=10000)
         self.log.add(name + "Gradients", gradients, distribution=True, skip_steps=10000)
+
+    def scale_gradient(self):
+        params = self.get_updateable_params()
+        for layer in params:
+            layer.grad.data = layer.grad.data / self.head_count
+
+        # Reset head count:
+        self.head_count = 0
+
+    def increment_head_counter(self):
+        self.head_count += 1
 
 class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, is_target_net=False):
@@ -602,10 +624,11 @@ class TempDiffNet(OptimizableNet):
         if self.split:
             print("r:")
             print(self.optimizer_r.state_dict()["state"].keys())
-            TDE_r = self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
+            TDE_r, loss_r = self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
             #self.log_nn_data(policy_name + "_r-net_", r_net=True)
         else:
             TDE_r = 0
+            loss_r = 0
 
         # Compute the expected values. Do not add the reward, if the critic is split
         if self.use_efficient_traces:
@@ -622,11 +645,13 @@ class TempDiffNet(OptimizableNet):
         #print("TD:")
         #print(self.optimizer_TD.state_dict()["state"].keys())
 
-        TDE_TD = self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
+        TDE_TD, loss_TD = self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
-        self.log_nn_data(policy_name + "_TD-net", r_net=False)
+
+        #self.log_nn_data(policy_name + "_TD-net", r_net=False)
         self.TDE = (abs(TDE_r) + abs(TDE_TD))
-        return self.TDE
+        loss = loss_TD + loss_r
+        return self.TDE, loss
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done, actor=None, Q=None, V=None):
         tde = 0
@@ -1140,21 +1165,21 @@ class Actor(OptimizableNet):
         # if not self.discrete_env:
         #    target = target.unsqueeze(1)
 
-        error = 0
         if len(output) > 0:
             # Train actor towards better actions (loss = better - current)
-            error = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
+            error, loss = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
             self.log_nn_data(policy_name)
 
         else:
-            pass
+            error = 0
+            loss = 0
             # TODO: log for CACLA Q and CACLA V and SPG on how many actions per batch is trained
             # print("No Training for Actor...")
 
         if self.use_CACLA_V or self.use_CACLA_Q or self.use_SPG:
             self.log.add("Actor_actual_train_batch_size", len(output), skip_steps=10000)
 
-        return error
+        return error, loss
 
     def log_nn_data(self, name=""):
         self.log_layer_data(self.layers, "Actor", extra_name=name)
