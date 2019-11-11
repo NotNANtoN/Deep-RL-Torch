@@ -50,6 +50,7 @@ def create_parser():
     parser.add_argument("--use_PER", type=int, default=1)
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
+    parser.add_argument("--PER_anneal_beta", type=int, default=1)
     parser.add_argument("--use_CER", type=int, default=1)
     # Expert Data:
     parser.add_argument("--use_expert_data", type=int, default=0)
@@ -79,6 +80,8 @@ def create_parser():
     # NN Architecture:
     parser.add_argument("--layers_conv", default="mnhi_later")
     # NN Training:
+    parser.add_argument("--optimize_centrally", type=int, default=1)
+    parser.add_argument("--general_lr", type=float, default=0.0002)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--optimizer", default="RAdam")
     parser.add_argument("--max_norm", type=float, default=1.0)
