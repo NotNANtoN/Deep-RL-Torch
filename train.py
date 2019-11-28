@@ -6,7 +6,8 @@ import sys
 import os
 
 from RAdam import RAdam
-from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper
+from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper,\
+    AtariObsWrapper, DefaultWrapper
 from trainer import Trainer
 
 def create_parser():
@@ -31,23 +32,23 @@ def create_parser():
     parser.add_argument("--debug", action="store_true", default=0)
     parser.add_argument("--log", type=int, default=0)
     #parser.add_argument("--log_NNs", action="store_true", default=0)
-    parser.add_argument("--log_freq", type=int, default=10000)
+    parser.add_argument("--log_freq", type=int, default=1000)
     # Train basics:
     parser.add_argument("--store_on_gpu", type=int, default=0)
     parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
-                        default=1)
+                        default=4)
     parser.add_argument("--max_episode_steps", type=int, help="Limit the length of episodes", default=0)
     parser.add_argument("--reward_std", type=float, default=0.0)
     # Target net:
     parser.add_argument("--use_target_net", type=int, default=1)
     parser.add_argument("--use_polyak_averaging", type=int, default=1)
-    parser.add_argument("--target_network_hard_steps", type=int, default=250)
+    parser.add_argument("--target_network_hard_steps", type=int, default=10000)
     parser.add_argument("--polyak_averaging_tau", type=float, default=0.0025)
     # Experience replay:
     parser.add_argument("--use_exp_rep", type=int, default=1)
-    parser.add_argument("--replay_buffer_size", type=int, default=100000)
+    parser.add_argument("--replay_buffer_size", type=int, default=1000000)
     parser.add_argument("--use_PER", type=int, default=1)
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
@@ -59,9 +60,9 @@ def create_parser():
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
-    parser.add_argument("--explore_until_reward", type=int, default=1)
+    parser.add_argument("--explore_until_reward", type=int, default=0)
     parser.add_argument("--action_sigma", type=float, default=0.0)
-    parser.add_argument("--n_initial_random_actions", type=int, default=1000)
+    parser.add_argument("--n_initial_random_actions", type=int, default=50000)
     # Split reward:
     parser.add_argument("--split_Bellman", type=int, default=0)
     # QV:
@@ -71,7 +72,7 @@ def create_parser():
     # Eligibility traces:
     parser.add_argument("--use_efficient_traces", type=int, default=0)
     parser.add_argument("--elig_traces_lambda", type=float, default=0.8)
-    parser.add_argument("--elig_traces_update_steps", type=int, default=5000)
+    parser.add_argument("--elig_traces_update_steps", type=int, default=10000)
     parser.add_argument("--elig_traces_anneal_lambda", type=int, default=0)
     # Input Normalization:
     parser.add_argument("--normalize_obs", type=int, default=1)
@@ -80,15 +81,16 @@ def create_parser():
     parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
                         default=255)
     # NN Architecture:
-    parser.add_argument("--layers_conv", default="mnhi_later")
+    parser.add_argument("--layers_conv", default="vizdoom_winner")
+    parser.add_argument("--hidden_size", default=512)
     # NN Training:
     parser.add_argument("--optimize_centrally", type=int, default=1)
-    parser.add_argument("--mixed_precision_train", type=int, default=0)
-    parser.add_argument("--general_lr", type=float, default=0.0002)
-    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--use_half", type=int, default=0)
+    parser.add_argument("--general_lr", type=float, default=0.00025)
+    parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--optimizer", default="RAdam")
-    parser.add_argument("--max_norm", type=float, default=1.0)
-    parser.add_argument("--network_updates_per_step", type=float, default=1.0)
+    parser.add_argument("--max_norm", type=float, default=0)
+    parser.add_argument("--network_updates_per_step", type=float, default=0.25)
     parser.add_argument("--lr_Q", type=float, default=0.0002)
     parser.add_argument("--lr_V", type=float, default=0.0002)
     parser.add_argument("--lr_r", type=float, default=0.0001)
@@ -108,6 +110,7 @@ def create_parser():
     return parser
 
 if __name__ == "__main__":
+    torch.backends.cudnn.benchmark = True
     # Basic Discrete:
     lunar = "LunarLander-v2"
     cart = "CartPole-v1"
@@ -140,12 +143,18 @@ if __name__ == "__main__":
     diamond = "MineRLObtainDiamond-v0"
     diamond_dense = "MineRLObtainDiamondDense-v0"
 
-    # NN architectures:
 
-    standard_feature_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
-                              {"name": "linear", "neurons": 256}]
-    standard_hidden_block = [{"name": "linear", "neurons": 256, "act_func": "relu"},
-                             {"name": "linear", "neurons": 256, "act_func": "relu"}]
+    # Parse arguments:
+    parser = create_parser()
+    args = parser.parse_args()
+    arg_dict = vars(args)
+
+    # NN architectures:
+    hidden_size = arg_dict["hidden_size"]
+    standard_feature_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+                              {"name": "linear", "neurons": hidden_size}]
+    standard_hidden_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+                             {"name": "linear", "neurons": hidden_size, "act_func": "relu"}]
 
     test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
 
@@ -173,12 +182,14 @@ if __name__ == "__main__":
     vizdoom_winner = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
                            {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
                            {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
-                           {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 2, "act_func": "relu"},
-                           {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 2, "act_func": "relu"}
+                           {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 1, "act_func": "relu"},
+                           {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
                            ]
     # TODO: define R2D2 conv architecture! (IMPALA uses the same)
 
     layers_conv = standard_hidden_block
+
+
 
     parameters = {
         # NN architecture setup:
@@ -198,9 +209,6 @@ if __name__ == "__main__":
         # TODO: The following still need to be implemented:
         "PER_anneal_beta": False,
         "normalize_reward_magnitude": False,
-        "lambda": 0,
-
-
 
         "use_dueling_network": False, # could be used in QV especially
         "use_hrl": False,  # important
@@ -222,12 +230,9 @@ if __name__ == "__main__":
         "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
     }
 
-    # Parse arguments:
-    parser = create_parser()
-    args = parser.parse_args()
-    arg_dict = vars(args)
+    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr? - apparently AdamW (in PyTorch) decouples weight decay properly from optimizer
+#
     parameters.update(arg_dict)
-
     # Convert strings in hyperparams to objects:
     # optimizer:
     if parameters["optimizer"] == "RAdam":
@@ -242,12 +247,11 @@ if __name__ == "__main__":
     elif parameters["layers_conv"] == "vizdoom_winner":
         parameters["layers_conv"] = vizdoom_winner
 
-    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr? - apparently AdamW (in PyTorch) decouples weight decay properly from optimizer
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
     # Decide on env here:
+    atari_envs = ["pong"]
     env_short = parameters["env"]
     if env_short == "cart":
         env = cart
@@ -265,14 +269,18 @@ if __name__ == "__main__":
         env = nav
     elif env_short == "nav_dense":
         env = nav_dense
+    elif env_short == "pong":
+        env = "Pong-v0"
+    elif env_short == "pong_ram":
+        env = "Pong-ram-v0"
     else:
         raise NotImplementedError("Env does not exist")
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" if parameters["tb_comment"] else ""
     unfiltered_arguments = iter(sys.argv[1:])
     arguments = []
-    filter_single = ["debug"]
-    filter_double = ("log", "save", "load", "verbose", "tqdm", "render")
+    filter_single = ["debug", "render"]
+    filter_double = ("log", "save", "load", "verbose", "tqdm")
     for arg in unfiltered_arguments:
         next_word = False
         for word in filter_single:
@@ -317,6 +325,11 @@ if __name__ == "__main__":
         parameters["use_MineRL_policy"] = True
         #if "Pickaxe" in env or "Diamond" in env:
         #    parameters["use_MineRL_policy"] = True
+    elif env_short in atari_envs:
+        parameters["convert_2_torch_wrapper"] = AtariObsWrapper
+        print("Atari env!")
+    else:
+        parameters["convert_2_torch_wrapper"] = DefaultWrapper
 
     # Set up debugging:
     log_setup = parameters["debug"]

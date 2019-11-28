@@ -3,7 +3,9 @@ import itertools
 import logging
 import gym
 import torch
+import time
 from gym.spaces import Discrete
+from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 
 # Internal Imports:
 from exp_rep import ReplayBuffer, PrioritizedReplayBuffer
@@ -57,7 +59,7 @@ class Agent(AgentInterface):
         self.hyperparameters = hyperparameters
 
         self.optimize_centrally = hyperparameters["optimize_centrally"]
-        self.mixed_precision_train = hyperparameters["mixed_precision_train"] and torch.cuda.is_available()
+        self.use_half = hyperparameters["use_half"] and torch.cuda.is_available()
         self.use_actor_critic = hyperparameters["use_actor_critic"]
         self.save_path = hyperparameters["save_path"]
         self.save_threshold = hyperparameters["save_percentage"]
@@ -75,18 +77,24 @@ class Agent(AgentInterface):
                 params += self.F_sa.get_updateable_params()
             general_lr = hyperparameters["general_lr"]
             self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
-            if self.mixed_precision_train:
+            if self.use_half:
                 _, self.optimizer = amp.initialize([], self.optimizer)
 
     def init_feature_extractors(self):
         F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
-        if self.mixed_precision_train:
+        if self.log:
+            print("F_s:")
+            print(F_s)
+        if self.use_half:
             F_s = amp.initialize(F_s, verbosity=0)
         F_sa = None
         if self.use_actor_critic:
             state_feature_len = F_s.layers_merge[-1].out_features
             F_sa = ProcessStateAction(state_feature_len, self.env, self.log, self.device, self.hyperparameters)
-            if self.mixed_precision_train:
+            if self.log:
+                print("F_sa:")
+                print(self.F_sa)
+            if self.use_half:
                 F_sa = amp.initialize(F_sa, verbosity=0)
         return F_s, F_sa
 
@@ -121,15 +129,17 @@ class Agent(AgentInterface):
                                      self.hyperparameters)
         return policy
 
+    #@profile
     def remember(self, state, action, next_state, reward, done):
         self.policy.remember(state, action, next_state, reward, done)
 
+    #@profile
     def optimize(self):
         loss = self.policy.optimize()
 
         if self.optimize_centrally:
             self.optimizer.zero_grad()
-            if self.mixed_precision_train:
+            if self.use_half:
                 with amp.scale_loss(loss, self.optimizer) as loss_scaled:
                     loss_scaled.backward()
             else:
@@ -141,8 +151,11 @@ class Agent(AgentInterface):
             # TODO: do we need to scale the gradients of the policy? Could be scaled according to ratio of network lr to general_lr
             self.optimizer.step()
 
-            #self.policy.lo
-            #TODO: important: log NN weights and gradients!!!!
+            self.F_s.log_nn_data("")
+            if self.F_sa is not None:
+                self.F_sa.log_nn_data("")
+            self.policy.log_nn_data()
+
 
     def explore(self, state, fully_random=False):
         return self.policy.explore(state, fully_random)
@@ -225,6 +238,7 @@ class BasePolicy:
         self.hyperparameters = hyperparameters
         self.ground_policy = ground_policy
         self.name = ""
+        self.log_freq = self.hyperparameters["log_freq"]
 
         # Check env:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
@@ -257,6 +271,7 @@ class BasePolicy:
         self.epsilon = hyperparameters["epsilon"]
         self.eps_decay = hyperparameters["epsilon_decay"]
         # General:
+        self.use_half = hyperparameters["use_half"]
         self.batch_size = hyperparameters["batch_size"]
         self.normalize_observations = hyperparameters["normalize_obs"]
         self.use_world_model = hyperparameters["use_world_model"]
@@ -294,7 +309,7 @@ class BasePolicy:
             self.state_action_feature_len = F_sa.layers_merge[-1].out_features
 
         # Set up Networks:
-        self.mixed_precision_train = hyperparameters["mixed_precision_train"] and torch.cuda.is_available()
+        self.use_half = hyperparameters["use_half"] and torch.cuda.is_available()
         self.nets = []
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
 
@@ -340,8 +355,15 @@ class BasePolicy:
         if fully_random or sample < self.epsilon:
             raw_action = self.random_action()
         else:
-            # Raw action:
+            # Raw q-vals for actions or action (actor critic):
             raw_action = self.choose_action(state)
+            # Log Q-val:
+            if self.log:
+                if self.use_actor_critic:
+                    pass
+                else:
+                    self.recent_q_val = torch.max(raw_action)
+                self.log.add("Q-val", self.recent_q_val, skip_steps=10)
             # Add Gaussian noise:
             if self.gaussian_action_noise:
                 raw_action = self.add_noise(raw_action)
@@ -359,9 +381,9 @@ class BasePolicy:
 
     def exploit(self, state):
         if isinstance(state, dict):
-            apply_rec_to_dict(lambda x: x.to(self.device), state)
+            state = apply_rec_to_dict(lambda x: x.to(self.device), state)
         else:
-            state.to(self.device)
+            state = state.to(self.device)
 
         raw_action = self.choose_action(state)
         if self.discrete_env:
@@ -377,7 +399,6 @@ class BasePolicy:
         return actor, Q_net, V_net
 
     def init_critic(self, F_s, F_sa):
-        # TODO: differentiate between DQN critic and AC critic by checking in Q __init__ for use_actor_critic
         if self.use_actor_critic:
             self.state_action_feature_len = F_sa.layers_merge[-1].out_features
             input_size = self.state_action_feature_len
@@ -388,7 +409,7 @@ class BasePolicy:
         Q_net = None
         if not (self.use_CACLA_V and not self.use_QVMAX):
             Q_net = Q(input_size, self.env, F_s, F_sa, self.device, self.log, self.hyperparameters)
-            if self.mixed_precision_train:
+            if self.use_half:
                 Q_net = amp.initialize(Q_net, verbosity=0)
             self.nets.append(Q_net)
 
@@ -396,7 +417,7 @@ class BasePolicy:
         if self.use_QV or self.use_QVMAX or (self.use_actor_critic and self.use_CACLA_V):
             # Init Networks:
             V_net = V(self.state_feature_len, self.env, F_s, None, self.device, self.log, self.hyperparameters)
-            if self.mixed_precision_train:
+            if self.use_half:
                 V_net = amp.initialize(V_net, verbosity=0)
             self.nets.append(V_net)
         return Q_net, V_net
@@ -426,24 +447,25 @@ class BasePolicy:
         # Extract features:
         state_batch = transitions["state"]
         non_final_next_states = transitions["non_final_next_states"]
-        if isinstance(state_batch, dict):
-            apply_rec_to_dict(lambda x: x.to(self.device), state_batch)
-            apply_rec_to_dict(lambda x: x.to(self.device), non_final_next_states)
-        else:
-            state_batch.to(self.device)
-            non_final_next_states.to(self.device)
+        #if isinstance(state_batch, dict):
+        #    state_batch = apply_rec_to_dict(lambda x: x.to(self.device, non_blocking=True), state_batch)
+        #    non_final_next_states = apply_rec_to_dict(lambda x: x.to(self.device), non_final_next_states)
+        #else:
+        #    state_batch = state_batch.to(self.device, non_blocking=True)
+        #    non_final_next_states = non_final_next_states.to(self.device, non_blocking=True)
         state_feature_batch = self.F_s(state_batch)
-        non_final_next_state_features = None
         if non_final_next_states is not None:
             non_final_next_state_features = self.F_s.forward_next_state(non_final_next_states)
         transitions["state_features"] = state_feature_batch
         transitions["non_final_next_state_features"] = non_final_next_state_features
-        transitions["action"].to(self.device)
-        transitions["reward"].to(self.device)
+        #transitions["action"] = transitions["action"].to(self.device, non_blocking=True)
+        #transitions["reward"] = transitions["reward"].to(self.device, non_blocking=True)
 
     def optimize(self):
+        before_sampling = time.time()
         # Get Batch:
         transitions = self.get_transitions()
+        self.log.add("Sampling_Time", time.time() - before_sampling, skip_steps=self.log_freq, store_episodic=True)
         # Extract state features
         self.extract_features(transitions)
         # Optimize:
@@ -498,13 +520,17 @@ class BasePolicy:
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                                 batch.next_state)), device=self.device, dtype=torch.bool)
 
+        if self.use_half:
+            dtype = torch.half
+        else:
+            dtype = torch.float
+
         # Create state batch:
         if isinstance(batch.state[0], dict):
-            #print(batch.state)
             # Concat the states per key:
-            state_batch = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in batch.state]).to(self.device, non_blocking=True) for key in batch.state[0]}
+            state_batch = {key: torch.cat([x[key] / 255 if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device, non_blocking=True) for key in batch.state[0]}
         else:
-            state_batch = torch.cat(batch.state).to(self.device, non_blocking=True)
+            state_batch = torch.cat(batch.state).type(dtype).to(self.device, non_blocking=True)
 
         # print("non_final mask: ", non_final_mask)
         # print("state batch: ", state_batch)
@@ -517,21 +543,21 @@ class BasePolicy:
         #print(non_final_next_states)
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key].float() / 255 if key == "pov" else x[key].float() for x in non_final_next_states]).to(self.device, non_blocking=True) 
+                non_final_next_states = {key: torch.cat([x[key] / 255 if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(self.device, non_blocking=True)
                                          for key in non_final_next_states[0]}
             else:
-                non_final_next_states = torch.cat(non_final_next_states).to(self.device, non_blocking=True)
+                non_final_next_states = torch.cat(non_final_next_states).type(dtype).to(self.device, non_blocking=True)
         else:
             non_final_next_states = None
 
         # Create action batch:
         # print(batch.action)
-        action_batch = torch.cat(batch.action).to(self.device, non_blocking=True)
+        action_batch = torch.cat(batch.action).type(dtype).to(self.device, non_blocking=True)
 
         action_argmax = torch.argmax(action_batch, 1).unsqueeze(1)
 
         # Create Reward batch:
-        reward_batch = torch.cat(batch.reward).unsqueeze(1).to(self.device, non_blocking=True)
+        reward_batch = torch.cat(batch.reward).unsqueeze(1).type(dtype).to(self.device, non_blocking=True)
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
@@ -594,9 +620,67 @@ class BasePolicy:
         if self.actor is not None and self.use_actor_critic:
             self.actor.update_targets(n_steps)
 
+    def get_tensor_size(self, tensor):
+        multiplier = None
+        if tensor.dtype == torch.float16:
+            multiplier = 16
+        elif tensor.dtype == torch.int8:
+            multiplier = 8
+        elif tensor.dtype == torch.float32:
+            multiplier = 32
+        else:
+            raise TypeError("Unknown input type: ", tensor.dtype)
+        bit_size = tensor.view(-1).shape[0] * multiplier
+
+        return bit_size
+
+    def get_largest_tensor_size_from_dict(self, tensor_dict):
+        biggest = 0
+        for key in tensor_dict:
+            value = tensor_dict[key]
+            if isinstance(value, torch.tensor):
+                size = self.get_tensor_size(value)
+            elif isinstance(value, dict):
+                size = self.get_largest_tensor_size_from_dict(value)
+            else:
+                raise TypeError("Unkown type " + type(value) + " in dict " + tensor_dict)
+
+            if size > biggest:
+                biggest = size
+
+        if biggest == 0:
+            raise ValueError("No tensor of a size was found in the observation sample!")
+        return biggest
+
     def update_episode_trace(self, episode, idxs):
         if episode == []:
             return
+
+        # Split batch into chunks to avoid overloading GPU memory:
+        if torch.cuda.is_available() and 0 == 1:
+            # Get size of largest tensor in observation:
+            sample = self.env.observation_space.sample()
+            if isinstance(sample, dict):
+                size = self.get_largest_tensor_size_from_dict(sample)
+            else:
+                size = self.get_tensor_size(sample)
+            # Calculate remaining gpu mem:
+            max_gpu_mem_bits = torch.cuda.get_device_properties(self.device).total_memory
+            current_gpu_mem_bits = torch.cuda.memory_allocated(self.device)
+            available_gpu_mem_bits = max_gpu_mem_bits - current_gpu_mem_bits
+            # TODO: to calculate memory usage for a single batch: calculate usage for 2 batchsize and tor 1. substract the latter from the first
+
+            # TODO: subtract at least 777mb for pytorch init ( or 1668mb in total for 2 displays aded)
+            # TODO: see the following lines to do it properly:
+            #from pynvml import *
+            #nvmlInit()
+            #h = nvmlDeviceGetHandleByIndex(0)
+            #info = nvmlDeviceGetMemoryInfo(h)
+            #print(f'total    : {info.total}')
+            #print(f'free     : {info.free}')
+            #print(f'used     : {info.used}')
+            # TODO: we also need to leave at least 3.5mb free
+
         episode_transitions = self.extract_batch(episode)
         episode_transitions["idxs"] = idxs
         self.extract_features(episode_transitions)
@@ -622,6 +706,11 @@ class BasePolicy:
         self.F_s.freeze_normalizers()
         if self.F_sa is not None:
             self.F_sa.freeze_normalizers()
+
+
+    def log_nn_data(self, name=""):
+        for net in self.nets:
+            net.log_nn_data(name=name)
 
     def init_actor(self, Q, V, F_s):
         raise NotImplementedError
@@ -667,7 +756,7 @@ class ActorCritic(BasePolicy):
 
     def init_actor(self, Q, V, F_s):
         actor = Actor(F_s, self.env, self.log, self.device, self.hyperparameters)
-        if self.mixed_precision_train:
+        if self.use_half:
             actor = amp.initialize(actor, verbosity=0)
         actor.Q = Q
         actor.V = V
@@ -710,7 +799,6 @@ class ActorCritic(BasePolicy):
         if self.split:
             params += list(self.layers_r.parameters())
         return params
-
 
 
 class Q_Policy(BasePolicy):
@@ -769,6 +857,9 @@ class REM(BasePolicy):
         for head in self.policy_heads:
             head.set_retain_graph(True)
 
+        # Sample idxs:
+        self.idxs = None
+
     def set_name(self, name):
         self.name = "REM" + str(name)
         for idx, head in enumerate(self.policy_heads):
@@ -782,10 +873,10 @@ class REM(BasePolicy):
 
     # TODO: atm we iterate through the list of sampled base_policies - can this be done in a better way? MPI, GPU like?
     def optimize_networks(self, transitions):
-        idxes = random.sample(range(self.num_heads), self.num_samples)
+        self.idxes = random.sample(range(self.num_heads), self.num_samples)
         error = 0
         loss = 0
-        for idx in idxes:
+        for idx in self.idxes:
             current_policy = self.policy_heads[idx]
             # TODO: here we might bootstrap over our batch to have slightly different training data per policy!
             error_current, loss_current = current_policy.optimize_networks(transitions)
@@ -854,6 +945,12 @@ class REM(BasePolicy):
         return params
 
 
+    def log_nn_data(self, name=""):
+        for idx, policy in enumerate(self.policy_heads):
+            if self.idxs is not None and idx in self.idxes:
+                policy.log_nn_data(name=name + policy.name)
+
+
 class MineRLPolicy(BasePolicy):
     def __init__(self, ground_policy, base_policy, F_s, F_sa, env, device, log, hyperparameters):
         super(MineRLPolicy, self).__init__(ground_policy, F_s, F_sa, env, device, log, hyperparameters)
@@ -881,7 +978,9 @@ class MineRLPolicy(BasePolicy):
         action_space = Discrete(num_actions)
         real_action_space = self.env.action_space
         self.env.action_space = action_space
-        if move_policy:
+        if num_actions == 1:
+            new_policy = self.DummyPolicy(self.batch_size)
+        elif move_policy:
             new_policy = MineRLMovePolicy(self.ground_policy, self.base_policy, self.F_s, self.F_sa, self.env,
                                           self.device,
                                           self.log, self.hyperparameters)
@@ -909,6 +1008,38 @@ class MineRLPolicy(BasePolicy):
 
     def set_name(self, name):
         self.name = str(name)
+
+    class DummyPolicy():
+        def __init__(self, batch_size):
+            self.batch_size = batch_size
+            self.name = ""
+
+        def choose_action(self, state, calc_state_features=False):
+            return torch.ones(1, 1)
+
+        def optimize_networks(self, transitions):
+            return torch.zeros(self.batch_size, 1), 0
+
+        def set_retain_graph(self, val):
+            pass
+
+        def set_name(self, val):
+            pass
+
+        def get_updateable_params(self):
+            return []
+
+        def update_targets(self, steps, train_fraction=None):
+            pass
+
+        def save(self, path):
+            pass
+
+        def load(self, path):
+            pass
+
+        def log_nn_data(self, name=""):
+            pass
 
 
 class MineRLObtainPolicy(MineRLPolicy):
@@ -1049,7 +1180,10 @@ class MineRLMovePolicy(MineRLPolicy):
         action_space = Discrete(len(options))
         real_action_space = self.env.action_space
         self.env.action_space = action_space
-        new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
+        if len(options) == 1:
+            new_policy = self.DummyPolicy(self.batch_size)
+        else:
+            new_policy = self.base_policy(self.ground_policy, self.F_s, self.F_sa, self.env, self.device, self.log,
                                       self.hyperparameters)
         new_policy.set_retain_graph(True)
         new_policy.set_name(name)
@@ -1142,8 +1276,10 @@ class MineRLMovePolicy(MineRLPolicy):
         for policy in self.policies:
             action_idxs = self.get_action_idxs_for_policy(policy, action_dicts)
             transitions["action_argmax"] = action_idxs
+
             error_it, loss_it = policy.optimize_networks(transitions)
             error += error_it
+
             loss += loss_it
         transitions["action_argmax"] = original_actions
         return error, loss
@@ -1174,6 +1310,10 @@ class MineRLMovePolicy(MineRLPolicy):
         for policy in self.policies:
             params += list(policy.get_updateable_params())
         return params
+
+    def log_nn_data(self, name=""):
+        for policy in self.policies:
+            policy.log_nn_data(name=name + "_ " + policy.name)
 
 
 
@@ -1433,3 +1573,9 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
             params += list(policy.get_updateable_params())
         #params.extend([policy.get_updateable_params() for policy in self.lower_level_policies])
         return params
+
+    def log_nn_data(self, name=""):
+        if self.decider is not None:
+            self.decider.log_nn_data(name + "decider")
+        for policy in self.lower_level_policies:
+            policy.log_nn_data(name + policy.name)

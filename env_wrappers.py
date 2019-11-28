@@ -123,16 +123,16 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         self.straight_options = ["back", "none_straight", "forward"]
         self.attack_options = ["none_attack", "attack"]
         self.jump_options = ["none_jump", "jump"]
-        self.camera_x_options = [-10, 0, 10]#[-10, -5, -1, 0, 1, 5, 10]
+        self.camera_x_options = [-10, 0, 10]  # [-10, -5, -1, 0, 1, 5, 10]
         self.camera_y_options = self.camera_x_options
         self.camera_x_options_string = ["x_" + str(number) for number in self.camera_x_options]
         self.camera_y_options_string = ["y_" + str(number) for number in self.camera_x_options]
         self.num_camera_actions = len(self.camera_x_options)
 
         if env_name == "MineRLTreechop-v0":
-           self.attack_options = ["attack"]
-           self.straight_options = ["forward"]
-           self.lateral_options = ["none_lateral"]
+            self.attack_options = ["attack"]
+            self.straight_options = ["forward"]
+            self.lateral_options = ["none_lateral"]
 
         # Create move possibilities:
         for lateral in self.lateral_options:
@@ -380,29 +380,34 @@ def process_equipped(mainhand_dict):
     item_type = one_hot_encode_single(obj_type, 9)
     return torch.cat([dmg, max_dmg, item_type], dim=0)
 
+class DefaultWrapper(gym.ObservationWrapper):
+    def __init__(self, env, rgb2gray):
+        super().__init__(env)
+
+    def observation(self, observation):
+        obs = torch.from_numpy(observation).float().unsqueeze(0)
+        return obs
 
 class Convert2TorchWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
         self.rgb2gray = rgb2gray
-
     def observation(self, obs_dict, expert_data=False):
         new_obs = {}
         for key in obs_dict:
             if key == "equipped_items":
                 mainhand_dict = obs_dict[key]["mainhand"]
                 obs = process_equipped(mainhand_dict)
-
                 # obs = torch.cat(
                 #    [torch.from_numpy(process_equipped(equip_dict["mainhand"])) for equip_dict in equip_dict_list])
             elif key == "inventory":
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
-                obs = torch.cat([torch.tensor(inv_dict[key]).unsqueeze(0) for key in inv_dict])
+                obs = torch.cat([torch.from_numpy(np.ascontiguousarray(inv_dict[key])).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
-                obs = torch.tensor(np.flip(obs_dict[key], axis=0).copy(), dtype=torch.float)
+                obs = torch.from_numpy(np.ascontiguousarray(obs_dict[key]))
                 if self.rgb2gray:
-                    obs = np.round(obs.mean(dim=-1)).unsqueeze(0)
+                    obs = np.round(obs.float().mean(dim=-1)).unsqueeze(0)
                 else:
                     obs = obs.permute(2, 0, 1)
                 obs = obs.byte().clone()
@@ -414,9 +419,34 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
-            
-            
         return new_obs
+
+class AtariObsWrapper(gym.ObservationWrapper):
+    def __init__(self, env, rgb2gray):
+        super().__init__(env)
+        self.rgb2gray = rgb2gray
+        self.last_obs = None
+
+    def observation(self, observation):
+        obs = torch.from_numpy(np.ascontiguousarray(observation))
+        obs = obs[35:195]
+        obs = obs[::2, ::2]
+
+        if self.last_obs:
+            obs = torch.max(self.last_obs, obs) # kill object flickering
+
+
+        if self.rgb2gray:
+            obs = np.round(obs.float().mean(dim=-1)).unsqueeze(0)
+        else:
+            obs.permute(2, 0, 1)
+        obs = obs.byte().clone().unsqueeze(0)
+
+        return obs
+
+    def reset(self):
+        self.last_obs = None
+        return super().reset()
 
 
 class PoVWithCompassAngleWrapper(gym.ObservationWrapper):

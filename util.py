@@ -13,8 +13,10 @@ import matplotlib.pyplot as plt
 
 from torch.utils.tensorboard import SummaryWriter
 from tensorboard import program
-from collections import namedtuple
-
+from collections import namedtuple, defaultdict
+import torch.nn as nn
+from torch.autograd import Variable
+import torch.nn.functional as F
 
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
@@ -40,7 +42,7 @@ class Normalizer():
 
 
     def observe(self, x):
-        x = x.float()
+        x = x.float().detach()
         self.n += 1.
         last_mean = self.mean.clone()
         self.mean += (x - self.mean).mean(dim=0) / self.n
@@ -66,11 +68,12 @@ class Log(object):
         self.do_logging = log
 
         self.comment = comment
-        self.writer = SummaryWriter(comment=comment)
+        if log:
+            self.writer = SummaryWriter(comment=comment)
         self.episodic_storage = {}
         self.storage = {}
-        self.short_term_storage = {}
-        self.short_term_count = {}
+        self.short_term_storage = defaultdict(int)
+        self.short_term_count = defaultdict(int)
         self.global_step = 0
         self.tb_path = 'runs'
         #self.run_tb()
@@ -106,10 +109,17 @@ class Log(object):
 
     def store_running_mean(self, storage, name, value, count):
         n = count[name]
-        try:
+
+        if name in storage:
+        #        try:
             storage[name] = (storage[name] * (n - 1) + value) / n
-        except KeyError:
+        else:
             storage[name] = value
+        #except KeyError:
+        #    storage[name] = value
+        #except TypeError:
+        #    storage[name] = value
+        return storage
 
     def add(self, name, value, distribution=False, make_distribution=False, steps=None, skip_steps=0,
             store_episodic=False):
@@ -118,29 +128,31 @@ class Log(object):
             self._add_to_storage(self.episodic_storage, name, value)
 
         if self.do_logging:
-            try:
-                self.short_term_count[name] += 1
-            except KeyError:
-                self.short_term_count[name] = 1
+            self.short_term_count[name] += 1
 
             if make_distribution:
-                try:
-                    self.short_term_storage[name].append(value)
-                except KeyError:
+                if name not in self.short_term_storage:
                     self.short_term_storage[name] = [value]
+                else:
+                    self.short_term_storage[name].append(value)
             else:
-                self.store_running_mean(self.short_term_storage, name, value, self.short_term_count)
+                #print("value: ", value)
+                #print(name, "before: ", self.short_term_storage[name])
+                self.short_term_storage = self.store_running_mean(self.short_term_storage, name, value, self.short_term_count)
+                #print("after: ", self.short_term_storage[name])
             #if "Gradient" in name:
             #    print(name)
             #    print(value)
             #    print(self.short_term_storage[name])
             if self.short_term_count[name] >= skip_steps:
                 tb_value = self.short_term_storage[name]#np.mean(self.short_term_storage[name])
-                tb_value = torch.tensor(tb_value)
+                if not isinstance(tb_value, torch.Tensor):
+                    tb_value = torch.tensor(tb_value)
+                tb_value = tb_value.detach()
                 del self.short_term_storage[name]
                 del self.short_term_count[name]
-
-                # Add to tensorboard:
+                #print(name)
+                #print(tb_value)
                 if steps is None:
                     steps = self.global_step
                 if distribution or make_distribution:
@@ -154,6 +166,9 @@ class Log(object):
 
     def step(self):
         self.global_step += 1
+
+    def flush(self):
+        self.writer.flush()
 
 def meanSmoothing(x, N):
     x = np.array(x)
@@ -259,3 +274,134 @@ def plot_rewards(rewards, name=None, xlabel="Step"):
         display.clear_output(wait=True)
         display.display(plt.gcf())
 
+
+class SizeEstimator(object):
+
+    def __init__(self, model, input_size=(1, 1, 32, 32), bits=32):
+        '''
+        Estimates the size of PyTorch models in memory
+        for a given input size
+        '''
+        self.model = model
+        self.input_size = input_size
+        self.bits = bits
+
+    def get_parameter_sizes(self):
+        '''Get sizes of all parameters in `model`'''
+        mods = list(self.model.modules())
+        sizes = []
+
+        for i in range(1, len(mods)):
+            m = mods[i]
+            p = list(m.parameters())
+            for j in range(len(p)):
+                sizes.append(np.array(p[j].size()))
+
+        self.param_sizes = sizes
+
+    def get_output_sizes(self):
+        '''Run sample input through each layer to get output sizes'''
+        input_ = torch.rand(self.input_size)
+        mods = list(self.model.modules())
+        out_sizes = []
+        for m in mods:
+            out = m(input_)
+            out_sizes.append(np.array(out.size()))
+            input_ = out
+
+        self.out_sizes = out_sizes
+
+    def calc_param_bits(self):
+        '''Calculate total number of bits to store `model` parameters'''
+        total_bits = 0
+        for i in range(len(self.param_sizes)):
+            s = self.param_sizes[i]
+            bits = np.prod(np.array(s)) * self.bits
+            total_bits += bits
+        self.param_bits = total_bits
+
+    def calc_forward_backward_bits(self):
+        '''Calculate bits to store forward and backward pass'''
+        #total_bits = 0
+        #for i in range(len(self.out_sizes)):
+        #    s = self.out_sizes[i]
+        #    bits = np.prod(np.array(s)) * self.bits
+        #    total_bits += bits
+        # multiply by 2 for both forward AND backward
+        in_ = torch.rand(self.input_size)
+        self.model(in_, calc_size=True)
+
+
+        self.forward_backward_bits =  self.model.total_size * 2
+
+    def calc_input_bits(self):
+        '''Calculate bits to store input'''
+        self.input_bits = np.prod(np.array(self.input_size)) * self.bits
+        return
+
+    def estimate_size(self):
+        '''Estimate model size in memory in megabytes and bits'''
+        self.get_parameter_sizes()
+        #self.get_output_sizes()
+        self.calc_param_bits()
+        self.calc_forward_backward_bits()
+        #self.calc_input_bits()
+        total = self.param_bits + self.forward_backward_bits * 32# + self.input_bits
+
+        total_megabytes = (total / 8) / (1024 ** 2)
+        return total_megabytes, total
+
+
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, 3, 1)
+        self.conv2 = nn.Conv2d(32, 64, 3, 1)
+        self.dropout1 = nn.Dropout2d(0.25)
+        self.dropout2 = nn.Dropout2d(0.5)
+        self.fc1 = nn.Linear(9216, 128)
+        self.fc2 = nn.Linear(128, 10)
+    def forward(self, x, calc_size=False):
+        total_size = 0
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+        x = self.conv1(x)
+        x = F.relu(x)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        x = self.conv2(x)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        x = F.max_pool2d(x, 2)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        x = self.dropout1(x)
+        x = torch.flatten(x, 1)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        x = self.fc1(x)
+        x = F.relu(x)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        x = self.dropout2(x)
+        x = self.fc2(x)
+        if calc_size:
+            total_size += np.prod(x.size())
+            print(x.size())
+
+        output = F.log_softmax(x, dim=1)
+        self.total_size = total_size
+        return output

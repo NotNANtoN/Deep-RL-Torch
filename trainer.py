@@ -17,6 +17,7 @@ from env_wrappers import FrameSkip
 from util import display_top_memory_users, apply_rec_to_dict
 from verify_or_download_data import ver_or_download_data
 
+from pytorch_memlab import profile
 
 def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
     if n_steps:
@@ -207,7 +208,7 @@ class Trainer:
             state = self.env.observation(state, expert_data=True)
             next_state = self.env.observation(next_state, expert_data=True)
             state = apply_rec_to_dict(self.prep_for_GPU, state)
-            state = apply_rec_to_dict(self.prep_for_GPU, next_state)
+            next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
 
             sample = (state, action, reward, next_state, done)
             data.append(sample)
@@ -279,7 +280,6 @@ class Trainer:
         print("Filling Replay Buffer....")
         state = self.env.reset()
         if not isinstance(state, dict):
-            state = torch.tensor([state], dtype=torch.float)
             state = self.prep_for_GPU(state)
         else:
             state = apply_rec_to_dict(self.prep_for_GPU, state)
@@ -298,7 +298,7 @@ class Trainer:
             # To initialize the normalizer:
             if self.normalize_observations:
                 self.agent.F_s.observe(state)
-                # TODO: normalize (observe) actions too
+                # TODO: normalize (observe) actions too for actor critic
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
                                                          explore=True, fully_random=True)
 
@@ -308,7 +308,6 @@ class Trainer:
                 state = self.env.reset()
                 
                 if not isinstance(state, dict):
-                    state = torch.tensor([state], dtype=torch.float)
                     state = self.prep_for_GPU(state)
                 else:
                     state = apply_rec_to_dict(self.prep_for_GPU, state)
@@ -337,10 +336,6 @@ class Trainer:
 
         print("Done with filling replay buffer.")
         print()
-        if done:
-            return None
-        else:
-            return state
 
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
@@ -364,7 +359,6 @@ class Trainer:
             next_state = None
         else:
             if not isinstance(next_state, dict):
-                next_state = torch.tensor([next_state], dtype=torch.float)
                 next_state = self.prep_for_GPU(next_state)
             else:
                 next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
@@ -392,20 +386,21 @@ class Trainer:
         self.log.add("Test_Env Reward", np.sum(test_episode_rewards))
         if done or (self.max_steps_per_episode > 0 and len(test_episode_rewards) >= self.max_steps_per_episode):
             next_state = test_env.reset()
-            next_state = torch.tensor([next_state], device=self.device).float()
             test_episode_rewards.clear()
 
         return next_state
 
     def _display_debug_info(self, i_episode, steps_done, train_fraction):
         episode_return = self.log.get_episodic("Return")
+        sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
         print(" Return:", episode_return[0])
         print(round(train_fraction * 100, 1), "%")
         print("#Episode ", i_episode)
         print("#Steps: ", steps_done)
-        print(" Opt-time: ", round(np.mean(optimize_time), 4), "s")
+        print( "Total Opt-time: ", round(np.mean(optimize_time), 4), "s")
+        print(" Sampling-time: ", round(np.mean(sampling_time), 4), "s")
         print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:
             pass
@@ -425,7 +420,7 @@ class Trainer:
         state = None
         # Fill replay buffer with random actions:
         if not self.use_expert_data:
-            state = self.fill_replay_buffer(n_steps=self.n_initial_random_actions)
+            self.fill_replay_buffer(n_steps=self.n_initial_random_actions)
 
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
@@ -461,7 +456,6 @@ class Trainer:
             if state is None:
                 state = self.env.reset()
                 if not isinstance(state, dict):
-                    state = torch.tensor([state], dtype=torch.float)
                     state = self.prep_for_GPU(state)
                 else:
                     state = apply_rec_to_dict(self.prep_for_GPU, state)
@@ -503,9 +497,10 @@ class Trainer:
                 time_after_optimize = time.time()
 
                 # Log reward and time:
-                self.log.add("Train_Reward", reward.item(), skip_steps=self.log_freq, store_episodic=True)
-                self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")),
-                             skip_steps=self.log_freq)
+                self.log.add("Train_Reward", reward.item(), skip_steps=10, store_episodic=True)
+                #if len(self.log.get_episodic("Train_Reward")) >= 1:
+                 #   self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")),
+                 #                skip_steps=self.log_freq)
                 self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
                              store_episodic=True)
 
@@ -515,9 +510,12 @@ class Trainer:
                 self.log.step()
                 if done or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
                         (n_hours and (time.time() - start_time) / 360 >= n_hours):
+
+
                     #pbar.update(t)
 
                     self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
+                    self.log.add("Episode Len", t, steps=i_episode)
                     if verbose:
                         self._display_debug_info(i_episode, steps_done, train_fraction)
                     self.log.flush_episodic()
@@ -527,6 +525,7 @@ class Trainer:
         # Save the model:
         self.agent.update_targets(steps_done, train_fraction=1.0)
         print('Done.')
+        self.log.flush()
         self.env.close()
         #pbar.close()
         return i_episode

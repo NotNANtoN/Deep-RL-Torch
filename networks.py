@@ -63,6 +63,7 @@ def create_ff_layers(input_size, layer_dict, output_size):
 def create_conv_layers(input_matrix_shape, layer_dict):
     # format for entry in matrix_layers: ("conv", channels_in, channels_out, kernel_size, stride) if conv or
     #  ("batchnorm") for batchnorm
+
     channel_last_layer = input_matrix_shape[0]
     matrix_width = input_matrix_shape[1]
     matrix_height = input_matrix_shape[2]
@@ -84,6 +85,7 @@ def create_conv_layers(input_matrix_shape, layer_dict):
         act_functs.append(query_act_funct(layer))
 
     conv_output_size = matrix_width * matrix_height * channel_last_layer
+    print("Conv layer output size: ", conv_output_size)
 
     return layers, conv_output_size, act_functs
 
@@ -243,10 +245,10 @@ class OptimizableNet(nn.Module):
         #self.log.add(name + " Weight Norm", weight_norm)
         #self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
         name += "_" + extra_name + "_" if extra_name else ""
-        weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])
+        weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()]).view(-1)
         #for layer in layers.parameters():
         #    print(layer.grad)
-        gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])
+        gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()]).view(-1)
         self.log.add(name + "Weights", weights, distribution=True, skip_steps=self.log_freq)
         self.log.add(name + "Gradients", gradients, distribution=True, skip_steps=self.log_freq)
 
@@ -281,6 +283,8 @@ class ProcessState(OptimizableNet):
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
+        print("merge in size:; ", merge_input_size)
+        print("merge layers: ", merge_layers)
         self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
 
         # TODO: the following does not work yet, make it work at some point
@@ -303,6 +307,7 @@ class ProcessState(OptimizableNet):
             if not self.freeze_normalizer:
                 normalizer.observe(x)
             x = normalizer.normalize(x)
+
         x = apply_layers(x, layers, act_functs)
         return x.view(batch_size, -1)
 
@@ -330,7 +335,9 @@ class ProcessState(OptimizableNet):
         normalizer_device = self.device #None if self.pin_tensors else self.device
 
         # Create feedforward layers:
-        if len(obs.shape) <= 1:
+        if obs.ndim <= 2:
+            if obs.ndim == 2:
+                obs = obs.squeeze(0)
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
@@ -339,7 +346,11 @@ class ProcessState(OptimizableNet):
             # Add to lists:
             layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
         # Create conv layers:
-        elif 1 < len(obs.shape) <= 4:
+        elif 2 < obs.ndim <= 4:
+            if obs.ndim == 4:
+                obs = obs.squeeze(0)
+            elif obs.ndim == 2:
+                obs.unsqueeze(0)
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
             layers_matrix.to(self.device)
             matrix_normalizer = Normalizer(obs.shape, normalizer_device)
@@ -351,11 +362,13 @@ class ProcessState(OptimizableNet):
         return layer_dict, output_size
 
     def create_input_layers(self, env):
+        print("Creating state processor input layers...")
         # Get a sample to assess the shape of the observations easily:
         obs_space = env.observation_space
         sample = obs_space.sample()
-        if isinstance(sample, dict):
-            sample = self.env.observation(sample)
+        #print(sample.shape)
+        sample = self.env.observation(sample)
+
 
         processing_list = []
         merge_input_size = 0
@@ -367,7 +380,7 @@ class ProcessState(OptimizableNet):
                 processing_list.append(layer_dict)
                 merge_input_size += output_size
         # If the obs is simply a np array:
-        elif isinstance(sample, np.ndarray):
+        else:
             layer_dict, output_size = self.create_layer_dict(sample, name="input_array")
             processing_list.append(layer_dict)
             merge_input_size += output_size
@@ -375,8 +388,10 @@ class ProcessState(OptimizableNet):
         return processing_list, merge_input_size
 
     def forward(self, state):
+        #print(state.shape)
         x = self.apply_processing_list(state, self.processing_list)
         x = torch.cat(x, dim=1)
+        #print(x.shape)
         x = apply_layers(x, self.layers_merge, self.act_functs_merge)
         return x
 
@@ -586,10 +601,11 @@ class TempDiffNet(OptimizableNet):
         # Pre-calculate next-state-values in a large batch:
         next_state_vals = None
         if non_final_next_state_features is not None:
-            next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor=actor, Q=Q,
-                                                      V=V, use_target_net=False)
+            with torch.no_grad():
+                next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor=actor, Q=Q,
+                                                          V=V, use_target_net=False)
 
-        traces = torch.empty(num_steps_in_episode)
+        traces = torch.empty(num_steps_in_episode, device=self.device)
         last_trace_value = 0
         # Iterate backwards through transitions in the episode:
         for step_idx in range(0, num_steps_in_episode):
@@ -623,8 +639,8 @@ class TempDiffNet(OptimizableNet):
 
         # Train reward net if it exists:
         if self.split:
-            print("r:")
-            print(self.optimizer_r.state_dict()["state"].keys())
+            #print("r:")
+            #print(self.optimizer_r.state_dict()["state"].keys())
             TDE_r, loss_r = self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
             #self.log_nn_data(policy_name + "_r-net_", r_net=True)
         else:
@@ -678,14 +694,13 @@ class TempDiffNet(OptimizableNet):
 
 
     def log_nn_data(self, name="", r_net=False):
-        if not r_net:
-            self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)
-        if r_net and self.split:
+        self.log_layer_data(self.layers_TD, self.name + "_TD", extra_name=name)
+        if self.split:
             self.log_layer_data(self.layers_r, self.name + "_r", extra_name=name)
-        if self.F_s is not None:
-            self.F_s.log_nn_data(self.name + name)
-        if self.F_sa is not None:
-            self.F_sa.log_nn_data(self.name + name)
+        #if self.F_s is not None:
+        #    self.F_s.log_nn_data(self.name + name)
+        #if self.F_sa is not None:
+        #    self.F_sa.log_nn_data(self.name + name)
 
     def get_updateable_params(self):
         params = list(self.layers_TD.parameters())
@@ -1169,7 +1184,8 @@ class Actor(OptimizableNet):
         if len(output) > 0:
             # Train actor towards better actions (loss = better - current)
             error, loss = self.optimize_net(output, target, self.optimizer, sample_weights=sample_weights)
-            self.log_nn_data(policy_name)
+            if not self.optimize_centrally:
+                self.log_nn_data(policy_name)
 
         else:
             error = 0
