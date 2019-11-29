@@ -64,12 +64,12 @@ class Normalizer():
 
 
 class Log(object):
-    def __init__(self, path, log, comment):
+    def __init__(self, path, log, comment, env_name=""):
         self.do_logging = log
 
         self.comment = comment
         if log:
-            self.writer = SummaryWriter(comment=comment)
+            self.writer = SummaryWriter(comment=comment)#, log_dir="runs/" + env_name)
         self.episodic_storage = {}
         self.storage = {}
         self.short_term_storage = defaultdict(int)
@@ -168,7 +168,8 @@ class Log(object):
         self.global_step += 1
 
     def flush(self):
-        self.writer.flush()
+        if self.do_logging:
+            self.writer.flush()
 
 def meanSmoothing(x, N):
     x = np.array(x)

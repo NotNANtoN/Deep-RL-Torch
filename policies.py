@@ -144,6 +144,7 @@ class Agent(AgentInterface):
                     loss_scaled.backward()
             else:
                 loss.backward()
+            # Scale gradient of networks according to how many outgoing networks it receives gradients from
             self.F_s.scale_gradient()
             if self.F_sa is not None:
                 self.F_sa.scale_gradient()
@@ -151,6 +152,7 @@ class Agent(AgentInterface):
             # TODO: do we need to scale the gradients of the policy? Could be scaled according to ratio of network lr to general_lr
             self.optimizer.step()
 
+            # Log gradients and weights:
             self.F_s.log_nn_data("")
             if self.F_sa is not None:
                 self.F_sa.log_nn_data("")

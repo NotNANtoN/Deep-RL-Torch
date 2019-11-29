@@ -26,7 +26,7 @@ def create_parser():
     parser.add_argument("--save_percentage", type=float, default=0.05)
     parser.add_argument("--load", type=int, default=0)
     parser.add_argument("--load_path", default="")
-    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=1)
+    parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=0)
     parser.add_argument("--render", help="render the env", action="store_true", default=0)
     parser.add_argument("--verbose", help="increase output verbosity", action="store_true", default=1)
     parser.add_argument("--debug", action="store_true", default=0)
@@ -107,6 +107,12 @@ def create_parser():
     group_AC.add_argument("--use_DDPG", action="store_true", default=0)
     group_AC.add_argument("--use_SPG", action="store_true", default=0)
     group_AC.add_argument("--use_GISPG", action="store_true", default=0)
+    # Model evaluation:
+    parser.add_argument("--eval_rounds", help="Number of rounds that the model should be evaluated in "
+                                              "to calculate an average return  in model evaluation. "
+                                              "Set to 0 to disable model evaluation.", type=int, default=5)
+    parser.add_argument("--eval_percentage", help="Percentage of training time after which the model will be evaluated "
+                                                  "in.", type=float, default=0.03)
     return parser
 
 if __name__ == "__main__":

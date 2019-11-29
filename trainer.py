@@ -33,30 +33,17 @@ class Trainer:
     def __init__(self, env_name, hyperparameters, log=True, tb_comment=""):
         # Init logging:
         self.path = os.getcwd()
-        self.log = Log(self.path + '/tb_log', log, tb_comment)
+        self.log = Log(self.path + '/tb_log', log, tb_comment, env_name)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]
         self.pin_tensors = hyperparameters["pin_tensors"]
         self.store_on_gpu = hyperparameters["store_on_gpu"]
+        self.hyperparameters = hyperparameters
 
         # Init env:
         self.env_name = env_name
-        self.env = gym.make(env_name)
-        # Apply Wrappers:
-        if hyperparameters["frameskip"] > 1:
-            self.env = FrameSkip(self.env, skip=hyperparameters["frameskip"])
-        if hyperparameters["convert_2_torch_wrapper"]:
-            wrapper = hyperparameters["convert_2_torch_wrapper"]
-            self.env = wrapper(self.env, self.rgb2gray)
-
-        if hyperparameters["action_wrapper"]:
-            always_keys = hyperparameters["always_keys"]
-            exclude_keys = hyperparameters["exclude_keys"]
-            action_wrapper = hyperparameters["action_wrapper"]
-
-            self.env = action_wrapper(self.env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=env_name)
-            print("Num actions after wrapping: ", self.env.action_space.n)
+        self.env = self.create_env(hyperparameters)
 
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]
@@ -73,7 +60,7 @@ class Trainer:
         self.reward_std = hyperparameters["reward_std"]
         self.use_exp_rep = hyperparameters["use_exp_rep"]
 
-        # Exploration
+        # Exploration params:
         self.use_elig_traces = hyperparameters["use_efficient_traces"]
         self.n_initial_random_actions = hyperparameters["n_initial_random_actions"]
         self.explore_until_reward = hyperparameters["explore_until_reward"]
@@ -88,6 +75,11 @@ class Trainer:
         # else:
         #    self.normalizer = None
         self.log_freq = hyperparameters["log_freq"]
+
+        # Evaluation params:
+        self.eval_rounds = hyperparameters["eval_rounds"]
+        self.eval_percentage = hyperparameters["eval_percentage"]
+        self.stored_percentage = 0
 
         # Show proper tqdm progress if possible:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
@@ -118,6 +110,23 @@ class Trainer:
         if self.use_expert_data:
             self.move_expert_data_into_buffer(expert_data)
 
+    def create_env(self, hyperparameters):
+        # Init env:
+        env = gym.make(self.env_name)
+        # Apply Wrappers:
+        if hyperparameters["frameskip"] > 1:
+            env = FrameSkip(env, skip=hyperparameters["frameskip"])
+        if hyperparameters["convert_2_torch_wrapper"]:
+            wrapper = hyperparameters["convert_2_torch_wrapper"]
+            env = wrapper(env, self.rgb2gray)
+
+        if hyperparameters["action_wrapper"]:
+            always_keys = hyperparameters["always_keys"]
+            exclude_keys = hyperparameters["exclude_keys"]
+            action_wrapper = hyperparameters["action_wrapper"]
+
+            env = action_wrapper(env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=env_name)
+        return env
 
     def reset(self):
         self.episode_durations = []
@@ -322,7 +331,7 @@ class Trainer:
                     do_break = True
             else:
                 i += 1
-                if  i >= n_steps:
+                if i >= n_steps:
                     do_break = True
 
             # For eligibility traces we need to complete at least one episode to properly start training
@@ -365,27 +374,43 @@ class Trainer:
 
 
 
-        # Store the transition in memory
+        # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
             self.agent.remember(state, raw_action, next_state, reward, done)
         # Calculate TDE for debugging purposes:
-        # TODO: implement logging of predicted Q value and TDE
-        #q_val, tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
+        # TODO: implement logging of TDE
+        # tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
         #self.log.add("TDE_live", tde)
-        #self.log.add("Q(s,a)_live", q_val)
         # Render:
         if render:
             self.env.render()
 
         return action, next_state, reward, done
 
-    def _act_in_test_env(self, test_env, test_state, test_episode_rewards):
-        _, next_state, reward, done = self._act(test_env, test_state, explore=False, store_in_exp_rep=False, render=False)
+    def evaluate_model(self):
+        reward_sum = 0
+        test_env = self.create_env(self.hyperparameters)
+        for i in range(self.eval_rounds):
+            test_state = test_env.reset()
+            for t in itertools.count():
+                action, _ = self.agent.exploit(test_state)
+                test_state, reward, done, _ = test_env.step(action)
+                reward_sum += reward
+                if done:
+                    break
+        reward_sum /= 4
+        return reward_sum
+
+
+    def _act_in_test_env(self, test_state, test_episode_rewards):
+        if self.test_env is None:
+            self.test_env = gym.make(self.env_name)
+        _, next_state, reward, done = self._act(self.test_env, test_state, explore=False, store_in_exp_rep=False, render=False)
 
         test_episode_rewards.append(reward)
         self.log.add("Test_Env Reward", np.sum(test_episode_rewards))
         if done or (self.max_steps_per_episode > 0 and len(test_episode_rewards) >= self.max_steps_per_episode):
-            next_state = test_env.reset()
+            next_state = self.test_env.reset()
             test_episode_rewards.clear()
 
         return next_state
@@ -395,13 +420,14 @@ class Trainer:
         sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
-        print(" Return:", episode_return[0])
         print(round(train_fraction * 100, 1), "%")
         print("#Episode ", i_episode)
         print("#Steps: ", steps_done)
-        print( "Total Opt-time: ", round(np.mean(optimize_time), 4), "s")
-        print(" Sampling-time: ", round(np.mean(sampling_time), 4), "s")
-        print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
+        print("Return:", episode_return[0])
+
+        #print( "Total Opt-time: ", round(np.mean(optimize_time), 4), "s")
+        #print(" Sampling-time: ", round(np.mean(sampling_time), 4), "s")
+        #print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
         if i_episode % 10 == 0:
             pass
             # TODO: do an extensive test in test_env every N percentage points of training
@@ -438,10 +464,6 @@ class Trainer:
             steps_done += pretrain_steps
             i_episode += pretrain_episodes
 
-        # Initialize test environment:
-        # test_env = gym.make(self.env_name).unwrapped
-        # test_state = test_env.reset()
-        # test_state = torch.tensor([test_state], device=self.device).float()
         # TODO: For MineRL only train for a certain amount of time: stop after something like 99% of all training time at least leave 10-30 mins empty
 
         # Do the actual training:
@@ -462,16 +484,18 @@ class Trainer:
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1
-                if not verbose and not on_server:
-                    print("Episode loading:  " + str(round(self.steps_done / n_steps * 100, 2)) + "%")  # , end="\r")
 
                 # Act in exploratory env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
 
-                # Act in test env (no exploration in that env):
-                # TODO: replace the one-step in test env per step in train env by a proper evaluation every N steps (e.g. every 100/1000 training steps, test for 10 episodes in test env and record mean)
-                # test_state = self._act_in_test_env(test_env, test_state)
+                # Evaluate agent thoroughly sometimes:
+                if self.eval_rounds > 0 and train_fraction - self.stored_percentage >= self.eval_percentage \
+                        or train_fraction == 0:
+                    self.stored_percentage = train_fraction
+                    test_return = self.evaluate_model()
+                    self.log.add("Test Return", test_return, steps=steps_done)#steps=train_fraction * 100)
+                    print("Model performance after ", steps_done, "steps: ", test_return)
 
                 # Move to the next state
                 state = next_state
@@ -521,7 +545,9 @@ class Trainer:
                     self.log.flush_episodic()
                     state = None
                     break
+                train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
             train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+
         # Save the model:
         self.agent.update_targets(steps_done, train_fraction=1.0)
         print('Done.')
