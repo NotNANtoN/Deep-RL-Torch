@@ -429,14 +429,14 @@ class BasePolicy:
         loss = 0
         if self.V is not None:
             V.retain_graph = True
-            TDE_V, loss_V = V.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+            TDE_V, loss_V = V.optimize(transitions, importance_weights=transitions["importance_weights"], actor=self.actor,
                                Q=Q, V=None, policy_name=self.name)
             loss += loss_V
 
         # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
         TDE_Q = 0
         if self.Q is not None:
-            TDE_Q, loss_Q = Q.optimize(transitions, importance_weights=transitions["PER_importance_weights"], actor=self.actor,
+            TDE_Q, loss_Q = Q.optimize(transitions, importance_weights=transitions["importance_weights"], actor=self.actor,
                                Q=None, V=V, policy_name=self.name)
             loss += loss_Q
 
@@ -563,7 +563,7 @@ class BasePolicy:
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
-                       "state_action_features": None, "PER_importance_weights": None, "idxs": None,
+                       "state_action_features": None, "importance_weights": None, "idxs": None,
                        "action_argmax": action_argmax}
 
         return transitions

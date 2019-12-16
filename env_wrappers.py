@@ -431,10 +431,8 @@ class AtariObsWrapper(gym.ObservationWrapper):
         obs = torch.from_numpy(np.ascontiguousarray(observation))
         obs = obs[35:195]
         obs = obs[::2, ::2]
-
         if self.last_obs:
-            obs = torch.max(self.last_obs, obs) # kill object flickering
-
+            obs = torch.max(self.last_obs, obs)  # kill object flickering
 
         if self.rgb2gray:
             obs = np.round(obs.float().mean(dim=-1)).unsqueeze(0)
