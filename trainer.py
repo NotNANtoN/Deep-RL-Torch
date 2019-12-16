@@ -371,9 +371,6 @@ class Trainer:
                 next_state = self.prep_for_GPU(next_state)
             else:
                 next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
-
-
-
         # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
             self.agent.remember(state, raw_action, next_state, reward, done)
@@ -511,7 +508,7 @@ class Trainer:
                 self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
 
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
-                                                    else n_steps % int(1 / self.updates_per_step) == 0
+                                                    else steps_done % int(1 / self.updates_per_step) == 0
                 for _ in range(num_updates):
                     # Perform one step of the optimization (on the target network)
                     self.agent.optimize()
@@ -529,6 +526,7 @@ class Trainer:
                              store_episodic=True)
 
                 if render:
+
                     self.env.render()
 
                 self.log.step()

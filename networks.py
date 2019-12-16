@@ -199,7 +199,6 @@ class OptimizableNet(nn.Module):
             # Log weight and gradient norms:
             if self.log.do_logging and self.log.log_NNs:
                 self.log_nn_data()
-        # TODO: we should test the option of not stepping the optimizer here, but instead returning the loss and only stepping once per policy for all networks at the same time (averaging the losses of all networks)
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = reduced_loss.detach().clone().item()
@@ -582,7 +581,7 @@ class TempDiffNet(OptimizableNet):
     def calculate_updated_value_next_state(self, reward_batch, non_final_next_state_features, non_final_mask,
                                            actor=None, Q=None, V=None):
         # Compute V(s_t+1) or max_aQ(s_t+1, a) for all next states.
-        predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q,
+        self.predictions_next_state = self.predict_next_state(non_final_next_state_features, non_final_mask, actor, Q,
                                                               V)
         # self.log.add(self.name + " Prediction_next_state", self.predictions_next_state[0].item())
         # print("Next state features: ", non_final_next_state_features)
