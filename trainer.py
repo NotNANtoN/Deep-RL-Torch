@@ -488,7 +488,6 @@ class Trainer:
                 # Act in train env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
-                print("acted")
                 # Evaluate agent thoroughly sometimes:
                 if self.eval_rounds > 0 and train_fraction - self.stored_percentage >= self.eval_percentage \
                         or train_fraction == 0:
