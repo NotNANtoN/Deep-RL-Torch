@@ -468,7 +468,6 @@ class Trainer:
         time_after_optimize = None
         #pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
         train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
-        print("train frac: ", train_fraction)
         while train_fraction < 1:
             i_episode += 1
             # Initialize the environment and state. Do not reset
@@ -480,13 +479,12 @@ class Trainer:
                     state = apply_rec_to_dict(self.prep_for_GPU, state)
 
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
-                print("new ep")
                 steps_done += 1
 
                 # Act in exploratory env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
-
+                print("acted")
                 # Evaluate agent thoroughly sometimes:
                 if self.eval_rounds > 0 and train_fraction - self.stored_percentage >= self.eval_percentage \
                         or train_fraction == 0:
