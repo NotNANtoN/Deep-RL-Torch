@@ -92,10 +92,11 @@ def create_conv_layers(input_matrix_shape, layer_dict):
 
 def apply_layers(x, layers, act_functs):
     for idx in range(len(layers)):
-        if act_functs[idx] is None:
-            x = layers[idx](x)
-        else:
-            x = act_functs[idx](layers[idx](x))
+        layer = layers[idx]
+        act_func = act_functs[idx]
+        x = layer(x)
+        if act_functs[idx] is not None:
+            x = act_func(x)
     return x
 
 

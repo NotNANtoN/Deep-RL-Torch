@@ -70,10 +70,6 @@ class Trainer:
         # copied from Old class:
         self.normalize_observations = hyperparameters["normalize_obs"]
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
-        # if self.normalize_observations:
-        #    self.normalizer = Normalizer(self.state_len)
-        # else:
-        #    self.normalizer = None
         self.log_freq = hyperparameters["log_freq"]
 
         # Evaluation params:

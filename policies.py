@@ -346,10 +346,7 @@ class BasePolicy:
         return action
 
     def explore(self, state, fully_random=False):
-        if isinstance(state, dict):
-            state = apply_rec_to_dict(lambda x: x.to(self.device), state)
-        else:
-            state = state.to(self.device)
+        state = self.state2device(state)
 
         # Epsilon-Greedy:
         sample = random.random()
@@ -379,12 +376,16 @@ class BasePolicy:
 
     def act(self, state):
         return self.explore(state)
+        
+    def state2device(self, state):
+        if isinstance(state, dict):
+            state = apply_rec_to_dict(lambda x: x.to(self.device).float(), state)
+        else:
+            state = state.to(self.device).float()
+        return state
 
     def exploit(self, state):
-        if isinstance(state, dict):
-            state = apply_rec_to_dict(lambda x: x.to(self.device), state)
-        else:
-            state = state.to(self.device)
+        state = self.state2device(state)
 
         raw_action = self.choose_action(state)
         if self.discrete_env:
@@ -529,7 +530,7 @@ class BasePolicy:
         # Create state batch:
         if isinstance(batch.state[0], dict):
             # Concat the states per key:
-            state_batch = {key: torch.cat([x[key] / 255 if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device, non_blocking=True) for key in batch.state[0]}
+            state_batch = {key: torch.cat([x[key] if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device, non_blocking=True) for key in batch.state[0]}
         else:
             state_batch = torch.cat(batch.state).type(dtype).to(self.device, non_blocking=True)
 
@@ -544,7 +545,7 @@ class BasePolicy:
         #print(non_final_next_states)
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key] / 255 if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(self.device, non_blocking=True)
+                non_final_next_states = {key: torch.cat([x[key] if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(self.device, non_blocking=True)
                                          for key in non_final_next_states[0]}
             else:
                 non_final_next_states = torch.cat(non_final_next_states).type(dtype).to(self.device, non_blocking=True)
