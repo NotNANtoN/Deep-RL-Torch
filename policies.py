@@ -275,7 +275,6 @@ class BasePolicy:
         # General:
         self.use_half = hyperparameters["use_half"]
         self.batch_size = hyperparameters["batch_size"]
-        self.normalize_observations = hyperparameters["normalize_obs"]
         self.use_world_model = hyperparameters["use_world_model"]
 
         # TODO: -Include PER with prioritization based on Upper Bound of Gradient Norm.
