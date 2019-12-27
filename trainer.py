@@ -125,7 +125,7 @@ class Trainer:
             exclude_keys = hyperparameters["exclude_keys"]
             action_wrapper = hyperparameters["action_wrapper"]
 
-            env = action_wrapper(env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=env_name)
+            env = action_wrapper(env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=self.env_name)
         return env
 
     def reset(self):
@@ -395,7 +395,7 @@ class Trainer:
                 reward_sum += reward
                 if done:
                     break
-        reward_sum /= 4
+        reward_sum /= self.eval_rounds
         return reward_sum
 
 
@@ -433,6 +433,10 @@ class Trainer:
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
         print()
+
+    def close(self):
+        self.env.close()
+        #self.log.close()
 
     def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
         assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
@@ -481,7 +485,7 @@ class Trainer:
             for t in tqdm(count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1
 
-                # Act in exploratory env:
+                # Act in train env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
                 print("acted")
@@ -509,9 +513,8 @@ class Trainer:
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else steps_done % int(1 / self.updates_per_step) == 0
                 for _ in range(num_updates):
-                    # Perform one step of the optimization (on the target network)
+                    # Perform one step of the optimization (on the target network)      
                     self.agent.optimize()
-
                     # Update the target network
                     self.agent.update_targets(steps_done, train_fraction=train_fraction)
                 time_after_optimize = time.time()
