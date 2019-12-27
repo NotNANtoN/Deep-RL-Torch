@@ -514,9 +514,8 @@ class Trainer:
                 num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else steps_done % int(1 / self.updates_per_step) == 0
                 for _ in range(num_updates):
-                    # Perform one step of the optimization (on the target network)
+                    # Perform one step of the optimization (on the target network)      
                     self.agent.optimize()
-
                     # Update the target network
                     self.agent.update_targets(steps_done, train_fraction=train_fraction)
                 time_after_optimize = time.time()
