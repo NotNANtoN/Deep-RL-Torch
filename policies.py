@@ -347,9 +347,9 @@ class BasePolicy:
 
     def explore(self, state, fully_random=False):
         if isinstance(state, dict):
-            state = apply_rec_to_dict(lambda x: x.to(self.device, non_blocking=True), state)
+            state = apply_rec_to_dict(lambda x: x.to(self.device), state)
         else:
-            state = state.to(self.device, non_blocking=True)
+            state = state.to(self.device)
 
         # Epsilon-Greedy:
         sample = random.random()
