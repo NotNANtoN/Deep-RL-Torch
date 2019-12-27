@@ -303,8 +303,6 @@ class ProcessState(OptimizableNet):
         act_functs = proc_dict["Act_Functs"]
         batch_size = x.shape[0]
         if self.normalize_obs:
-            if not self.freeze_normalizer:
-                normalizer.observe(x)
             x = normalizer.normalize(x)
 
         x = apply_layers(x, layers, act_functs)
