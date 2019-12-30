@@ -410,7 +410,7 @@ class Trainer:
 
     def _display_debug_info(self, i_episode, steps_done, train_fraction):
         episode_return = self.log.get_episodic("Return")
-        sampling_time = self.log.get_episodic("Sampling_Time")
+        #sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Optimize_Time")
         non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
         print(round(train_fraction * 100, 1), "%")
