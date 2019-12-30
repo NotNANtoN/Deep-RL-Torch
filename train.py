@@ -243,9 +243,10 @@ if __name__ == "__main__":
         trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
                 render=parameters["render"], verbose=parameters["verbose"])
     except:
+        print("Error while training, trying to close gracefully...")
         trainer.close()
         del trainer
-        
+        raise
 
     # TODO: log TDE of new incoming transitions and expected Q-vals
 
