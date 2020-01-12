@@ -68,7 +68,7 @@ def create_parser():
     parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
                         default=255)
     # NN Architecture:
-    parser.add_argument("--layers_conv", default="vizdoom_winner")
+    parser.add_argument("--layers_conv", default="mnhi_later")
     parser.add_argument("--hidden_size", default=512)
     # NN Training:
     parser.add_argument("--optimize_centrally", type=int, default=1)
