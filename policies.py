@@ -725,7 +725,6 @@ class BasePolicy:
 
 
 
-
 class ActorCritic(BasePolicy):
     def __repr__(self):
         return "Actor-Critic"

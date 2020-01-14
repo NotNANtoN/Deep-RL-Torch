@@ -865,6 +865,7 @@ class V(TempDiffNet):
             updateable_parameters = []
         else:
             updateable_parameters = list(F_s.get_updateable_params())
+            
 
         # Create split net:
         if self.split and not is_target_net:
@@ -877,7 +878,7 @@ class V(TempDiffNet):
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        self.optimizer_TD = self.optimizer(list(self.get_updateable_params()) + updateable_parameters, lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
 
         # Create target net
         self.target_net = self.create_target_net()
