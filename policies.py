@@ -153,10 +153,10 @@ class Agent(AgentInterface):
             self.optimizer.step()
 
             # Log gradients and weights:
-            self.F_s.log_nn_data("")
-            if self.F_sa is not None:
-                self.F_sa.log_nn_data("")
-            self.policy.log_nn_data()
+            #self.F_s.log_nn_data("")
+            #if self.F_sa is not None:
+            #    self.F_sa.log_nn_data("")
+            #self.policy.log_nn_data()
 
 
     def explore(self, state, fully_random=False):

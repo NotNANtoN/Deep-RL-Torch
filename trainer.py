@@ -13,7 +13,7 @@ import time
 
 from networks import *
 from policies import Agent
-from env_wrappers import FrameSkip
+from env_wrappers import FrameSkip, FrameStack
 from util import display_top_memory_users, apply_rec_to_dict
 from verify_or_download_data import ver_or_download_data
 
@@ -99,6 +99,7 @@ class Trainer:
         else:
             hyperparameters["num_expert_samples"] = 0
         # Init Policy:
+        print("obs space sample: ", self.env.observation_space, self.env.observation_space.sample().shape)
         self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
             self.agent.load()
@@ -115,6 +116,8 @@ class Trainer:
         if hyperparameters["convert_2_torch_wrapper"]:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
             env = wrapper(env, self.rgb2gray)
+        if hyperparameters["frame_stack"] > 1:
+            env = FrameStack(env, hyperparameters["frame_stack"])
 
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]

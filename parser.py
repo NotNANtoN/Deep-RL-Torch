@@ -24,6 +24,7 @@ def create_parser():
     parser.add_argument("--store_on_gpu", type=int, default=0)
     parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
+    parser.add_argument("--frame_stack", type=int, help="How many frames to stack", default=1)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=4)
     parser.add_argument("--max_episode_steps", type=int, help="Limit the length of episodes", default=0)
@@ -36,7 +37,7 @@ def create_parser():
     # Experience replay:
     parser.add_argument("--use_exp_rep", type=int, default=1)
     parser.add_argument("--replay_buffer_size", type=int, default=1000000)
-    parser.add_argument("--use_PER", type=int, default=1)
+    parser.add_argument("--use_PER", type=int, default=0)
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
     parser.add_argument("--PER_anneal_beta", type=int, default=1)
