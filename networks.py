@@ -365,7 +365,9 @@ class ProcessState(OptimizableNet):
         obs_space = env.observation_space
         sample = obs_space.sample()
         #print(sample.shape)
-        sample = self.env.observation(sample)
+        #sample = self.env.observation(sample)
+        #print("after: ", sample.shape)
+        # TODO: the above must be adjusted for MineRL envs - or the obs space in those wrappers must be fixed accordingly
 
 
         processing_list = []
