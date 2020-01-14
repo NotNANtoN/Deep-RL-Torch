@@ -117,7 +117,7 @@ class Trainer:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
             env = wrapper(env, self.rgb2gray)
         if hyperparameters["frame_stack"] > 1:
-            env = FrameStack(env, hyperparameters["frame_stack"])
+            env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
 
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]

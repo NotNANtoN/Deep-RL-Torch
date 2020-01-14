@@ -27,7 +27,7 @@ def map2closest_val(val, number_list):
 
 
 class FrameStack(gym.Wrapper):
-    def __init__(self, env, k):
+    def __init__(self, env, k, stack_dim=-1):
         """Stack k last frames.
         Returns lazy array, which is much more memory efficient.
         See Also
@@ -37,8 +37,15 @@ class FrameStack(gym.Wrapper):
         gym.Wrapper.__init__(self, env)
         self.k = k
         self.frames = deque([], maxlen=k)
+        self.stack_dim = stack_dim
         shp = env.observation_space.shape
-        self.observation_space = spaces.Box(low=0, high=255, shape=(shp[:-1] + (shp[-1] * k,)), dtype=env.observation_space.dtype)
+        if self.stack_dim == -1:
+            self.stack_dim = len(shp) - 1
+        shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
+        # The first dim of obs is the batch_size, skip it:
+        self.stack_dim += 1
+        
+        self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
 
 
     def reset(self):
@@ -55,7 +62,7 @@ class FrameStack(gym.Wrapper):
     def _get_ob(self):
         assert len(self.frames) == self.k
         #return LazyFrames(list(self.frames))
-        return torch.cat(list(self.frames), dim=-1)
+        return torch.cat(list(self.frames), dim=self.stack_dim)
         
 class LazyFrames(object):
     def __init__(self, frames):

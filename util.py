@@ -45,6 +45,7 @@ class Normalizer():
         x = x.float().detach()
         self.n += 1.
         last_mean = self.mean.clone()
+        assert self.mean.shape == x.shape[1:], "Mean and Input have different shapes. Mean shape: " + str(self.mean.shape) + " X shape: " + str(x.shape)
         self.mean += (x - self.mean).mean(dim=0) / self.n
         self.mean_diff += (x - last_mean).mean(dim=0) * (x - self.mean).mean(dim=0)
         self.var = torch.clamp(self.mean_diff / self.n, min=1e-2)
