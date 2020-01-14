@@ -198,8 +198,8 @@ class OptimizableNet(nn.Module):
             optimizer.step()
 
             # Log weight and gradient norms:
-            if self.log.do_logging and self.log.log_NNs:
-                self.log_nn_data()
+            #if self.log.do_logging and self.log.log_NNs:
+            #    self.log_nn_data()
 
         name = "loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = reduced_loss.detach().clone().item()
