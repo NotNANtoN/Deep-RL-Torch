@@ -53,15 +53,18 @@ if __name__ == "__main__":
 
     # NN architectures:
     hidden_size = arg_dict["hidden_size"]
-    standard_feature_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+    # Save in the sense of enough non-linearities per block:
+    save_feature_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
                               {"name": "linear", "neurons": hidden_size}]
-    standard_hidden_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+    save_hidden_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
                              {"name": "linear", "neurons": hidden_size, "act_func": "relu"}]
+    
+    thin_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"}]
 
     test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
 
-    # standard_hidden_block = test_block
-    # standard_feature_block = test_block
+    standard_hidden_block = thin_block
+    standard_feature_block = thin_block
 
     layers_feature_vector = standard_hidden_block
     layers_feature_merge = standard_feature_block
