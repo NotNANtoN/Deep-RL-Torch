@@ -242,6 +242,10 @@ if __name__ == "__main__":
     try:
         trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
                 render=parameters["render"], verbose=parameters["verbose"])
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt - Goodbye!")
+        trainer.close()
+        del trainer
     except:
         print("Error while training, trying to close gracefully...")
         trainer.close()
