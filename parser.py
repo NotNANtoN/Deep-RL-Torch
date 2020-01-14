@@ -37,7 +37,7 @@ def create_parser():
     # Experience replay:
     parser.add_argument("--use_exp_rep", type=int, default=1)
     parser.add_argument("--replay_buffer_size", type=int, default=1000000)
-    parser.add_argument("--use_PER", type=int, default=1)
+    parser.add_argument("--use_PER", type=int, default=0)
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
     parser.add_argument("--PER_anneal_beta", type=int, default=1)
