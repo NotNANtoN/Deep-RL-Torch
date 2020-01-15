@@ -24,7 +24,7 @@ def create_parser():
     parser.add_argument("--store_on_gpu", type=int, default=0)
     parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
-    parser.add_argument("--frame_stack", type=int, help="How many frames to stack", default=1)
+    parser.add_argument("--frame_stack", type=int, help="How many frames to stack", default=4)
     parser.add_argument("--stack_dim", type=int, help="Which dimension of the tensor to stack the frames at", default=0)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=4)
