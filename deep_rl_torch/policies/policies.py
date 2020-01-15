@@ -1,22 +1,24 @@
-# External imports:
 import itertools
+import time
+import random
+import copy
+
 import logging
 import gym
 import torch
-import time
-import random
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
+try:
+    from apex import amp
+except:
+    pass
 
 # Internal Imports:
 from deep_rl_torch.experience_buffer import ReplayBuffer, PrioritizedReplayBuffer
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
-import copy
+# Silent error - but it will be raised in trainer.py, so it is fine
 
-try:
-    from apex import amp
-except:
-    print("WARNING: apex could not be imported.")
+
 
 class BasePolicy:
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -83,10 +85,8 @@ class BasePolicy:
         self.anneal_beta = hyperparameters["PER_anneal_beta"]
         self.importance_weights = None
 
-        if self.use_PER:
-            self.memory = PrioritizedReplayBuffer(self.buffer_size, self.PER_alpha, use_CER=self.use_CER)
-        else:
-            self.memory = ReplayBuffer(self.buffer_size, use_CER=self.use_CER)
+        # Create replay buffer:
+        self.memory = self.create_replay_buffer()
 
         # Feature extractors:
         self.F_s = F_s
@@ -99,6 +99,14 @@ class BasePolicy:
         self.use_half = hyperparameters["use_half"] and torch.cuda.is_available()
         self.nets = []
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
+        
+    def create_replay_buffer(self):
+        if self.use_PER:
+            memory = PrioritizedReplayBuffer(self.buffer_size, self.PER_alpha, use_CER=self.use_CER)
+        else:
+            memory = ReplayBuffer(self.buffer_size, use_CER=self.use_CER)
+        return memory
+        
 
     def random_action(self):
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,

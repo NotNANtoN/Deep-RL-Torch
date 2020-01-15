@@ -329,74 +329,6 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                         return possible_idxs[0]
 
 
-class ContinuingTimeLimitMonitor(Monitor):
-    """`Monitor` with ChainerRL's `ContinuingTimeLimit` support.
-
-    Because of the original implementation's design,
-    explicit `close()` is needed to save the last episode.
-    Do not forget to call `close()` at the last line of your script.
-
-    For details, see
-    https://github.com/openai/gym/blob/master/gym/wrappers/monitor.py
-    """
-
-    def _start(self, directory, video_callable=None, force=False, resume=False,
-               write_upon_reset=False, uid=None, mode=None):
-        if self.env_semantics_autoreset:
-            raise gym.error.Error(
-                "Detect 'semantics.autoreset=True' in `env.metadata`, "
-                "which means the env comes from deprecated OpenAI Universe.")
-        ret = super()._start(directory=directory,
-                             video_callable=video_callable, force=force,
-                             resume=resume, write_upon_reset=write_upon_reset,
-                             uid=uid, mode=mode)
-        if self.env.spec is None:
-            env_id = '(unknown)'
-        else:
-            env_id = self.env.spec.id
-        self.stats_recorder = _ContinuingTimeLimitStatsRecorder(
-            directory,
-            '{}.episode_batch.{}'.format(self.file_prefix, self.file_infix),
-            autoreset=False, env_id=env_id)
-        return ret
-
-
-class _ContinuingTimeLimitStatsRecorder(StatsRecorder):
-    """`StatsRecorder` with ChainerRL's `ContinuingTimeLimit` support.
-
-    For details, see
-    https://github.com/openai/gym/blob/master/gym/wrappers/monitoring/stats_recorder.py
-    """
-
-    def __init__(self, directory, file_prefix, autoreset=False, env_id=None):
-        super().__init__(directory, file_prefix,
-                         autoreset=autoreset, env_id=env_id)
-        self._save_completed = True
-
-    def before_reset(self):
-        assert not self.closed
-
-        if self.done is not None and not self.done and self.steps > 0:
-            logger.debug('Tried to reset env which is not done. '
-                         'StatsRecorder completes the last episode.')
-            self.save_complete()
-
-        self.done = False
-        if self.initial_reset_timestamp is None:
-            self.initial_reset_timestamp = time.time()
-
-    def after_step(self, observation, reward, done, info):
-        self._save_completed = False
-        return super().after_step(observation, reward, done, info)
-
-    def save_complete(self):
-        if not self._save_completed:
-            super().save_complete()
-            self._save_completed = True
-
-    def close(self):
-        self.save_complete()
-        super().close()
 
 
 class FrameSkip(gym.Wrapper):
@@ -466,6 +398,20 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
         self.rgb2gray = rgb2gray
+        sample = env.observation_space.sample()
+        print("Obs space in Convert2Torch: ", env.observation_space)
+        print(sample)
+        for key in sample:
+            print(sample[key].shape)
+        changed_sampled = self.observation(sample)
+        print("applied observation...")
+        print(changed_sampled)
+        print(changed_sampled.shape)
+        #for key in sample:
+        #    print(changed_sampled[key].shape)
+        shp = changed_sampled.shape
+        self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
+        
 
     def observation(self, obs_dict, expert_data=False):
         new_obs = {}
@@ -494,6 +440,11 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
+        
+        if len(new_obs) == 1:
+            key = next(iter(new_obs))
+            new_obs = new_obs[key]
+            
         return new_obs
 
 class AtariObsWrapper(gym.ObservationWrapper):

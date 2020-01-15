@@ -1,10 +1,12 @@
 import os
 
 import torch
+import numpy as np
 
 from .networks import OptimizableNet
 from .nn_utils import *
 from .normalizer import Normalizer
+from deep_rl_torch.util import apply_rec_to_dict
 
 class ProcessState(OptimizableNet):
     def __init__(self, env, log, device, hyperparameters, is_target_net=False):
@@ -74,11 +76,13 @@ class ProcessState(OptimizableNet):
         """
 
         normalizer_device = self.device #None if self.pin_tensors else self.device
+        
+        if isinstance(obs, np.ndarray):
+            obs = torch.from_numpy(obs)
+        obs = obs.squeeze()
 
         # Create feedforward layers:
-        if obs.ndim <= 2:
-            if obs.ndim == 2:
-                obs = obs.squeeze(0)
+        if obs.ndim == 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
@@ -87,11 +91,9 @@ class ProcessState(OptimizableNet):
             # Add to lists:
             layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
         # Create conv layers:
-        elif 2 < obs.ndim <= 4:
-            if obs.ndim == 4:
-                obs = obs.squeeze(0)
-            elif obs.ndim == 2:
-                obs.unsqueeze(0)
+        elif 2 <= obs.ndim <= 3:
+            if obs.ndim == 2:
+                obs = obs.unsqueeze(0)
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
             layers_matrix.to(self.device)
             matrix_normalizer = Normalizer(obs.shape, normalizer_device)
@@ -107,11 +109,6 @@ class ProcessState(OptimizableNet):
         # Get a sample to assess the shape of the observations easily:
         obs_space = env.observation_space
         sample = obs_space.sample()
-        #print(sample.shape)
-        #sample = self.env.observation(sample)
-        #print("after: ", sample.shape)
-        # TODO: the above must be adjusted for MineRL envs - or the obs space in those wrappers must be fixed accordingly
-
 
         processing_list = []
         merge_input_size = 0
@@ -195,6 +192,7 @@ class ProcessState(OptimizableNet):
         for layer in self.processing_list:
             loaded_model = torch.load(path + layer["Name"] + ".pth")
             layer["Layers"] = loaded_model
+
 
 class ProcessStateAction(OptimizableNet):
     def __init__(self, state_features_len, env, log, device, hyperparameters, is_target_net=False):

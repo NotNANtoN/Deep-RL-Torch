@@ -10,6 +10,10 @@ gym.logger.set_level(40)
 import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
+try:
+    from apex import amp
+except:
+    print("WARNING: apex could not be imported.")
 
 from .agent import Agent
 from .env_wrappers import FrameSkip, FrameStack
@@ -98,7 +102,6 @@ class Trainer:
         else:
             hyperparameters["num_expert_samples"] = 0
         # Init Policy:
-        print("obs space sample: ", self.env.observation_space, self.env.observation_space.sample().shape)
         self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
             self.agent.load()
@@ -432,10 +435,6 @@ class Trainer:
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
         print()
 
-    def close(self):
-        self.env.close()
-        #self.log.close()
-
     def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
         assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
 
@@ -552,4 +551,8 @@ class Trainer:
         self.env.close()
         #pbar.close()
         return i_episode
+        
+    def close(self):
+        self.env.close()
+        #self.log.close()
 

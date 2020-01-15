@@ -1,5 +1,8 @@
+import copy
+
 import torch
 from gym.spaces import Discrete
+
 from .policies import BasePolicy
 
 class MineRLPolicy(BasePolicy):

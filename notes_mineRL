@@ -1,9 +1,0 @@
-- hierarchical action Q
-- IMPLEMENT SOME FORM OF recurrence - e.g. give last actions as input or inventory
-- frameskip
-=> test
-
-- use dataset. first simple with 1-step Q-learning
-- pretrain hierarchical Q move net on navigate dense
-- make dataset compatible
-
