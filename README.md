@@ -47,6 +47,14 @@ torchvision==0.4.0
 tqdm==4.33.0
 gym==0.15.4
 ```
+## Usage:
+
+```
+python train.py --env [ENV_SHORTHAND] --n_[steps|episodes|hours] N
+```
+ENV_SHORTHANDs are defined in the train.py script. Please define your own shorthand for additional environments.
+
+All additional options can be seen in parser.py
 
 ## Run in headless mode:
 This is only necessary for MineRL environments:
