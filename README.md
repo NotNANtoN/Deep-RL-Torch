@@ -7,19 +7,20 @@ This library serves two purposes:
 
 Currently all the following can be used and combined:
 
-1. All the basic non-mujoco discrete environments, including Atari. Additionally MineRL environments can be used. No default.
-2. Training for either a fixed number of steps, episodes or hours. No default.
-3. [Uniform Experience Replay](http://www.incompleteideas.net/lin-92.pdf) and [Prioritied Experience Replay](https://arxiv.org/abs/1511.05952). Defaults to uniform exp replay.
-4. Corrected Experience Replay, [CER](https://arxiv.org/abs/1712.01275). Can be combined either with uniform ode rprioritized experience replay.
-5. Frame Stacking as in DQN. The stacking dimension can be chosen, although dimensions 0 probably performs best. Defaults to 6 frames and dim 0.
-7. Frame Skipping as in DQN. Defaults to 4.
-8. Use of a target net that is updated every N steps or of a Polyak-averaged target network, as seen in [DDPG](https://arxiv.org/abs/1509.02971). Defaults to Polyak-averaging.
-9. Pretraining on Expert Data - currently only for MineRL data.
-10. Bellman split - adds an additional head to a Q net that takes care of predicting only the immediate reward, whereas the other head is optimized to predict the value of the next state without the immediate reward. I could not yet show that this improves performance.
-11. [QV](https://www.researchgate.net/publication/224446250_The_QV_family_compared_to_other_reinforcement_learning_algorithms) and [QVMax](https://arxiv.org/abs/1909.01779v1) learning
-12. [Efficient Eligibility traces](https://arxiv.org/abs/1810.09967) - as described in v1 of the arXiv paper.
-13. Observation normalization. Turned on by default.
-14. Use of the [RAdam](https://arxiv.org/abs/1908.03265) optimizer.
+* All the basic non-mujoco discrete environments, including Atari. Additionally MineRL environments can be used. No default.
+* Training for either a fixed number of steps, episodes or hours. No default.
+* [Uniform Experience Replay](http://www.incompleteideas.net/lin-92.pdf) and [Prioritied Experience Replay](https://arxiv.org/abs/1511.05952). Defaults to uniform exp replay.
+* Corrected Experience Replay, [CER](https://arxiv.org/abs/1712.01275). Can be combined either with uniform ode rprioritized experience replay.
+* Frame Stacking as in DQN. The stacking dimension can be chosen, although dimensions 0 probably performs best. Defaults to 6 frames and dim 0.
+* Frame Skipping as in DQN. Defaults to 4.
+* Optimizations per step - how many batches to sample on for optimization per step in the environment. 0.25 (1 optimization every 4 steps) is the default atm, as in the DQN paper.
+* Use of a target net that is updated every N steps or of a Polyak-averaged target network, as seen in [DDPG](https://arxiv.org/abs/1509.02971). Defaults to Polyak-averaging.
+* Pretraining on Expert Data - currently only for MineRL data.
+* Bellman split - adds an additional head to a Q net that takes care of predicting only the immediate reward, whereas the other head is optimized to predict the value of the next state without the immediate reward. I could not yet show that this improves performance.
+* [QV](https://www.researchgate.net/publication/224446250_The_QV_family_compared_to_other_reinforcement_learning_algorithms) and [QVMax](https://arxiv.org/abs/1909.01779v1) learning
+* [Efficient Eligibility traces](https://arxiv.org/abs/1810.09967) - as described in v1 of the arXiv paper.
+* Observation normalization. Turned on by default.
+* Use of the [RAdam](https://arxiv.org/abs/1908.03265) optimizer.
 
 ## Upcoming features:
 
