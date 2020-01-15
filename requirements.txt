@@ -1,0 +1,13 @@
+atari-py==0.1.7
+Box2D-kengz==2.3.3
+bsuite==0.0.0
+captum==0.1.0
+numpy==1.16.4
+ray==0.7.6
+matplotlib==3.0.3
+seaborn==0.9.0
+tensorboard==1.13.1
+torch==1.2.0
+torchvision==0.4.0
+tqdm==4.33.0
+gym==0.15.4
