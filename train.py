@@ -4,10 +4,10 @@ import torch
 import sys
 import os
 
-from RAdam import RAdam
-from env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper,\
+from optimizers.RAdam import RAdam
+from deep_rl_torch.env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper,\
     AtariObsWrapper, DefaultWrapper
-from trainer import Trainer
+from deep_rl_torch import Trainer
 from parser import create_parser
 
 
