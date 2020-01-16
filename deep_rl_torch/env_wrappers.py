@@ -38,14 +38,27 @@ class FrameStack(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         self.stack_dim = stack_dim
-        shp = env.observation_space.shape
-        if self.stack_dim == -1:
-            self.stack_dim = len(shp) - 1
-        shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
+        
+        if isinstance(env.observation_space, dict):
+            new_space = {}
+            for key in env.observation_space:
+                content = env.observation_space[key]
+                shp = content.shape
+                if self.stack_dim == -1:
+                    self.stack_dim = len(shp) - 1
+                shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
+                new_space[key] = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
+            self.observation_space = new_space
+        else:
+            shp = env.observation_space.shape
+            if self.stack_dim == -1:
+                self.stack_dim = len(shp) - 1
+            shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
+          
+        
+            self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
         # The first dim of obs is the batch_size, skip it:
         self.stack_dim += 1
-        
-        self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
 
 
     def reset(self):
@@ -398,14 +411,27 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
         self.rgb2gray = rgb2gray
-        sample = env.observation_space.sample()
 
+        sample = env.observation_space.sample()
+        print("sample: ", sample)
+        print("orig obs space: ", env.observation_space)
         changed_sampled = self.observation(sample)
 
         #for key in sample:
         #    print(changed_sampled[key].shape)
-        shp = changed_sampled.shape
-        self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
+        
+        # TODO does not work for nested dicts
+        new_space = {}
+        for key in changed_sampled:
+            content = changed_sampled[key]
+            print(content)
+            shp = content.shape
+            new_space[key] = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
+        self.observation_space = new_space
+        
+        # For single one:
+        #shp = changed_sampled.shape
+        #self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
         
 
     def observation(self, obs_dict, expert_data=False):

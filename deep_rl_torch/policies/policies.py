@@ -287,22 +287,6 @@ class BasePolicy:
             self.log.add("Epsilon", self.epsilon)
         # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
-    def collate_batch(self, batch):
-        for key in batch:
-            pass
-    
-    def construct_dataloader(self):
-        # TODO: change this such that it is all embedded in the exp rep buffer. Ins
-        if self.use_PER:
-            sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, num_samples, replacement=True)
-        else:
-            sampler = torch.utils.data.sampler.RandomSampler(data, replacement=False, num_samples=None)
-
-        self.dataloader = torch.utils.data.DataLoader(data, batch_size=self.batch_size,
-                                                  sampler=sampler,
-                                                  pin_memory=self.pin_mem,
-                                                  num_workers=self.num_sampling_workers,
-                                                  collate_fn=custom_collate)
 
     def get_transitions_new(self):
         """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
