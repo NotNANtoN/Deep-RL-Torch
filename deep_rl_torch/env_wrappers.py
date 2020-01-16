@@ -399,14 +399,9 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
         super().__init__(env)
         self.rgb2gray = rgb2gray
         sample = env.observation_space.sample()
-        print("Obs space in Convert2Torch: ", env.observation_space)
-        print(sample)
-        for key in sample:
-            print(sample[key].shape)
+
         changed_sampled = self.observation(sample)
-        print("applied observation...")
-        print(changed_sampled)
-        print(changed_sampled.shape)
+
         #for key in sample:
         #    print(changed_sampled[key].shape)
         shp = changed_sampled.shape

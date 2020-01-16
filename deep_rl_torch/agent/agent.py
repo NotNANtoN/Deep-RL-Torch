@@ -136,7 +136,7 @@ class Agent(AgentInterface):
 
     #@profile
     def optimize(self):
-    """ Takes care of general optimization procedure """
+        """ Takes care of general optimization procedure """
         num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else steps_done % int(1 / self.updates_per_step) == 0
         for _ in range(num_updates):
@@ -148,7 +148,7 @@ class Agent(AgentInterface):
                    
             
     def optimize_nets(self):
-    """ Optimizes the networks by sampling a batch """
+        """ Optimizes the networks by sampling a batch """
         loss = self.policy.optimize()
 
         if self.optimize_centrally:

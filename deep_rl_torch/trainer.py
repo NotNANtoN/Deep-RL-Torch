@@ -10,10 +10,6 @@ gym.logger.set_level(40)
 import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
-try:
-    from apex import amp
-except:
-    print("WARNING: apex could not be imported.")
 
 from .agent import Agent
 from .env_wrappers import FrameSkip, FrameStack
