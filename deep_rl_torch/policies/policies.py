@@ -240,6 +240,7 @@ class BasePolicy:
         return TDE_abs, loss
 
     def extract_features(self, transitions):
+        """ Calculates the state_features and state_action features and stores them in the transitions dict """
         # Extract features:
         state_batch = transitions["state"]
         non_final_next_states = transitions["non_final_next_states"]
@@ -286,10 +287,31 @@ class BasePolicy:
             self.log.add("Epsilon", self.epsilon)
         # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
+    def collate_batch(self, batch):
+        for key in batch
+    
+    def construct_dataloader(self):
+        data = self.memory
+        if self.use_PER:
+            sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, num_samples, replacement=True)
+        else:
+            sampler = torch.utils.data.sampler.RandomSampler(data, replacement=False, num_samples=None)
+
+        self.dataloader = torch.utils.data.DataLoader(data, batch_size=self.batch_size,
+                                                  sampler=sampler,
+                                                  pin_memory=self.pin_mem,
+                                                  num_workers=self.num_sampling_workers,
+                                                  collate_fn=custom_collate)
+
+    def get_transitions_new(self):
+        """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
+        transitions= next(self.dataloader)
+        return transitions
+        
+
     def get_transitions(self):
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
-            #TODO: benchmark openai replaybuffer vs pytorch sampler! 
             transitions, importance_weights, idxs = self.memory.sample(sampling_size, self.PER_beta)
             # print(importance_weights)
             importance_weights = torch.tensor(importance_weights, device=self.device).float()

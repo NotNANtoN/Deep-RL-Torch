@@ -68,9 +68,6 @@ class Trainer:
         self.n_initial_random_actions = hyperparameters["n_initial_random_actions"]
         self.explore_until_reward = hyperparameters["explore_until_reward"]
 
-        self.updates_per_step = hyperparameters["network_updates_per_step"]
-
-        # copied from Old class:
         self.normalize_observations = hyperparameters["normalize_obs"]
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
         self.log_freq = hyperparameters["log_freq"]
@@ -506,13 +503,9 @@ class Trainer:
                     non_optimize_time = time_before_optimize - time_after_optimize
                 self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
 
-                num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
-                                                    else steps_done % int(1 / self.updates_per_step) == 0
-                for _ in range(num_updates):
-                    # Perform one step of the optimization (on the target network)      
-                    self.agent.optimize()
-                    # Update the target network
-                    self.agent.update_targets(steps_done, train_fraction=train_fraction)
+                # Optimize the agent (on the target network)      
+                self.agent.optimize()
+
                 time_after_optimize = time.time()
 
                 # Log reward and time:

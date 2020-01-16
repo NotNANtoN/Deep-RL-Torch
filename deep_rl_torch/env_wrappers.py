@@ -441,9 +441,9 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
         
-        if len(new_obs) == 1:
-            key = next(iter(new_obs))
-            new_obs = new_obs[key]
+        #if len(new_obs) == 1:
+        #    key = next(iter(new_obs))
+        #    new_obs = new_obs[key]
             
         return new_obs
 

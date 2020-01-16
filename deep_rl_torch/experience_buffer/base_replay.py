@@ -6,6 +6,7 @@ import torch
 from deep_rl_torch.util import Transition
 
 
+                                                  
 class RLDataset(torch.utils.data.Dataset):
     def __init__(self, size, sample, size_expert_data):
         pass
@@ -56,72 +57,16 @@ class ReplayBufferNew:
         #self.episodic_transitions = [[]]
         #self.episodic_idxs = [[]]
         
-class IcuDataset(torch.utils.data.Dataset):
-    def __init__(self, data_path, args, device):
-        self.r2d2 = args.r2d2
-        self.r2d2_burn_len = args.r2d2_burn_len
-        self.r2d2_train_len = args.r2d2_train_len
-        self.hidden_size = args.hidden_size
-        self.device = device
-        use_outcome = args.use_outcome
-        self.use_outcome = use_outcome
-        use_meds = args.use_meds
-        predict_outcome_time = args.predict_outcome_time
-
-        # Load data
-        data = torch.load(data_path + "input.pt")
-        outcome = torch.load(data_path + "outcome.pt")
-        meds = torch.load(data_path + "meds.pt")
-
-
-    def get_model_input_output(self):
-        """ Returns number of features for input and target for first timestep of first patient"""
-        return len(self.inputs[0][0]), len(self.targets[0][0])
-
-    def __len__(self):
-        if self.r2d2:
-            # TODO: possibly change len to include all possible combinations!
-            # make it independent from r2d2
-            self.len = len(self.targets)
-        else:
-            self.len = len(self.targets)
-        return self.len
-
-    def __getitem__(self, index):
-        x = self.inputs[index]
-        y = self.targets[index]
-
-        if self.r2d2:
-            len_x = len(x)
-            # TODO: add option to always get full seq for patients with short length
-            seq_idx = random.randint(0, len_x)
-            start_idx = max(seq_idx - self.r2d2_burn_len, 0)
-            end_idx = min(seq_idx + self.r2d2_train_len, len_x)
-            x = x[start_idx:end_idx]
-            y = y[start_idx:end_idx]
-            seq_len = end_idx - start_idx
-            if start_idx == 0:
-                hidden_state = (self.dummy_hidden_state.clone(), self.dummy_hidden_state.clone())
-            else:
-                hidden_state = self.hidden_states[index][start_idx - 1]
-                cell_state = self.hidden_cell_states[index][start_idx - 1]
-                hidden_state = (hidden_state, cell_state)
-        else:
-            start_idx = 0
-            seq_len = len(x)
-            hidden_state = (self.dummy_hidden_state.clone(), self.dummy_hidden_state.clone())
-
-        return x, y, (index, start_idx), seq_len, hidden_state
-
-    def update_stored_hidden_states(self, idxs, hidden_states, seq_lens):
-        # hidden_state shape: [seq_len, batch_size, hidden_size]
-        outputs = hidden_states[0].permute(1, 0, 2)
-        cell_states = hidden_states[1].permute(1, 0, 2)
-        for i, (pat_idx, start_idx) in enumerate(idxs):
-            seq_len = seq_lens[i]
-            end_idx = start_idx + seq_len
-            self.hidden_states[pat_idx][start_idx:end_idx] = outputs[i][:seq_len]
-            self.hidden_cell_states[pat_idx][start_idx:end_idx] = cell_states[i][:seq_len]
+        def __len__(self):
+            return len(self.data)
+            
+        trainloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
+                                                  sampler=train_sampler,
+                                                  pin_memory=args.pin_mem,
+                                                  num_workers=num_workers,
+                                                  collate_fn=custom_collate)
+        
+   
 
 class ReplayBuffer(object):
     def __init__(self, size, use_CER=False, size_expert_data=0):
