@@ -364,7 +364,7 @@ class BasePolicy:
 
         transitions = {"state": state_batch, "action": action_batch, "reward": reward_batch,
                        "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
-                       "state_action_features": None, "importance_weights": None, "idxs": None,
+                       "importance_weights": None, "idxs": None,
                        "action_argmax": action_argmax}
 
         return transitions

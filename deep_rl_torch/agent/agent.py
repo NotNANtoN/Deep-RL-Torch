@@ -135,15 +135,17 @@ class Agent(AgentInterface):
         self.policy.remember(state, action, next_state, reward, done)
 
     #@profile
-    def optimize(self):
+    def optimize(self, steps_done, train_fraction):
         """ Takes care of general optimization procedure """
         num_updates = int(self.updates_per_step) if self.updates_per_step >= 1\
                                                     else steps_done % int(1 / self.updates_per_step) == 0
         for _ in range(num_updates):
             # Optimize the agent (on the target network)      
             self.optimize_nets()
-            # Update the target network
-            self.update_targets(steps_done, train_fraction=train_fraction)
+        # Update the target networks
+        self.update_targets(steps_done, train_fraction=train_fraction)
+        # Reduce epsilon and other exploratory values:
+        self.decay_exploration(steps_done)
                     
                    
             

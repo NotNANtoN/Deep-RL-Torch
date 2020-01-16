@@ -489,9 +489,6 @@ class Trainer:
                 # Move to the next state
                 state = next_state
 
-                # Reduce epsilon and other exploratory values:
-                self.agent.decay_exploration(steps_done)
-
                 time_before_optimize = time.time()
                 # Log time between optimizations:
                 non_optimize_time = 0
@@ -500,7 +497,7 @@ class Trainer:
                 self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
 
                 # Optimize the agent (on the target network)      
-                self.agent.optimize()
+                self.agent.optimize(steps_done, train_fraction)
 
                 time_after_optimize = time.time()
 
@@ -513,7 +510,6 @@ class Trainer:
                              store_episodic=True)
 
                 if render:
-
                     self.env.render()
 
                 self.log.step()

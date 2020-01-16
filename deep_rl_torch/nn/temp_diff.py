@@ -109,7 +109,10 @@ class TempDiffNet(OptimizableNet):
 
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]
-        state_action_features = transitions["state_action_features"]
+        if self.F_sa is not None:
+            state_action_features = transitions["state_action_features"]
+        else:
+            state_action_features = None
         action_batch = transitions["action_argmax"]
         reward_batch = transitions["reward"]
         non_final_next_state_features = transitions["non_final_next_state_features"]

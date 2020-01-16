@@ -56,7 +56,7 @@ class RLDataset(torch.utils.data.Dataset):
         self._next_idx += 1
         remainder = self._next_idx % self.maxsize
         if remainder == 0: 
-            self._next_idx = 0 + self.size_expert_data if remainder == 0 
+            self._next_idx = 0 + self.size_expert_data
             self.looped_once = True
             
     def __len__(self):
@@ -119,7 +119,7 @@ class ReplayBufferNew:
         names = ["state", "action", "reward", "next_state", "idxs", "importance_weights"]
         batch_dict = {key: value for key, value in zip(names, batch)}
         # Next state:
-        batch_dict["non_final_mask"] = [val is not None for val in batch_dict["next_state"]
+        batch_dict["non_final_mask"] = [val is not None for val in batch_dict["next_state"]]
         batch_dict["non_final_next_states"] = [state for val, non_final in zip(batch_dict["next_state"], batch_dict["non_final_mask"]) if non_final]
         del batch_dict["next_state"]
         # Action argmax:
@@ -136,8 +136,8 @@ class ReplayBufferNew:
 
         
    
-class PrioritizedReplayBuffer(ReplayBuffer):
-    def __init__(self, size, sample, action_sample, batch_size, pin_mem, num_sampling_workers, alpha, use_CER=False, max_priority=1.0):
+class PrioritizedReplayBuffer(ReplayBufferNew):
+    def __init__(self, size, sample, action_sample, batch_size, pin_mem, num_sampling_workers, alpha, use_CER=False, max_priority=1.0, size_expert_data=0):
         """
         Create Prioritized Replay buffer.
 
@@ -147,7 +147,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             are dropped.
         :param alpha: (float) how much prioritization is used (0 - no prioritization, 1 - full prioritization)
         """
-        super(PrioritizedReplayBuffer, self).__init__(size, sample, action_sample, batch_size, pin_mem, num_sampling_workers, use_CER=use_CER, size_expert_data)
+        super(PrioritizedReplayBuffer, self).__init__(size, sample, action_sample, batch_size, pin_mem, num_sampling_workers, use_CER=use_CER, size_expert_data=size_expert_data)
         assert alpha >= 0
         self._alpha = alpha
         
