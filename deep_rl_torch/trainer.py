@@ -113,7 +113,6 @@ class Trainer:
             env = wrapper(env, self.rgb2gray)
         if hyperparameters["frame_stack"] > 1:
             env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
-
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
             exclude_keys = hyperparameters["exclude_keys"]
@@ -131,20 +130,9 @@ class Trainer:
 
     def modify_env_reward(self, reward):
         reward = torch.tensor([reward], dtype=torch.float)
-        reward = self.prep_for_GPU(reward)
         if self.reward_std:
             reward += torch.tensor(np.random.normal(0, self.reward_std))
         return reward
-
-    def prep_for_GPU(self, tensor):
-        if torch.cuda.is_available():
-            if self.store_on_gpu:
-                tensor = tensor.cuda()
-            elif self.pin_tensors:
-                tensor = tensor.cpu().pin_memory()
-            else:
-                tensor = tensor.cpu()
-        return tensor
 
     def move_expert_data_into_buffer(self, data):
         print("Moving Expert Data into the replay buffer...")
@@ -202,7 +190,6 @@ class Trainer:
 
             # TODO: move as many of those checks above into the dict2idx function!
             action = torch.zeros(1, self.env.action_space.n, dtype=torch.float)
-            action = self.prep_for_GPU(action)
 
             action_idx = self.env.dict2idx(raw_action)
             action[0][action_idx] = 1.0
@@ -210,8 +197,6 @@ class Trainer:
 
             state = self.env.observation(state, expert_data=True)
             next_state = self.env.observation(next_state, expert_data=True)
-            state = apply_rec_to_dict(self.prep_for_GPU, state)
-            next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
 
             sample = (state, action, reward, next_state, done)
             data.append(sample)
@@ -282,12 +267,6 @@ class Trainer:
         assert n_steps > 0
         print("Filling Replay Buffer....")
         state = self.env.reset()
-        if not isinstance(state, dict):
-            state = self.prep_for_GPU(state)
-        else:
-            state = apply_rec_to_dict(self.prep_for_GPU, state)
-        #TODO: move these preparations to one place, add general env wrapper for easy envs
-
         rewards = collections.defaultdict(int)
 
         # Fill exp replay buffer so that we can start training immediately:
@@ -309,12 +288,6 @@ class Trainer:
             if done:
                 done_count += 1
                 state = self.env.reset()
-                
-                if not isinstance(state, dict):
-                    state = self.prep_for_GPU(state)
-                else:
-                    state = apply_rec_to_dict(self.prep_for_GPU, state)
-
 
             if self.explore_until_reward and not do_break:
                 if isinstance(reward, torch.FloatTensor) or isinstance(reward, torch.LongTensor):
@@ -355,16 +328,9 @@ class Trainer:
         next_state, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
         reward = self.modify_env_reward(reward)
-        # Move action to GPU if desired:
-        raw_action = self.prep_for_GPU(raw_action)
         # Define next state in case it is terminal:
         if done:
             next_state = None
-        else:
-            if not isinstance(next_state, dict):
-                next_state = self.prep_for_GPU(next_state)
-            else:
-                next_state = apply_rec_to_dict(self.prep_for_GPU, next_state)
         # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
             self.agent.remember(state, raw_action, next_state, reward, done)
@@ -467,10 +433,6 @@ class Trainer:
             # Initialize the environment and state. Do not reset
             if state is None:
                 state = self.env.reset()
-                if not isinstance(state, dict):
-                    state = self.prep_for_GPU(state)
-                else:
-                    state = apply_rec_to_dict(self.prep_for_GPU, state)
 
             for t in tqdm(itertools.count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
                 steps_done += 1
@@ -479,8 +441,8 @@ class Trainer:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
                 # Evaluate agent thoroughly sometimes:
-                if self.eval_rounds > 0 and train_fraction - self.stored_percentage >= self.eval_percentage \
-                        or train_fraction == 0:
+                if self.eval_rounds > 0 and (train_fraction - self.stored_percentage >= self.eval_percentage \
+                        or train_fraction == 0):
                     self.stored_percentage = train_fraction
                     test_return = self.evaluate_model()
                     self.log.add("Test Return", test_return, steps=steps_done)#steps=train_fraction * 100)

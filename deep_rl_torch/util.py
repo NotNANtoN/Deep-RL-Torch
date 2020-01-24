@@ -27,10 +27,7 @@ def apply_rec_to_dict(func, tensor_dict):
             return_dict[key] = apply_rec_to_dict(func, content)
         else:
             return_dict[key] = func(content)
-            #tensor_dict[key] = func(content)
     return return_dict
-
-
 
 def meanSmoothing(x, N):
     x = np.array(x)

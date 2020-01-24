@@ -10,6 +10,10 @@ import torch
 from gym.wrappers import Monitor
 from gym.wrappers.monitoring.stats_recorder import StatsRecorder
 from gym import spaces
+import minerl
+
+
+from .util import apply_rec_to_dict
 
 cv2.ocl.setUseOpenCL(False)
 logger = getLogger(__name__)
@@ -38,27 +42,26 @@ class FrameStack(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         self.stack_dim = stack_dim
-        
-        if isinstance(env.observation_space, dict):
-            new_space = {}
-            for key in env.observation_space:
-                content = env.observation_space[key]
-                shp = content.shape
-                if self.stack_dim == -1:
-                    self.stack_dim = len(shp) - 1
-                shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
-                new_space[key] = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
-            self.observation_space = new_space
+        self.obs_is_dict = False
+
+        if isinstance(env.observation_space, dict) or isinstance(env.observation_space, minerl.env.spaces.Dict):  
+            new_space = apply_rec_to_dict(self.transform_obs_space, env.observation_space)
+            self.observation_space = ItObsDict(new_space)
+            self.obs_is_dict = True
         else:
-            shp = env.observation_space.shape
-            if self.stack_dim == -1:
-                self.stack_dim = len(shp) - 1
-            shp = [size * k if idx == self.stack_dim else size for idx, size in enumerate(shp)]
-          
+            self.observation_space = self.transform_obs_space(self.observation_space)
         
-            self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=env.observation_space.dtype)
         # The first dim of obs is the batch_size, skip it:
         self.stack_dim += 1
+        
+    def transform_obs_space(self, obs_space):
+            shp = obs_space.shape
+            stack_dim = self.stack_dim
+            if stack_dim == -1:
+                stack_dim = len(shp) - 1
+            shp = [size * self.k if idx == stack_dim else size for idx, size in enumerate(shp)]
+            obs_space = spaces.Box(low=0, high=255, shape=shp, dtype=obs_space.dtype)
+            return obs_space
 
 
     def reset(self):
@@ -75,7 +78,20 @@ class FrameStack(gym.Wrapper):
     def _get_ob(self):
         assert len(self.frames) == self.k
         #return LazyFrames(list(self.frames))
-        return torch.cat(list(self.frames), dim=self.stack_dim)
+        if self.obs_is_dict:
+            obs = {}
+            for key in self.frames[0]:
+                key_frames = [frame [key] for frame in self.frames]
+                stacked = self.stack_frames(key_frames)
+                obs[key] = stacked
+        else:
+            #obs = torch.cat(list(self.frames), dim=self.stack_dim)
+            obs = self.stack_frames(self.frames)
+        return obs
+            
+    def stack_frames(self, frames):
+        return torch.cat(list(frames), dim=self.stack_dim)
+        
         
 class LazyFrames(object):
     def __init__(self, frames):
@@ -342,8 +358,6 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
                         return possible_idxs[0]
 
 
-
-
 class FrameSkip(gym.Wrapper):
     """Return every `skip`-th frame and repeat given action during skip.
 
@@ -407,31 +421,27 @@ class DefaultWrapper(gym.ObservationWrapper):
         obs = torch.from_numpy(observation).float().unsqueeze(0)
         return obs
 
+class ItObsDict(minerl.env.spaces.Dict):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def __iter__(self):
+        for key in self.spaces:
+            yield key
+            
+    
 class Convert2TorchWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
         self.rgb2gray = rgb2gray
 
         sample = env.observation_space.sample()
-        print("sample: ", sample)
-        print("orig obs space: ", env.observation_space)
-        changed_sampled = self.observation(sample)
-
-        #for key in sample:
-        #    print(changed_sampled[key].shape)
+            
+        changed_sampled = apply_rec_to_dict(lambda x: x.squeeze(0), self.observation(sample))
         
-        # TODO does not work for nested dicts
-        new_space = {}
-        for key in changed_sampled:
-            content = changed_sampled[key]
-            print(content)
-            shp = content.shape
-            new_space[key] = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
-        self.observation_space = new_space
+        new_space = apply_rec_to_dict(lambda x: spaces.Box(low=0, high=255, shape=x.shape, dtype=np.float), changed_sampled)
         
-        # For single one:
-        #shp = changed_sampled.shape
-        #self.observation_space = spaces.Box(low=0, high=255, shape=shp, dtype=np.uint8)
+        self.observation_space = ItObsDict(new_space)
         
 
     def observation(self, obs_dict, expert_data=False):
@@ -461,10 +471,6 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
-        
-        #if len(new_obs) == 1:
-        #    key = next(iter(new_obs))
-        #    new_obs = new_obs[key]
             
         return new_obs
 
