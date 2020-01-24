@@ -12,3 +12,4 @@ Azure.txt
 /data
 /venv
 /Data
+*.ipynb_checkpoints*

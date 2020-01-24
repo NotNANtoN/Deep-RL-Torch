@@ -50,6 +50,7 @@ def create_parser():
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
+    parser.add_argument("--epsilon_mid", type=float, default=0.1)
     parser.add_argument("--explore_until_reward", type=int, default=0)
     parser.add_argument("--action_sigma", type=float, default=0.0)
     parser.add_argument("--n_initial_random_actions", type=int, default=50000)

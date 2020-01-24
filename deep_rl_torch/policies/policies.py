@@ -59,7 +59,10 @@ class BasePolicy:
         self.gaussian_action_noise = hyperparameters["action_sigma"]
         self.boltzmann_exploration_temp = hyperparameters["boltzmann_temp"]
         self.epsilon = hyperparameters["epsilon"]
-        self.eps_decay = hyperparameters["epsilon_decay"]
+        self.epsilon_mid = hyperparameters["epsilon_mid"]
+        if self.epsilon_mid:
+            self.eps_factor = self.epsilon_mid ** (1 / hyperparameters["n_steps"])
+            self.epsilon = 1
         # General:
         self.use_half = hyperparameters["use_half"]
         self.batch_size = hyperparameters["batch_size"]
@@ -283,8 +286,8 @@ class BasePolicy:
 
 
     def decay_exploration(self, n_steps, train_fraction):
-        if self.eps_decay:
-            self.epsilon *= self.eps_decay
+        if self.epsilon_mid:
+            self.epsilon *= self.eps_factor
             self.log.add("Epsilon", self.epsilon)
         if self.use_PER and self.PER_anneal_beta:
             self.PER_beta = self.PER_start_beta + train_fraction * (1 - self.PER_start_beta)
