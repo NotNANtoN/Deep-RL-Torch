@@ -156,7 +156,7 @@ if __name__ == "__main__":
 
 
     # Decide on env here:
-    atari_envs = ["pong"]
+    atari_envs = ["pong", "atlantis"]
     env_short = parameters["env"]
     if env_short == "cart":
         env = cart
@@ -178,8 +178,10 @@ if __name__ == "__main__":
         env = "Pong-v0"
     elif env_short == "pong_ram":
         env = "Pong-ram-v0"
+    elif env_short == "atlantis":
+        env = "Atlantis-v0"
     else:
-        raise NotImplementedError("Env does not exist")
+        env = env_short
     print("Env: ", env)
     tensorboard_comment = parameters["tb_comment"] + "_" if parameters["tb_comment"] else ""
     unfiltered_arguments = iter(sys.argv[1:])
