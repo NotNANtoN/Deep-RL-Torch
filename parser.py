@@ -36,6 +36,7 @@ def create_parser():
     parser.add_argument("--target_network_hard_steps", type=int, default=10000)
     parser.add_argument("--polyak_averaging_tau", type=float, default=0.0025)
     # Experience replay:
+    parser.add_argument("--use_new_buffer", type=int, default=0)
     parser.add_argument("--use_exp_rep", type=int, default=1)
     parser.add_argument("--replay_buffer_size", type=int, default=1000000)
     parser.add_argument("--use_PER", type=int, default=0)
