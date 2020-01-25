@@ -75,7 +75,7 @@ class TempDiffNet(OptimizableNet):
         # Compute the updated expected values. Do not add the reward, if the critic is split
         return (reward_batch if not self.split else 0) + (self.predictions_next_state * self.gamma)
 
-    def update_traces(self, episode_transitions, lambda_val, actor=None, V=None, Q=None):
+    def update_traces(self, episode_transitions, lambda_val, actor=None, V=None, Q=None, last_trace_value=None):
         num_steps_in_episode = len(episode_transitions["states"])
         non_final_next_state_features = episode_transitions["non_final_next_state_features"]
         non_final_mask = episode_transitions["non_final_mask"]
@@ -88,15 +88,17 @@ class TempDiffNet(OptimizableNet):
                                                           V=V, use_target_net=False)
 
         traces = torch.empty(num_steps_in_episode, device=self.device)
-        last_trace_value = 0
+        if last_trace_value is None:
+            last_trace_value = 0
         # Iterate backwards through transitions in the episode:
-        for step_idx in range(0, num_steps_in_episode):
-            reversed_idx = num_steps_in_episode - 1 - step_idx
-            current_trace_val = rewards[reversed_idx].clone()
-            if non_final_mask[reversed_idx]:
+        #for step_idx in range(0, num_steps_in_episode):
+        #    reversed_idx = num_steps_in_episode - 1 - step_idx
+        for idx in range(num_steps_in_episode - 1, -1, -1):
+            current_trace_val = rewards[idx].clone()
+            if non_final_mask[idx]:
                 current_trace_val += self.gamma * (lambda_val * last_trace_value +
-                                                  (1 - lambda_val) * next_state_vals[reversed_idx][0])
-            traces[reversed_idx] = current_trace_val
+                                                  (1 - lambda_val) * next_state_vals[idx][0])
+            traces[idx] = current_trace_val
             last_trace_value = current_trace_val
 
         # If split the direct reward prediction is taken care of another network
@@ -105,6 +107,7 @@ class TempDiffNet(OptimizableNet):
             #traces = [trace - rewards[idx] for idx, trace in enumerate(traces)]
 
         self.traces[idxs] = traces
+        return last_trace_value
 
     def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]

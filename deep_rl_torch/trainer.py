@@ -146,7 +146,7 @@ class Trainer:
                 self.agent.F_s.observe(state)
                 # TODO: normalize actions too # self.policy.F_sa.observe(action)
 
-            self.agent.remember(state, action, next_state, reward, done)
+            self.agent.remember(state, action, next_state, reward, done, filling_buffer=True)
             # Delete data from data list when processed to save memory
             del data[0]
         pbar.close()
@@ -207,8 +207,11 @@ class Trainer:
 
     def load_expert_data_MineRL(self):
         print("Loading expert MineRL data...")
-
-        ver_or_download_data(self.env_name)
+        folder = 'data'
+        if not os.path.exists(folder):
+            os.mkdir(folder)
+        minerl.data.download(folder) 
+        #ver_or_download_data(self.env_name)
         #env_name_data = 'MineRLObtainDiamond-v0'
         data_pipeline = minerl.data.make(
             self.env_name,
@@ -282,7 +285,7 @@ class Trainer:
                 self.agent.F_s.observe(state)
                 # TODO: normalize (observe) actions too for actor critic
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
-                                                         explore=True, fully_random=True)
+                                                         explore=True, filling_buffer=True)
 
             state = next_state
             if done:
@@ -314,11 +317,11 @@ class Trainer:
         print()
 
 
-    def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, fully_random=False):
+    def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, filling_buffer=False):
         # Select an action
         if explore:
             # Raw actions are the logits for the actions. Useful for e.g. DDPG training in discrete envs.
-            action, raw_action = self.agent.explore(state, fully_random=fully_random)
+            action, raw_action = self.agent.explore(state, fully_random=filling_buffer)
         else:
             action, raw_action = self.agent.exploit(state)
 
@@ -333,7 +336,7 @@ class Trainer:
             next_state = None
         # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
-            self.agent.remember(state, raw_action, next_state, reward, done)
+            self.agent.remember(state, raw_action, next_state, reward, done, filling_buffer=filling_buffer)
         # Calculate TDE for debugging purposes:
         # TODO: implement logging of TDE
         # tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
@@ -375,8 +378,8 @@ class Trainer:
     def _display_debug_info(self, i_episode, steps_done, train_fraction):
         episode_return = self.log.get_episodic("Return")
         #sampling_time = self.log.get_episodic("Sampling_Time")
-        optimize_time = self.log.get_episodic("Optimize_Time")
-        non_optimize_time = self.log.get_episodic("Non-Optimize_Time")
+        optimize_time = self.log.get_episodic("Timings/Optimize_Time")
+        non_optimize_time = self.log.get_episodic("Timings/Non-Optimize_Time")
         print(round(train_fraction * 100, 1), "%")
         print("#Episode ", i_episode)
         print("#Steps: ", steps_done)
@@ -408,6 +411,11 @@ class Trainer:
         if self.freeze_normalizer:
             print("Freeze observation Normalizer.")
             self.agent.freeze_normalizers()
+            
+        # Calculate the memory usage of training. Used for eligibility traces and could be used for batch_size determination:
+        self.agent.calc_mem_usage()
+        # Update targets to calc initial elig traces:
+        self.agent.update_targets(0, 0)
 
         if self.use_expert_data and self.do_pretrain:
             pretrain_steps = int(self.pretrain_percentage * n_steps)
@@ -415,13 +423,12 @@ class Trainer:
             pretrain_time = int(self.pretrain_percentage * n_hours)
             if pretrain_episodes:
                 pretrain_steps = pretrain_episodes * 5000
-                # TODO: instead of hardcoding 5000 get an expected episode duration from somewhere
+                # TODO: instead of hardcoding 5000 get an expected episode duration by taking the mean episode length of the data
 
             self.pretrain(pretrain_steps, pretrain_time, start_time)
             steps_done += pretrain_steps
             i_episode += pretrain_episodes
 
-        # TODO: For MineRL only train for a certain amount of time: stop after something like 99% of all training time at least leave 10-30 mins empty
 
         # Do the actual training:
         print("Start training in the env:")
@@ -456,7 +463,7 @@ class Trainer:
                 non_optimize_time = 0
                 if time_after_optimize is not None:
                     non_optimize_time = time_before_optimize - time_after_optimize
-                self.log.add("Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
+                self.log.add("Timings/Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
 
                 # Optimize the agent (on the target network)      
                 self.agent.optimize(steps_done, train_fraction)
@@ -468,7 +475,7 @@ class Trainer:
                 #if len(self.log.get_episodic("Train_Reward")) >= 1:
                  #   self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")),
                  #                skip_steps=self.log_freq)
-                self.log.add("Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
+                self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
                              store_episodic=True)
 
                 if render:

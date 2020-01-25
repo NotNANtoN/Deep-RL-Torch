@@ -6,6 +6,7 @@ import copy
 import logging
 import gym
 import torch
+from pynvml import *
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 try:
     from apex import amp
@@ -16,7 +17,8 @@ except:
 from deep_rl_torch.experience_buffer import ReplayBuffer, PrioritizedReplayBuffer, ReplayBufferNew
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
-# Silent error - but it will be raised in trainer.py, so it is fine
+
+# Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 
 
 
@@ -73,6 +75,10 @@ class BasePolicy:
 
         # TODO: -add goal to replay buffer and Transition (For HRL)
         # Eligibility traces:
+        nvmlInit()
+        self.nvml_handle = nvmlDeviceGetHandleByIndex(0)
+        self.max_gpu_bytes = torch.cuda.get_device_properties(self.device).total_memory
+        self.mem_usage = None
         self.current_episode = []
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
         self.elig_traces_update_steps = hyperparameters["elig_traces_update_steps"]
@@ -108,7 +114,8 @@ class BasePolicy:
             obs_sample = self.env.observation_space.sample()
             #action_sample = self.env.action_space.sample()
             action_space = self.env.action_space
-            memory = ReplayBufferNew(self.buffer_size, obs_sample, action_space, self.batch_size, False, 0, self.device, use_CER=self.use_CER)
+            worker = self.hyperparameters["worker"]
+            memory = ReplayBufferNew(self.buffer_size, obs_sample, action_space, self.batch_size, False, worker, self.device, use_CER=self.use_CER)
             self.get_transitions = self.get_transitions_new
             return memory
         if self.use_PER:
@@ -165,7 +172,7 @@ class BasePolicy:
                     pass
                 else:
                     self.recent_q_val = torch.max(raw_action)
-                self.log.add("Q-val", self.recent_q_val, skip_steps=10)
+                    self.log.add("Q-val", self.recent_q_val, skip_steps=10)
             # Add Gaussian noise:
             if self.gaussian_action_noise:
                 raw_action = self.add_noise(raw_action)
@@ -266,7 +273,7 @@ class BasePolicy:
         before_sampling = time.time()
         # Get Batch:
         transitions = self.get_transitions()
-        self.log.add("Sampling_Time", time.time() - before_sampling, skip_steps=self.log_freq, store_episodic=True)
+        self.log.add("Timings/Sampling_Time", time.time() - before_sampling, skip_steps=self.log_freq, store_episodic=True)
         # Extract state features
         self.extract_features(transitions)
         # Optimize:
@@ -401,7 +408,7 @@ class BasePolicy:
         if self.actor is not None:
             self.actor.retain_graph = val
 
-    def remember(self, state, action, reward, next_state, done):
+    def remember(self, state, action, reward, next_state, done, filling_buffer=False):
         if self.use_efficient_traces:
             transition = (state, action, reward, next_state, done)
             self.current_episode.append(transition)
@@ -410,8 +417,9 @@ class BasePolicy:
                     self.memory.add(state, action, reward, next_state, done, store_episodes=True)
                 self.current_episode = []
                 # Update episode trace:
-                most_recent_episode, idxs = self.memory.get_most_recent_episode()
-                self.update_episode_trace(most_recent_episode, idxs)
+                if not filling_buffer:
+                    most_recent_episode, idxs = self.memory.get_most_recent_episode()
+                    self.update_episode_trace(most_recent_episode, idxs)
 
         else:
             self.memory.add(state, action, reward, next_state, done)
@@ -458,43 +466,53 @@ class BasePolicy:
         if biggest == 0:
             raise ValueError("No tensor of a size was found in the observation sample!")
         return biggest
+    
+    def calc_max_batch_size(self):
+        # Calculate remaining gpu mem:
+        current_gpu_bytes = nvmlDeviceGetMemoryInfo(self.nvml_handle).used #torch.cuda.memory_allocated(self.device)
+        
 
+        available_gpu_bytes = self.max_gpu_bytes - current_gpu_bits
+        # Leave some room, at least 4mb:
+        available_gpu_bytes -= 4 * 1024 ** 2
+        max_batch_size = available_gpu_bytes // self.mem_usage
+        #print("Mem per transition: ", self.mem_usage / 1024 ** 2)
+        #print("Available mbs: ", available_gpu_bytes / 1024 ** 2)
+        #print("Max batch size: ", max_batch_size)
+        return max_batch_size
+
+    def split_batch(self, batch, start_idx, end_idx):
+        return apply_rec_to_dict(lambda x: x[start_idx:end_idx], batch)
+        
+    
     def update_episode_trace(self, episode, idxs):
         if episode == []:
             return
 
         # Split batch into chunks to avoid overloading GPU memory:
-        if torch.cuda.is_available() and 0 == 1:
-            # Get size of largest tensor in observation:
-            sample = self.env.observation_space.sample()
-            if isinstance(sample, dict):
-                size = self.get_largest_tensor_size_from_dict(sample)
+        if torch.cuda.is_available():
+            #ep_len = episode["rewards"].shape[0]
+            ep_len = len(episode)
+            max_batch_size = self.calc_max_batch_size()
+            if ep_len > max_batch_size:
+                ep_starts = range(0, ep_len, max_batch_size)
+                ep_ends = [min(start_idx + max_batch_size, len(episode))  for start_idx in ep_starts]
+                #episode_parts = [self.split_batch(episode, start_idx, end_idx) for start_idx, end_idx in zip(ep_starts, ep_end)]
+                episode_parts = [episode[start_idx:end_idx] for start_idx, end_idx in zip(ep_starts, ep_end)]
             else:
-                size = self.get_tensor_size(sample)
-            # Calculate remaining gpu mem:
-            max_gpu_mem_bits = torch.cuda.get_device_properties(self.device).total_memory
-            current_gpu_mem_bits = torch.cuda.memory_allocated(self.device)
-            available_gpu_mem_bits = max_gpu_mem_bits - current_gpu_mem_bits
-            # TODO: to calculate memory usage for a single batch: calculate usage for 2 batchsize and tor 1. substract the latter from the first
-
-            # TODO: subtract at least 777mb for pytorch init ( or 1668mb in total for 2 displays aded)
-            # TODO: see the following lines to do it properly:
-            #from pynvml import *
-            #nvmlInit()
-            #h = nvmlDeviceGetHandleByIndex(0)
-            #info = nvmlDeviceGetMemoryInfo(h)
-            #print(f'total    : {info.total}')
-            #print(f'free     : {info.free}')
-            #print(f'used     : {info.used}')
-            # TODO: we also need to leave at least 3.5mb free
-
-        episode_transitions = self.extract_batch(episode)
-        episode_transitions["idxs"] = idxs
-        self.extract_features(episode_transitions)
-        if self.V is not None:
-            self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q)
-        if self.Q is not None:
-            self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None)
+                episode_parts = [episode]
+        else:
+            episode_parts = [episode]
+        # Update traces:
+        last_trace_value = None
+        for episode_part in episode_parts:
+            episode_transitions = self.extract_batch(episode_part)
+            episode_transitions["idxs"] = idxs
+            self.extract_features(episode_transitions)
+            if self.V is not None:
+                last_trace_value = self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q, last_trace_value=last_trace_value)
+            if self.Q is not None:
+                last_trace_value = self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None, last_trace_value=last_trace_value)
 
         # TODO: when calculating eligibility traces we could also estimate the TD error for PER
 

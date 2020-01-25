@@ -44,6 +44,7 @@ def create_parser():
     parser.add_argument("--PER_beta", type=float, default=0.4)
     parser.add_argument("--PER_anneal_beta", type=int, default=1)
     parser.add_argument("--use_CER", type=int, default=1)
+    parser.add_argument("--worker", type=int, default=0)
     # Expert Data:
     parser.add_argument("--use_expert_data", type=int, default=0)
     parser.add_argument("--pretrain_percentage", type=float, default=0.1)

@@ -66,6 +66,7 @@ class Agent(AgentInterface):
         self.save_threshold = hyperparameters["save_percentage"]
         self.stored_percentage = 0
         self.load_path = hyperparameters["load_path"]
+        self.batch_size = hyperparameters["batch_size"]
 
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
@@ -131,8 +132,8 @@ class Agent(AgentInterface):
         return policy
 
     #@profile
-    def remember(self, state, action, next_state, reward, done):
-        self.policy.remember(state, action, next_state, reward, done)
+    def remember(self, state, action, next_state, reward, done, filling_buffer=False):
+        self.policy.remember(state, action, next_state, reward, done, filling_buffer=filling_buffer)
 
     #@profile
     def optimize(self, steps_done, train_fraction):
@@ -147,7 +148,12 @@ class Agent(AgentInterface):
         # Reduce epsilon and other exploratory values:
         self.decay_exploration(steps_done, train_fraction)
                     
-                   
+    def backward(self, loss):
+        if self.use_half:
+            with amp.scale_loss(loss, self.optimizer) as loss_scaled:
+                loss_scaled.backward()
+        else:
+            loss.backward()
             
     def optimize_nets(self):
         """ Optimizes the networks by sampling a batch """
@@ -155,11 +161,7 @@ class Agent(AgentInterface):
 
         if self.optimize_centrally:
             self.optimizer.zero_grad()
-            if self.use_half:
-                with amp.scale_loss(loss, self.optimizer) as loss_scaled:
-                    loss_scaled.backward()
-            else:
-                loss.backward()
+            self.backward(loss)
             # Scale gradient of networks according to how many outgoing networks it receives gradients from
             self.F_s.scale_gradient()
             if self.F_sa is not None:
@@ -167,13 +169,40 @@ class Agent(AgentInterface):
             #self.policy.scale_gradient()
             # TODO: do we need to scale the gradients of the policy? Could be scaled according to ratio of network lr to general_lr
             self.optimizer.step()
-
+    
+            # TODO: Maybe log more useful info than all weights and grads (grad norm, maximum weight, weight norm)
             # Log gradients and weights:
             #self.F_s.log_nn_data("")
             #if self.F_sa is not None:
             #    self.F_sa.log_nn_data("")
             #self.policy.log_nn_data()
-
+    
+    def calc_mem_usage(self):
+        """ Calculates the memory usage of training.
+        
+        Returns the use CUDA memory of optimizing the network on a single transition.
+        
+        Requires that enough transitions are stored in memory such that self.policy.optimize is callable"""
+        test_tensor = torch.tensor([0], dtype=torch.bool, device=self.device)
+        batch_results = []
+        for _ in range(1):
+            # Measure baseline:
+            torch.cuda.reset_peak_memory_stats()
+            base_use = torch.cuda.max_memory_allocated()
+            print("base: ", base_use / 1024 / 1024)
+            loss = self.policy.optimize()
+            self.backward(loss)
+            after_opt = torch.cuda.max_memory_allocated()
+            print("after: ", after_opt / 1024 / 1024)
+            batch_use = after_opt - base_use
+            batch_results.append(batch_use)
+        mean_batch = np.mean(batch_results)
+        single_transition = mean_batch / self.batch_size
+        self.policy.mem_usage = single_transition
+        print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
+        return single_transition
+        
+        
 
     def explore(self, state, fully_random=False):
         return self.policy.explore(state, fully_random)

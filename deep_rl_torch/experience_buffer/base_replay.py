@@ -11,7 +11,7 @@ Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
                                                   
 class RLDataset(torch.utils.data.Dataset):
-    def __init__(self, max_size, sample, action_space, size_expert_data, max_weight=0):
+    def __init__(self, max_size, sample, action_space, size_expert_data, max_weight=1):
         self.max_weight = max_weight
         self.max_size = max_size + size_expert_data
         self.size_expert_data = size_expert_data
@@ -31,13 +31,14 @@ class RLDataset(torch.utils.data.Dataset):
             action_shp = [action_space.n]
         else:
             raise TypeError("Unsupport action space type: " + str(action_space))
-        
-        self.states = torch.empty([max_size] + shp, dtype=sample.dtype)
-        self.rewards = torch.empty(max_size)
-        self.actions = torch.empty([max_size] + action_shp)
-        self.dones = torch.empty(max_size, dtype=torch.bool)
-        self.weights = torch.empty(max_size)
+        # TODO: change zeros back to empty when done with debugging
+        self.states = torch.zeros([max_size] + shp, dtype=sample.dtype)
+        self.rewards = torch.zeros(max_size)
+        self.actions = torch.zeros([max_size] + action_shp)
+        self.dones = torch.zeros(max_size, dtype=torch.bool)
+        self.weights = torch.zeros(max_size)
         self.next_idx = 0
+        self.curr_idx = 0
         self.looped_once = False
         
     def add(self, state, action, next_state, reward, done, store_episodes=False):
@@ -54,18 +55,24 @@ class RLDataset(torch.utils.data.Dataset):
         pass
         
         # 3.
-        self.increment_idx()
-        
-        # TODO: this way we cannot sample the lastly stored pair - no next state is stored yet!
-        
-    def increment_idx(self):
+        self.curr_idx = self.next_idx
+        self.next_idx = self.increment_idx(self.next_idx)
+                
+    def increment_idx(self, index):
         """ Loop the idx from front to end. Skip expert data, as we want to keep that forever"""
-        self.next_idx += 1
-        remainder = self.next_idx % self.max_size
+        index += 1
+        remainder = index % self.max_size
         if remainder == 0: 
-            self.next_idx = 0 + self.size_expert_data
+            index = 0 + self.size_expert_data
             self.looped_once = True
+        return index
             
+    def decrement_idx(self, index):
+        index -= 1
+        if index < 0:
+            index = len(self) - 1
+        return index
+        
     def __len__(self):
         """ Return number of transitions stored so far """
         if self.looped_once:
@@ -75,6 +82,10 @@ class RLDataset(torch.utils.data.Dataset):
         
     def __getitem__(self, index):
         """ Return a single transition """
+        # Check if the last state is being attempted to sampled - it has no next state yet:
+        if index == self.curr_idx:
+            index = self.decrement_idx(index)
+        # Check if there is a next_state:
         next_state = self.states[index + 1] if not self.dones[index] else None
         return self.states[index], self.actions[index], self.rewards[index], next_state, torch.tensor(index), self.weights[index]
         
@@ -113,7 +124,7 @@ class ReplayBufferNew(object):
     def add(self, state, action, next_state, reward, done, store_episodes=False):
         self.data.add(state, action, next_state, reward, done, store_episodes)
         
-    def sample_maybe_does_not_work(self):
+    def sample_mult_worker_prob(self):
         try:
             out = next(self.iter)
         except StopIteration:
