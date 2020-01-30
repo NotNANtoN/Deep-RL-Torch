@@ -8,6 +8,7 @@ import gym
 import torch
 from pynvml import *
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
+# Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 try:
     from apex import amp
 except:
@@ -18,7 +19,6 @@ from deep_rl_torch.experience_buffer import ReplayBuffer, PrioritizedReplayBuffe
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
 
-# Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 
 
 
@@ -472,7 +472,7 @@ class BasePolicy:
         current_gpu_bytes = nvmlDeviceGetMemoryInfo(self.nvml_handle).used #torch.cuda.memory_allocated(self.device)
         
 
-        available_gpu_bytes = self.max_gpu_bytes - current_gpu_bits
+        available_gpu_bytes = self.max_gpu_bytes - current_gpu_bytes
         # Leave some room, at least 4mb:
         available_gpu_bytes -= 4 * 1024 ** 2
         max_batch_size = available_gpu_bytes // self.mem_usage
@@ -504,15 +504,16 @@ class BasePolicy:
         else:
             episode_parts = [episode]
         # Update traces:
-        last_trace_value = None
+        last_trace_value_Q = None
+        last_trace_value_V = None
         for episode_part in episode_parts:
             episode_transitions = self.extract_batch(episode_part)
             episode_transitions["idxs"] = idxs
             self.extract_features(episode_transitions)
             if self.V is not None:
-                last_trace_value = self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q, last_trace_value=last_trace_value)
+                last_trace_value_V = self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q, last_trace_value=last_trace_value_V)
             if self.Q is not None:
-                last_trace_value = self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None, last_trace_value=last_trace_value)
+                last_trace_value_Q = self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None, last_trace_value=last_trace_value_Q)
 
         # TODO: when calculating eligibility traces we could also estimate the TD error for PER
 
@@ -520,7 +521,7 @@ class BasePolicy:
         # Update lambda val:
         if self.elig_traces_anneal_lambda and train_fraction is not None:
             self.lambda_val = 1.0 * (1 - train_fraction)
-        # Update traces if its time:
+        # Update traces if it's time:
         if n_steps % self.elig_traces_update_steps == 0:
             episodes, idx_list = self.memory.get_all_episodes()
             # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
