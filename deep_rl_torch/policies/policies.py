@@ -6,20 +6,18 @@ import copy
 import logging
 import gym
 import torch
-from pynvml import *
+from pynvml import nvmlDeviceGetMemoryInfo, nvmlDeviceGetHandleByIndex
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 # Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 try:
     from apex import amp
-except:
+except ImportError:
     pass
 
 # Internal Imports:
 from deep_rl_torch.experience_buffer import ReplayBuffer, PrioritizedReplayBuffer, ReplayBufferNew
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
-
-
 
 
 class BasePolicy:
