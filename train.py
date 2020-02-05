@@ -135,8 +135,8 @@ if __name__ == "__main__":
         "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
     }
 
-    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr? - apparently AdamW (in PyTorch) decouples weight decay properly from optimizer
-#
+    # TODO: Introduce lr schedule - cosine anneal and more
+    
     parameters.update(arg_dict)
     # Convert strings in hyperparams to objects:
     # optimizer:

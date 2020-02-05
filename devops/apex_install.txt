@@ -1,0 +1,46 @@
+To install apex correctly (including cpp) we need a torch installation that is linked with a cuda toolkit of the same version.
+
+Normal pip or conda torch does not bring a full CUDA installation with it. Thus the bindings of torch need to be linked to the correct CUDA version on the machine. The default linkage will go to usr/bin/nvcc, which is usually empty.
+
+Therefore, we might need to install torch from source. To do so we first need to properly install CUDA. After installation of CUDA, make sure to link the libraries correctly: step 7 in https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html. The most important commands are:
+export LD_LIBRARY_PATH=/usr/local/cuda-10.2/lib64\
+                         ${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+export LD_LIBRARY_PATH=/usr/local/cuda-10.2/lib\
+                         ${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+                         
+Now nvcc should be callable in the command line and "nvcc --version" should return version 10.2
+
+After verifying this, we can try installing pytorch from source. Follow the instructions from the master in git and before the "python setup.py install" call add the CUDA_HOME destination by changing the call to "BUILD_TEST=0 CUDA_HOME=/usr/local/cuda-10.2 python setup.py install"
+
+unfortunately, this does not work yet: [2829/3063] Building CXX object caffe2/CM...11_state_gpu.dir/python/pybind_state.cc.o
+ninja: build stopped: subcommand failed.
+Traceback (most recent call last):
+  File "setup.py", line 737, in <module>
+    build_deps()
+  File "setup.py", line 316, in build_deps
+    cmake=cmake)
+  File "/home/anton/pytorch/tools/build_pytorch_libs.py", line 62, in build_caffe2
+    cmake.build(my_env)
+  File "/home/anton/pytorch/tools/setup_helpers/cmake.py", line 339, in build
+    self.run(build_args, my_env)
+  File "/home/anton/pytorch/tools/setup_helpers/cmake.py", line 141, in run
+    check_call(command, cwd=self.build_dir, env=env)
+  File "/home/anton/anaconda3/lib/python3.7/subprocess.py", line 363, in check_call
+    raise CalledProcessError(retcode, cmd)
+subprocess.CalledProcessError: Command '['cmake', '--build', '.', '--target', 'install', '--config', 'Release', '--', '-j', '16']' returned non-zero exit status 1.
+=> maybe not enough memory? probably not, need only baout 12Gs of memory....
+
+I just tried copy pasting the 10.2 nvcc version into the "usr/lib" location, but that failed too.
+
+New idea: https://dmitry.ai/t/topic/33/2 Look up .deb file for cuda 10.1 and try installing that instead of 10.2. Then it might work? I still think that the pytorch pip/conda version will not point to the correct nvcc...
+
+This works! Install cuda 10.1 according to the instructions. Then:
+python setup.py install --cuda_ext --cpp_ext --pyprof --user 
+in the apex git
+
+-----
+
+Now try installing apex
+
+
+(maybe export TORCH_CUDA_ARCH_LIST="7.2" is needed for apex installation at some point)
