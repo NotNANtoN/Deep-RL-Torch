@@ -86,13 +86,11 @@ class TempDiffNet(OptimizableNet):
         with torch.no_grad():
             next_state_vals = self.predict_next_state(non_final_next_state_features, non_final_mask, actor=actor, Q=Q,
                                                           V=V, use_target_net=False)
-
+        
         traces = torch.empty(num_steps_in_episode, device=self.device)
         if last_trace_value is None:
             last_trace_value = 0
-        # Iterate backwards through transitions in the episode:
-        #for step_idx in range(0, num_steps_in_episode):
-        #    reversed_idx = num_steps_in_episode - 1 - step_idx
+        
         for idx in range(num_steps_in_episode - 1, -1, -1):
             current_trace_val = rewards[idx].clone()
             if non_final_mask[idx]:
@@ -101,7 +99,7 @@ class TempDiffNet(OptimizableNet):
             traces[idx] = current_trace_val
             last_trace_value = current_trace_val
 
-        # If split the direct reward prediction is taken care of another network
+        # If split the direct reward prediction is taken care of another network:
         if self.split:
             traces -= rewards.squeeze()
             #traces = [trace - rewards[idx] for idx, trace in enumerate(traces)]

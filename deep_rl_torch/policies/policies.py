@@ -6,6 +6,7 @@ import copy
 import logging
 import gym
 import torch
+from tqdm import tqdm
 from pynvml import nvmlDeviceGetMemoryInfo, nvmlDeviceGetHandleByIndex
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 # Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
@@ -522,8 +523,9 @@ class BasePolicy:
         # Update traces if it's time:
         if n_steps % self.elig_traces_update_steps == 0:
             episodes, idx_list = self.memory.get_all_episodes()
+            print("Updating traces. Number of episodes to update: ", len(episodes))
             # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
-            for episode, idxs in zip(episodes, idx_list):
+            for episode, idxs in tqdm(zip(episodes, idx_list)):
                 self.update_episode_trace(episode, idxs)
 
     def freeze_normalizers(self):
