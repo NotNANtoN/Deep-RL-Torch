@@ -75,64 +75,6 @@ def display_top_memory_users(key_type='lineno', limit=3, censored=True):
     print()
 
 
-def calculate_reduced_idxs(len_of_point_list, max_points):
-    if max_points != 0:
-        step_size = len_of_point_list // max_points
-        step_size += 1 if len_of_point_list % max_points else 0
-    else:
-        return range(len_of_point_list)
-    return range(0, len_of_point_list, step_size)
-
-
-def reducePoints(list_of_points, max_points_per_line):
-    if max_points_per_line != 0:
-        step_size = len(list_of_points) // max_points_per_line
-        step_size += 1 if len(list_of_points) % max_points_per_line else 0
-    else:
-        return range(len(list_of_points)), list_of_points
-    steps = range(0, len(list_of_points), step_size)
-    list_of_points = [np.mean(list_of_points[i:i + step_size]) for i in steps]
-    return list_of_points
-
-
-def mean_final_percent(result_list, percentage=0.1):
-    final_percent_idx = int(len(result_list) * (1 - percentage))
-    return np.mean(result_list[final_percent_idx:])
-
-
-def run_metric(result_list, percentage=0.1, final_percentage_weight=1):
-    return np.mean(result_list) * (1 - final_percentage_weight) + mean_final_percent(result_list,
-                                                                                     percentage) * final_percentage_weight
-
-
-def plot_rewards(rewards, name=None, xlabel="Step"):
-    plt.figure(2)
-    plt.clf()
-    plt.title('Training...')
-    plt.xlabel(xlabel)
-    plt.ylabel('Return of current Episode')
-
-    idxs = calculate_reduced_idxs(len(rewards), 1000)
-    rewards = reducePoints(rewards, 1000)
-
-    plt.plot(idxs, rewards)
-    # Apply mean-smoothing and plot result
-    window_size = len(rewards) // 10
-    window_size += 1 if window_size % 2 == 0 else 0
-    means = meanSmoothing(rewards, window_size)
-    max_val = np.max(means)
-    min_val = np.min(means)
-    # plt.ylim(min_val, max_val * 1.1)
-    plt.plot(idxs, means)
-    if name is None:
-        plt.savefig("current_test.pdf")
-    else:
-        plt.savefig(name + "_current.pdf")
-    plt.pause(0.001)  # pause a bit so that plots are updated
-    if is_ipython:
-        display.clear_output(wait=True)
-        display.display(plt.gcf())
-
 
 class SizeEstimator(object):
 

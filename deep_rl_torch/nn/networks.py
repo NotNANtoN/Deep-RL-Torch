@@ -23,6 +23,7 @@ class OptimizableNet(nn.Module):
         self.log_freq = hyperparameters["log_freq"]
         self.device = device
         self.hyperparameters = hyperparameters
+        self.verbose = hyperparameters["verbose"]
 
         # Env Action Space:
         self.discrete_env = True if "Discrete" in str(env.action_space) else False

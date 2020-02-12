@@ -50,9 +50,11 @@ class AgentInterface:
 
 class Agent(AgentInterface):
     def __init__(self, env, device, log, hyperparameters):
+        self.verbose = hyperparameters["verbose"]
         self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
-        print(env.action_space)
-        print("Env with discrete action space: ", self.discrete_env)
+        if self.verbose:
+            print(env.action_space)
+            print("Env with discrete action space: ", self.discrete_env)
         self.env = env
         self.device = device
         self.log = log
@@ -84,7 +86,7 @@ class Agent(AgentInterface):
 
     def init_feature_extractors(self):
         F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
-        if self.log:
+        if self.log and self.verbose:
             print("F_s:")
             print(F_s)
         if self.use_half:
@@ -93,7 +95,7 @@ class Agent(AgentInterface):
         if self.use_actor_critic:
             state_feature_len = F_s.layers_merge[-1].out_features
             F_sa = ProcessStateAction(state_feature_len, self.env, self.log, self.device, self.hyperparameters)
-            if self.log:
+            if self.log and self.verbose:
                 print("F_sa:")
                 print(self.F_sa)
             if self.use_half:
@@ -120,10 +122,12 @@ class Agent(AgentInterface):
         if self.hyperparameters["use_hrl"]:
             policy = HierarchicalPolicy(base_policy, ground_policy, self.log, self.hyperparameters)
         else:
-            print("Base Policy (will act concretely): ", base_policy)
-            print("Ground Policy (will use base policy): ", ground_policy)
+            if self.verbose:
+                print("Base Policy (will act concretely): ", base_policy)
+                print("Ground Policy (will use base policy): ", ground_policy)
             if self.hyperparameters["use_MineRL_policy"]:
-                print("Use Hierarchical MineRL policy!")
+                if self.verbose:
+                    print("Use Hierarchical MineRL policy!")
                 policy = MineRLHierarchicalPolicy(ground_policy, base_policy, self.F_s, self.F_sa, self.env,
                                                   self.device, self.log, self.hyperparameters)
             else:
@@ -189,17 +193,20 @@ class Agent(AgentInterface):
             # Measure baseline:
             torch.cuda.reset_peak_memory_stats()
             base_use = torch.cuda.max_memory_allocated()
-            print("base: ", base_use / 1024 / 1024)
+            if self.verbose:
+                print("base: ", base_use / 1024 / 1024)
             loss = self.policy.optimize()
             self.backward(loss)
             after_opt = torch.cuda.max_memory_allocated()
-            print("after: ", after_opt / 1024 / 1024)
+            if self.verbose:
+                print("after: ", after_opt / 1024 / 1024)
             batch_use = after_opt - base_use
             batch_results.append(batch_use)
         mean_batch = np.mean(batch_results)
         single_transition = mean_batch / self.batch_size
         self.policy.mem_usage = single_transition
-        print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
+        if self.verbose:
+            print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
         return single_transition
         
         

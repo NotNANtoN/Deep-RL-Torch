@@ -28,8 +28,9 @@ def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, sta
         fraction = time_diff / n_hours
     return fraction
 
+
 class Trainer:
-    def __init__(self, env_name, hyperparameters, log=True, tb_comment=""):
+    def __init__(self, env_name, hyperparameters, log=True, tb_comment="", verbose=False):
         # Init logging:
         self.path = os.getcwd()
         self.log = Log(self.path + '/tb_log', log, tb_comment, env_name)
@@ -38,7 +39,9 @@ class Trainer:
         self.rgb2gray = hyperparameters["rgb_to_gray"]
         self.pin_tensors = hyperparameters["pin_tensors"]
         self.store_on_gpu = hyperparameters["store_on_gpu"]
+        hyperparamters["verbose"] = verbose
         self.hyperparameters = hyperparameters
+        self.verbose = verbose
 
         # Init env:
         self.env_name = env_name
@@ -135,7 +138,8 @@ class Trainer:
         return reward
 
     def move_expert_data_into_buffer(self, data):
-        print("Moving Expert Data into the replay buffer...")
+        if self.verbose:
+            print("Moving Expert Data into the replay buffer...")
         pbar = tqdm(total=len(data), disable=self.disable_tqdm)
         while len(data) > 0:
             pbar.update(1)
@@ -206,7 +210,8 @@ class Trainer:
         # TODO: apply frameskip here! (if used)
 
     def load_expert_data_MineRL(self):
-        print("Loading expert MineRL data...")
+        if self.verbose:
+            print("Loading expert MineRL data...")
         folder = 'data'
         if not os.path.exists(folder):
             os.mkdir(folder)
@@ -231,7 +236,8 @@ class Trainer:
             raise NotImplementedError("No expert data loading for this environment is implemented at the moment.")
 
     def pretrain(self, steps, hours, start_time):
-        print("Pretraining on expert data...")
+        if self.verbose:
+            print("Pretraining on expert data...")
         # TODO: implement supervised leanring according to DQfD
 
         # TODO: implement weight decay according to DQfD
@@ -262,13 +268,15 @@ class Trainer:
 
                 if (time.time() - start_time) / 360 >= hours:
                     break
-        print("Done Pretraining.")
+        if self.verbose:
+            print("Done Pretraining.")
 
         #self.policy.set_weight_decay(0)
 
     def fill_replay_buffer(self, n_steps):
         assert n_steps > 0
-        print("Filling Replay Buffer....")
+        if self.verbose:
+            print("Filling Replay Buffer....")
         state = self.env.reset()
         rewards = collections.defaultdict(int)
 
@@ -297,7 +305,8 @@ class Trainer:
                     reward = reward.item()
                 rewards[reward] += 1
                 if len(rewards) > 1:
-                    print("Encountered a new reward value. Rewards; ", rewards)
+                    if self.verbose:
+                        print("Encountered a new reward value. Rewards; ", rewards)
                     do_break = True
             else:
                 i += 1
@@ -313,8 +322,9 @@ class Trainer:
                     break
 
 
-        print("Done with filling replay buffer.")
-        print()
+        if self.verbose:
+            print("Done with filling replay buffer.")
+            print()
 
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, filling_buffer=False):
@@ -399,7 +409,7 @@ class Trainer:
 
     def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
         assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
-
+        verbose = verbose or self.verbose
         steps_done = 0
         i_episode = 0
         start_time = time.time()
@@ -409,7 +419,8 @@ class Trainer:
             self.fill_replay_buffer(n_steps=self.n_initial_random_actions)
 
         if self.freeze_normalizer:
-            print("Freeze observation Normalizer.")
+            if verbose:
+                print("Freeze observation Normalizer.")
             self.agent.freeze_normalizers()
             
         # Calculate the memory usage of training. Used for eligibility traces and could be used for batch_size determination:
@@ -431,7 +442,8 @@ class Trainer:
 
 
         # Do the actual training:
-        print("Start training in the env:")
+        if verbose:
+            print("Start training in the env:")
         time_after_optimize = None
         #pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
         train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
@@ -453,7 +465,8 @@ class Trainer:
                     self.stored_percentage = train_fraction
                     test_return = self.evaluate_model()
                     self.log.add("Test Return", test_return, steps=steps_done)#steps=train_fraction * 100)
-                    print("Model performance after ", steps_done, "steps: ", test_return)
+                    if verbose:
+                        print("Model performance after ", steps_done, "steps: ", test_return)
 
                 # Move to the next state
                 state = next_state
@@ -500,13 +513,14 @@ class Trainer:
 
         # Save the model:
         self.agent.update_targets(steps_done, train_fraction=1.0)
-        print('Done.')
-        self.log.flush()
+        if verbose:
+            print('Done.')
+        
         self.env.close()
         #pbar.close()
-        return i_episode
+        return i_episode, self.log
         
     def close(self):
         self.env.close()
-        #self.log.close()
+        self.log.flush()
 

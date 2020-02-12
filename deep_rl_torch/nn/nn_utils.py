@@ -74,7 +74,6 @@ def create_conv_layers(input_matrix_shape, layer_dict):
         act_functs.append(query_act_funct(layer))
 
     conv_output_size = matrix_width * matrix_height * channel_last_layer
-    print("Conv layer output size: ", conv_output_size)
 
     return layers, conv_output_size, act_functs
 
