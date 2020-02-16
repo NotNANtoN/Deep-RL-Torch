@@ -1,0 +1,3 @@
+[submodule "envs/gym_aigar"]
+	path = envs/gym_aigar
+	url = git://github.com/NotNANtoN/gym_aigar
