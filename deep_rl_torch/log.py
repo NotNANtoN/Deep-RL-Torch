@@ -18,14 +18,29 @@ class Log(object):
         self.global_step = 0
         self.tb_path = 'runs'
         #self.run_tb()
+        
+    def __getitem__(self, key):
+        key = self.transform_name(key)
+        return self.storage[key]
+    
+    def __iter__(self):
+        for key in self.storage:
+            yield key
 
     def flush_episodic(self):
         self.episodic_storage = {}
 
     def get_episodic(self, name):
+        name = self.transform_name(name)
         return self.episodic_storage[name]
 
+    def transform_name(self, name):
+        return name.replace("/", "_")
+        
     def _add_to_storage(self, storage, name, value):
+        name = self.transform_name(name)
+        if isinstance(value, torch.Tensor):
+            value = value.cpu().detach().item()
         try:
             storage[name].append(value)
         except KeyError:
@@ -64,7 +79,8 @@ class Log(object):
 
     def add(self, name, value, distribution=False, make_distribution=False, steps=None, skip_steps=0,
             store_episodic=False):
-        #self._add_to_storage(self.storage, name, value)
+        if not distribution and not make_distribution:
+            self._add_to_storage(self.storage, name, value)
         if store_episodic:
             self._add_to_storage(self.episodic_storage, name, value)
 

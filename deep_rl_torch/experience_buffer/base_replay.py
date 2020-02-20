@@ -88,11 +88,19 @@ class RLDataset(torch.utils.data.Dataset):
         # Check if there is a next_state:
         next_state = self.states[index + 1] if not self.dones[index] else None
         return self.states[index], self.actions[index], self.rewards[index], next_state, torch.tensor(index), self.weights[index]
+    
+    def __iter__(self):
+        while True:
+            idx = random.randint(0, len(self))
+            yield self[idx]
         
     def update_stored_hidden_states(self, idxs, hidden_states, seq_lens):
         """ For R2D2, eventually. Updates the stored hidden states """
         pass
        
+    
+    def stack_frames(self, frames):
+        return torch.cat(list(frames), dim=self.stack_dim)
     
 
 class ReplayBufferNew(object):
@@ -114,7 +122,7 @@ class ReplayBufferNew(object):
         #self.episodic_idxs = [[]]
         
         sampler = self.construct_sampler(self.data)
-        self.dataloader = torch.utils.data.DataLoader(self.data, batch_size=batch_size, sampler=sampler,
+        self.dataloader = torch.utils.data.DataLoader(self.data, batch_size=batch_size,# sampler=sampler,
                                                   pin_memory=pin_mem,
                                                   num_workers=workers,
                                                   collate_fn=self.collate_batch)
@@ -124,16 +132,17 @@ class ReplayBufferNew(object):
     def add(self, state, action, next_state, reward, done, store_episodes=False):
         self.data.add(state, action, next_state, reward, done, store_episodes)
         
-    def sample_mult_worker_prob(self):
+    def sample(self):
         try:
             out = next(self.iter)
         except StopIteration:
             self.iter = iter(self.dataloader)
             out = next(self.iter)
+        out = self.move_batch(out)
         return out
     
-    def sample(self):
-        return next(iter(self.dataloader))
+    def sample_unsafe(self):
+        return next(self.iter)
         
     def sample_returns_generator(self):
         """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """    
@@ -157,10 +166,22 @@ class ReplayBufferNew(object):
         print("len of loader: ", size)
         return size
             
-    def stack_and_move(self, data):
+    def stack(self, data):
         if isinstance(data, dict):
-            return apply_rec_to_dict(lambda x: torch.stack(x).to(self.device), data)
-        return torch.stack(data).to(self.device)
+            return apply_rec_to_dict(lambda x: torch.stack(x), data)
+        return torch.stack(data)
+    
+    def move_batch(self, batch):
+        for key in batch:
+            content = batch[key]
+            if content is None:
+                continue
+            if isinstance(content, dict):
+                new_cont = apply_rec_to_dict(lambda x: x.to(self.device))
+            else:
+                new_cont = content.to(self.device)
+            batch[key] = new_cont
+        return batch
         
     def collate_batch(self, batch):
         # Create dict:
@@ -171,20 +192,21 @@ class ReplayBufferNew(object):
         batch_dict["non_final_mask"] = torch.tensor([val is not None for val in batch_dict["next_states"]]).bool()
         batch_dict["non_final_next_states"] = [state for state in batch_dict["next_states"] if state is not None]
         if batch_dict["non_final_next_states"] != []:
-            batch_dict["non_final_next_states"] = self.stack_and_move(batch_dict["non_final_next_states"])
+            batch_dict["non_final_next_states"] = self.stack(batch_dict["non_final_next_states"])
         else:
             batch_dict["non_final_next_states"] = None
         del batch_dict["next_states"]
         # Action argmax:
-        batch_dict["action_argmax"] = torch.argmax(self.stack_and_move(batch_dict["actions"]), 1).unsqueeze(1)
+        batch_dict["action_argmax"] = torch.argmax(self.stack(batch_dict["actions"]), 1).unsqueeze(1)
         # Stack in tensors:
         for key in batch_dict:
             if key in ["action_argmax", "non_final_mask", "non_final_next_states"]:
                 continue
-            content = self.stack_and_move(batch_dict[key])
+            content = self.stack(batch_dict[key])
             batch_dict[key] = content
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
         return batch_dict
+    
     
     def construct_sampler(self, data):
         return torch.utils.data.sampler.RandomSampler(data, replacement=True, num_samples=self.batch_size)

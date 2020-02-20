@@ -28,8 +28,9 @@ class ProcessState(OptimizableNet):
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
-        print("merge in size:; ", merge_input_size)
-        print("merge layers: ", merge_layers)
+        if self.verbose:
+            print("merge in size:; ", merge_input_size)
+            print("merge layers: ", merge_layers)
         self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
 
         # TODO: the following does not work yet, make it work at some point
@@ -74,38 +75,36 @@ class ProcessState(OptimizableNet):
         :param obs: numpy or PyTorch tensor
         :return: processing list
         """
-
-        normalizer_device = self.device #None if self.pin_tensors else self.device
         
         if isinstance(obs, np.ndarray):
             obs = torch.from_numpy(obs)
         obs = obs.squeeze()
 
+        normalizer = Normalizer(obs.shape, self.device, verbose=self.verbose)
         # Create feedforward layers:
         if obs.ndim == 1:
             layers_vector, act_functs_vector = create_ff_layers(len(obs), self.vector_layers, None)
             layers_vector.to(self.device)
             output_size = layers_vector[-1].out_features
-            vector_normalizer = Normalizer(obs.shape, normalizer_device)
-
+            
             # Add to lists:
-            layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": vector_normalizer}
+            layer_dict = {"Layers": layers_vector, "Act_Functs": act_functs_vector, "Normalizer": normalizer}
         # Create conv layers:
         elif 2 <= obs.ndim <= 3:
             if obs.ndim == 2:
                 obs = obs.unsqueeze(0)
             layers_matrix, output_size, act_functs_matrix = create_conv_layers(obs.shape, self.matrix_layers)
             layers_matrix.to(self.device)
-            matrix_normalizer = Normalizer(obs.shape, normalizer_device)
             # Add to lists:
-            layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": matrix_normalizer}
+            layer_dict = {"Layers": layers_matrix, "Act_Functs": act_functs_matrix, "Normalizer": normalizer}
         else:
             raise NotImplementedError("Four dimensional input data not yet supported.")
         layer_dict["Name"] = name
         return layer_dict, output_size
 
     def create_input_layers(self, env):
-        print("Creating state processor input layers...")
+        if self.verbose:
+            print("Creating state processor input layers...")
         # Get a sample to assess the shape of the observations easily:
         obs_space = env.observation_space
         sample = obs_space.sample()

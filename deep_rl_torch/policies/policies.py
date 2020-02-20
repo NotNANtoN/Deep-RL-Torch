@@ -6,7 +6,8 @@ import copy
 import logging
 import gym
 import torch
-from pynvml import nvmlDeviceGetMemoryInfo, nvmlDeviceGetHandleByIndex
+import tqdm
+from pynvml import nvmlDeviceGetMemoryInfo, nvmlDeviceGetHandleByIndex, nvmlInit
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 # Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 try:
@@ -29,6 +30,7 @@ class BasePolicy:
         self.ground_policy = ground_policy
         self.name = ""
         self.log_freq = self.hyperparameters["log_freq"]
+        self.verbose = hyperparameters["verbose"]
 
         # Check env:
         self.discrete_env = True if 'Discrete' in str(env.action_space) else False
@@ -36,13 +38,15 @@ class BasePolicy:
             self.num_actions = self.env.action_space.n
             self.action_low = torch.zeros(self.num_actions, device=self.device)
             self.action_high = torch.ones(self.num_actions, device=self.device)
-            print("Num actions: ", self.num_actions)
+            if self.verbose:
+                print("Num actions: ", self.num_actions)
         else:
             self.num_actions = len(self.env.action_space.high)
             self.action_low = torch.tensor(env.action_space.low, device=self.device)
             self.action_high = torch.tensor(env.action_space.high, device=self.device)
-            print("Env action low: ", self.action_low)
-            print("Env action high: ", self.action_high)
+            if self.verbose:
+                print("Env action low: ", self.action_low)
+                print("Env action high: ", self.action_high)
 
         # Set up parameters:
         # Actor-Critic:
@@ -522,8 +526,10 @@ class BasePolicy:
         # Update traces if it's time:
         if n_steps % self.elig_traces_update_steps == 0:
             episodes, idx_list = self.memory.get_all_episodes()
+            if self.verbose:
+                print("Updating traces. Number of episodes to update: ", len(episodes))
             # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
-            for episode, idxs in zip(episodes, idx_list):
+            for episode, idxs in tqdm.tqdm(zip(episodes, idx_list), disable=not self.verbose):
                 self.update_episode_trace(episode, idxs)
 
     def freeze_normalizers(self):

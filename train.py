@@ -11,8 +11,7 @@ from deep_rl_torch import Trainer
 from parser import create_parser
 
 
-if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = True
+def get_env(parameters):
     # Basic Discrete:
     lunar = "LunarLander-v2"
     cart = "CartPole-v1"
@@ -44,8 +43,34 @@ if __name__ == "__main__":
     pickaxe_dense = "MineRLObtainIronPickaxeDense-v0"
     diamond = "MineRLObtainDiamond-v0"
     diamond_dense = "MineRLObtainDiamondDense-v0"
+    env_short = parameters["env"]
+    if env_short == "cart":
+        env = cart
+    elif env_short == "lunar":
+        env = lunar
+    elif env_short == "acro":
+        env = acro
+    elif env_short == "tree":
+        env = tree
+    elif env_short == "diamond":
+        env = diamond
+    elif env_short == "pickaxe":
+        env = pickaxe
+    elif env_short == "nav":
+        env = nav
+    elif env_short == "nav_dense":
+        env = nav_dense
+    elif env_short == "pong":
+        env = "Pong-v0"
+    elif env_short == "pong_ram":
+        env = "Pong-ram-v0"
+    elif env_short == "atlantis":
+        env = "Atlantis-v0"
+    else:
+        env = env_short
+    return env
 
-
+def create_arg_dict(env=None, verbose=False):
     # Parse arguments:
     parser = create_parser()
     args = parser.parse_args()
@@ -91,10 +116,7 @@ if __name__ == "__main__":
                            {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
                            ]
     # TODO: define R2D2 conv architecture! (IMPALA uses the same)
-
     layers_conv = standard_hidden_block
-
-
 
     parameters = {
         # NN architecture setup:
@@ -135,8 +157,8 @@ if __name__ == "__main__":
         "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
     }
 
-    # TODO: Introduce lr schedule - cosine anneal... but maybe don't. How does it work with ADAM to anneal lr? - apparently AdamW (in PyTorch) decouples weight decay properly from optimizer
-#
+    # TODO: Introduce lr schedule - cosine anneal and more
+    
     parameters.update(arg_dict)
     # Convert strings in hyperparams to objects:
     # optimizer:
@@ -154,36 +176,37 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
     # Decide on env here:
-    atari_envs = ["pong", "atlantis"]
-    env_short = parameters["env"]
-    if env_short == "cart":
-        env = cart
-    elif env_short == "lunar":
-        env = lunar
-    elif env_short == "acro":
-        env = acro
-    elif env_short == "tree":
-        env = tree
-    elif env_short == "diamond":
-        env = diamond
-    elif env_short == "pickaxe":
-        env = pickaxe
-    elif env_short == "nav":
-        env = nav
-    elif env_short == "nav_dense":
-        env = nav_dense
-    elif env_short == "pong":
-        env = "Pong-v0"
-    elif env_short == "pong_ram":
-        env = "Pong-ram-v0"
-    elif env_short == "atlantis":
-        env = "Atlantis-v0"
+    if env is None:
+        env = get_env(parameters)
+    if verbose:
+        print("Env: ", env)
+
+    atari_envs = ["Pong-v0", "Pong-ram-v0" "Atlantis-v0", "Seaquest-v0", "Qbert-v0"]
+    if "MineRL" in env:
+        if verbose:
+            print("MineRL env!")
+        use_hierarchical_action_wrapper = True
+        parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
+        if use_hierarchical_action_wrapper:
+            parameters["action_wrapper"] = HierarchicalActionWrapper
+        else:
+            parameters["action_wrapper"] = SerialDiscreteActionWrapper
+
+        parameters["use_MineRL_policy"] = True
+        #if "Pickaxe" in env or "Diamond" in env:
+        #    parameters["use_MineRL_policy"] = True
+    elif env in atari_envs:
+        parameters["convert_2_torch_wrapper"] = AtariObsWrapper
+        if verbose:
+            print("Atari env!")
     else:
-        env = env_short
-    print("Env: ", env)
-    tensorboard_comment = parameters["tb_comment"] + "_" if parameters["tb_comment"] else ""
+        parameters["convert_2_torch_wrapper"] = DefaultWrapper
+        
+    return parameters, env
+
+def create_comment():   
+    tensorboard_comment = ""
     unfiltered_arguments = iter(sys.argv[1:])
     arguments = []
     filter_single = ["debug", "render"]
@@ -218,32 +241,23 @@ if __name__ == "__main__":
                 modified_arg += char
         tensorboard_comment += modified_arg
     parameters["tb_comment"] = tensorboard_comment
+    return tensorboard_comment
+
+if __name__ == "__main__":
+    torch.backends.cudnn.benchmark = True
+    
+    parameters, env = create_arg_dict(verbose=True)
+    
+    tensorboard_comment = create_comment()
     print("Tensorboard comment: ", tensorboard_comment)
 
-    if "MineRL" in env:
-        print("MineRL env!")
-        use_hierarchical_action_wrapper = True
-        parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
-        if use_hierarchical_action_wrapper:
-            parameters["action_wrapper"] = HierarchicalActionWrapper
-        else:
-            parameters["action_wrapper"] = SerialDiscreteActionWrapper
-
-        parameters["use_MineRL_policy"] = True
-        #if "Pickaxe" in env or "Diamond" in env:
-        #    parameters["use_MineRL_policy"] = True
-    elif env_short in atari_envs:
-        parameters["convert_2_torch_wrapper"] = AtariObsWrapper
-        print("Atari env!")
-    else:
-        parameters["convert_2_torch_wrapper"] = DefaultWrapper
 
     # Set up debugging:
     log_setup = parameters["debug"]
     if log_setup:
         logging.basicConfig(level=logging.DEBUG)
 
-    trainer = Trainer(env, parameters, log=parameters["log"], tb_comment=tensorboard_comment)
+    trainer = Trainer(env, parameters, log=parameters["log"], tb_comment=tensorboard_comment, verbose=True)
     try:
         trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
                 render=parameters["render"], verbose=parameters["verbose"])

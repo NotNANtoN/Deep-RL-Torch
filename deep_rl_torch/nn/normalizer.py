@@ -1,9 +1,10 @@
 import torch
 
 class Normalizer():
-    def __init__(self, input_shape, device):
+    def __init__(self, input_shape, device, verbose=True):
         self.n = 0
-        print("Normalizer shape: ", input_shape)
+        if verbose:
+            print("Normalizer shape: ", input_shape)
         self.mean = torch.zeros(input_shape, device=device)
         self.mean_diff = torch.zeros(input_shape, device=device)
         self.var = torch.ones(input_shape, device=device)

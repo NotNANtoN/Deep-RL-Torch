@@ -1,6 +1,6 @@
 # Deep-RL-Torch
 This library serves two purposes:
-1. It allows me to understand reinforcement learning algorithms.
+1. It allows me to understand reinforcement learning algorithms by building them.
 2. It allows the easy combination of various reinforcement learning extensions, such as Prioritized Experience Replay, Eligibility Traces, Random Ensemble Mixture etc.
 
 ## Current features:
