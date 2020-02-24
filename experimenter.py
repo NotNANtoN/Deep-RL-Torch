@@ -87,41 +87,6 @@ def plot_rewards(rewards, name=None, xlabel="Step"):
         display.clear_output(wait=True)
         display.display(plt.gcf())
 
-def testSetup(env, device, number_of_tests, length_of_tests, trialParams, randomizeList=[], on_server=False,
-              max_points=2000, hyperparamDict={}, verbose=True):
-    results = []
-    logs = []
-    
-    args, _ = create_arg_dict(env)
-    args.update(trialParams)
-    args["n_steps"] = length_of_tests
-    
-    for i in range(number_of_tests):
-        if len(randomizeList) > 0:
-            randomizedParams = randomizeList[i]
-            print("Hyperparameters:")
-            for key in randomizedParams:
-                print(key + ":", randomizedParams[key], end=" ")
-            print()
-            args.update(randomizeParams)
-
-        trainer = Trainer(env, args)
-        n_eps, log = trainer.run(verbose=False, n_steps=length_of_tests, on_server=on_server)
-        log = log.storage
-        
-        rewards = np.array(log["Test Return"])
-        #rewards = reducePoints(rewards, max_points)
-        for key in log:
-            log[key] = reducePoints(log[key], max_points)
-
-        results.append(rewards)
-        logs.append(log)
-
-        if number_of_tests > 1:
-            print("Run ", str(i + 1), "/", str(number_of_tests), end=" | ")
-            print("Mean reward ", round(np.mean(rewards), 1), end=" ")
-            print("Score: ", round(run_metric(log["Return"]), 1))
-    return results, logs
 
 def saveList(some_list, path):
     with open(path + ".csv", 'w', newline='') as myfile:
@@ -183,42 +148,53 @@ def readDict(path):
                 return some_dict
 
 
-def storeResults(list_of_results, path):
+def max_trial_idx(path):
+    names = os.listdir(path)
+    if len(names) > 0:
+        return max([int(name[:-4]) for name in names if name[-4:] == ".csv"]) + 1
+    else:
+        return 0
+            
+def storeResults(list_of_results, path, base_idx=None):
     if not os.path.exists(path):
         os.makedirs(path)
+        
+    if base_idx is None:
+        base_idx = max_trial_idx(path)
 
     for idx, result_list in enumerate(list_of_results):
-        name = path + str(idx)
+        name = path + str(base_idx + idx)
         saveList(result_list, name)
 
 
 def readResults(path, name_list):
     # for file in path. if file is not dir, then it is result, therefore store in list
     dict_of_results = {}
-    for alg_name in sorted(os.listdir(path)):
-        if alg_name not in name_list:
-            continue
+    for alg_name in name_list:
         result_list = []
         for run in sorted(os.listdir(path + alg_name)):
-            if not os.path.isdir(path + alg_name + "/" + run):
-                result = readList(path + alg_name + "/" + run)
+            run_path = path + alg_name + "/" + run
+            if not os.path.isdir(run_path) and run[0] != "0":
+                result = readList(run_path)
                 result_list.append(result)
-        # Remove the "_done":
-        alg_name = alg_name[:-5]
         dict_of_results[alg_name] = result_list
     return dict_of_results
 
 
-def storeLogs(list_of_log_dicts, path):
+def storeLogs(list_of_log_dicts, path, base_idx=None):
     if not os.path.exists(path):
         os.makedirs(path)
+        
+    if base_idx is None:
+        base_idx = max_trial_idx(path)
 
     for idx, log_dict_of_run in enumerate(list_of_log_dicts):
         for key in log_dict_of_run:
             log_name = path + key + "/"
             if not os.path.exists(log_name):
                 os.makedirs(log_name)
-            name = log_name + str(idx)
+            #base_idx = max_trial_idx(log_name)
+            name = log_name + str(base_idx + idx)
             log_list = log_dict_of_run[key]
             saveList(log_list, name)
 
@@ -226,23 +202,20 @@ def storeLogs(list_of_log_dicts, path):
 def readLogsNew(path, name_list):
     # get to shape of form {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]}, "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
     dict_of_logs = {}
-    for alg_name in sorted(os.listdir(path)):
-        if alg_name not in name_list:
-            continue
-
+    for alg_name in name_list:
         for log_name in sorted(os.listdir(path + alg_name + "/logs/")):
             values = []
             for run_name in sorted(os.listdir(path + alg_name + "/logs/" + log_name + "/")):
+                if run_name[-4:] != ".csv" or run_name[0] == "0":
+                    continue
                 file_path = path + alg_name + "/logs/" + log_name + "/" + run_name
                 log_of_run = readList(file_path)
                 values.append(log_of_run)
-
-            # Remove the "_done":
-            stored_alg_name = alg_name[:-5]
+                
             if log_name in dict_of_logs:
-                dict_of_logs[log_name][stored_alg_name] = values
+                dict_of_logs[log_name][alg_name] = values
             else:
-                dict_of_logs[log_name] = {stored_alg_name: values}
+                dict_of_logs[log_name] = {alg_name: values}
     return dict_of_logs
 
 
@@ -276,7 +249,6 @@ def plotDict(dict_of_alg_runs, name, plot_best_idxs=None, path="", max_points=0,
     plt.xlabel("Step")
     plt.ylabel(name)
 
-    print("Plotting log of ", name)
 
     dict_of_lines_to_plot = dict_of_alg_runs
     
@@ -323,7 +295,7 @@ def plotDict(dict_of_alg_runs, name, plot_best_idxs=None, path="", max_points=0,
 def generate_log_plots_new(dict_of_logs, path="", max_points=2000, length_of_tests=100000, totalName=""):
     # shape in form of {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]}, "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
 
-    path += "logs/"
+    path += "/logs/"
     if not os.path.exists(path):
         os.makedirs(path)
 
@@ -336,6 +308,7 @@ def generate_log_plots_new(dict_of_logs, path="", max_points=2000, length_of_tes
 def generatePlot(dict_of_results, drawIQR=False, smoothing="yes", plot_best=10, path="", window_size=15, env="",
                  totalName="", draw_all_lines=False, max_points=0, length_of_tests=100000):
     prop_cycle = (cycler('linestyle', ['-', '--', ':', '-.']) * cycler('color', ['r', 'g', 'b', 'y', 'm', 'c', 'k']))
+    
 
     for name, props in zip(sorted(dict_of_results), prop_cycle):
         color = props["color"]
@@ -381,9 +354,6 @@ def generatePlot(dict_of_results, drawIQR=False, smoothing="yes", plot_best=10, 
         smoothedData = meanSmoothing(data, window_size)
         smoothedShadingLower = meanSmoothing(shadingLower, window_size)
         smoothedShadingUpper = meanSmoothing(shadingUpper, window_size)
-
-        print(name)
-        print(len(idxs), len(data), len(smoothedData))
         
         if smoothing == "yes" or smoothing == "both":
             plt.plot(idxs, smoothedData, label=name, color=color, linestyle=linestyle)
@@ -400,17 +370,7 @@ def generatePlot(dict_of_results, drawIQR=False, smoothing="yes", plot_best=10, 
     plt.legend()
     plt.xlabel("Step")
     plt.ylabel("Total Reward")
-    # if env == "CartPole-v1":
-    #    plt.ylim(0, 350)
-    # elif env == "LunarLander-v2":
-    #    plt.ylim(-150, 200)
-    # elif env == "Acrobot-v1":
-    #    plt.ylim(-550, -50)
-    # elif env == "MountainCar-v0":
-    #    pass
-    # plt.ylim(-1500, 0)
-    # else:
-    #    print("No ylim defined for env ", env)
+
     title = "Rewards per Episode during Training for " + env
     plt.title(title)
     fileName = totalName
@@ -492,13 +452,11 @@ def lemmatize_name(name):
         return name
 
 
-def alg_in_folder(name, folderName):
-    for item in sorted(os.listdir(folderName)):
-        if os.path.isdir(folderName + item):
-            item_name = lemmatize_name(item)
-            if item_name == name:
-                return True
-    return False
+def alg_in_folder(name, folder_name):
+    names = sorted(os.listdir(folder_name))
+    lemmas = [lemmatize_name(name) for name in names 
+              if os.path.isdir(folder_name + name)]
+    return name in lemmas
 
 
 def is_done(name, folderName):
@@ -551,7 +509,6 @@ def train_model_to_optimize_tpe(space, verbose=False, comet_ml=None, run_metric_
     length_of_tests = space.pop("length_of_tests")
     env = space.pop("env")
     device = space.pop("device")
-    on_server = space.pop("on_server")
     trial = space.pop("trial")
     max_points = space.pop("max_points")
     trials = space.pop("trials")
@@ -560,15 +517,15 @@ def train_model_to_optimize_tpe(space, verbose=False, comet_ml=None, run_metric_
 
     iteration = len(trials.results)
 
-    performance = train_model_to_optimize(space, length_of_tests, env, device, on_server, trial, max_points, evals_per_optimization_step, iteration, trials=trials, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight )
+    performance = train_model_to_optimize(space, length_of_tests, env, device, trial, max_points, evals_per_optimization_step, iteration, trials=trials, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight )
     optimization_experiment.log_metric("Performance during optimization", performance * -1)
     optimization_experiment.set_step(iteration)
     return {"loss": performance, 'status': STATUS_OK, "params": space, "iteration": iteration}
     
     
-def train_model_to_optimize(hyperparam_dict, length_of_tests, env, device, on_server, trial, max_points, evals_per_optimization_step, iteration, trials=None, verbose=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
+def train_model_to_optimize(hyperparam_dict, length_of_tests, env, device, trial, max_points, evals_per_optimization_step, iteration, trials=None, verbose=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
     resultList, logs = testSetup(env, device, evals_per_optimization_step, length_of_tests, trial, hyperparamDict=hyperparam_dict,
-                                 on_server=on_server, max_points=max_points)
+                                 max_points=max_points)
     performances = [run_metric(log["Total Reward"], percentage=run_metric_percentage, final_percentage_weight=run_metric_final_percentage_weight) * -1 for log in logs]
     performance = np.mean(performances)
 
@@ -580,11 +537,99 @@ def train_model_to_optimize(hyperparam_dict, length_of_tests, env, device, on_se
         print()
     return performance
 
+def count_csvs(path):
+    return len([name for name in os.listdir(path) if name[-4:] == ".csv"])
+
+def check_folder(folder_path):
+    exists = os.path.exists(folder_path)
+    if not exists:
+        os.mkdir(folder_path)
+    return exists
+    
+def print_trial_stats(result_list, logs, run_metric_percentage, run_metric_final_percentage_weight, trial_start_time):
+        meansPerEpisode = np.mean(result_list, 0)
+        overAllFinalPercent = round(run_metric(meansPerEpisode, percentage=run_metric_percentage, final_percentage_weight=run_metric_final_percentage_weight), 2)
+        overallEpisodeMean = round(np.mean(meansPerEpisode), 2)
+        overallEpisodeStd = round(np.std(meansPerEpisode), 2)
+        overallEpisodeMedian = round(np.median(meansPerEpisode), 2)
+
+
+        test_score_per_training_run = [run_metric(log["Test Return"], percentage=run_metric_percentage, final_percentage_weight=run_metric_final_percentage_weight) for log in logs]
+        test_score_mean = round(np.mean(test_score_per_training_run), 3)
+        test_score_std = round(np.std(test_score_per_training_run), 3)
+
+        print("Test mean score:", test_score_mean)
+        print("Test std of score:", test_score_std)
+        print("Trial score: ", overAllFinalPercent)
+        print("Trial mean: ", overallEpisodeMean)
+        print("Trial median: ", overallEpisodeMedian)
+        print("Trial std: ", overallEpisodeStd)
+        print("Trial time: ", round(time.time() - trial_start_time), 2)
+        print()
+
+class MockTrialFile:
+    def __init__(self, path, num):
+        self.path = path
+        self.name = "0" + str(num) + ".csv"
+        self.file_path = path + self.name
+        
+    def __enter__(self):
+        open(self.file_path, 'a').close()
+    
+    def __exit__(self, type, value, traceback):
+        os.remove(self.file_path)
+    
+def testSetup(env, device, number_of_tests, length_of_tests, trialParams, path, randomizeList=[],
+              max_points=2000, hyperparamDict={}, verbose=True):
+    results = []
+    logs = []
+    
+    args, _ = create_arg_dict(env)
+    args.update(trialParams)
+    args["n_steps"] = length_of_tests
+    i = 0
+    while count_csvs(path) < number_of_tests:
+    #for i in range(number_of_tests):
+        if len(randomizeList) > 0:
+            randomizedParams = randomizeList[i]
+            print("Hyperparameters:")
+            for key in randomizedParams:
+                print(key + ":", randomizedParams[key], end=" ")
+            print()
+            args.update(randomizeParams)
+
+        # Create mock file such that other processes know that this process is running:
+        trial_idx = max_trial_idx(path)
+        with MockTrialFile(path, trial_idx):
+            trainer = Trainer(env, args)
+            n_eps, log = trainer.run(verbose=False, n_steps=length_of_tests, disable_tqdm=False)
+        log = log.storage
+        
+        rewards = np.array(log["Test Return"])
+        #rewards = reducePoints(rewards, max_points)
+        for key in log:
+            log[key] = reducePoints(log[key], max_points)
+
+        results.append(rewards)
+        logs.append(log)
+
+        if number_of_tests > 1:
+            print("Run ", str(i + 1), "/", str(number_of_tests), end=" | ")
+            print("Mean reward ", round(np.mean(rewards), 1), end=" ")
+            print("Score: ", round(run_metric(log["Return"]), 1))
+            
+        # Store finished test:
+        storeResults([rewards], path, trial_idx)
+        storeLogs([log], path + "logs/", trial_idx)
+        
+        i += 1
+            
+    return results, logs
         
 def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=None, randomizeParams=False,
-           path="", on_server=False, max_points=2000, optimize="no", number_of_best_runs_to_check=5,
+           path="", max_points=2000, optimize="no", number_of_best_runs_to_check=5,
            number_of_checks_best_runs=5, final_evaluation_runs=20, number_of_hyperparam_optimizations=2,
-           evals_per_optimization_step=2, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=0.5):
+           evals_per_optimization_step=2, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=0):
     experiment_start_time = time.time()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Experiment on ", env)
@@ -597,7 +642,7 @@ def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=No
             window_size += 1
 
     root = "Experiments/"
-    folderName = root + "Data/" + env + "_" + str(number_of_tests) + "_"
+    folderName = root + "Data/" + env + "_"
     if optimize != "no":
         folderName += "optimize" + optimize + "_"
         if optimize[-4:] == "best":
@@ -623,6 +668,8 @@ def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=No
     randomizedParamList = []
     if randomizeParams:
         randomizedParamList = createRandomParamList(number_of_tests, verbose=False)
+        
+    new = True
 
     totalName = folderName
     name_list = []
@@ -635,168 +682,40 @@ def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=No
         totalName += name + "_"
         trialFolder = folderName + name + "_done/"
         incompleteTrialFolder = folderName + name + "/"
-
-
-        if alg_in_folder(name, folderName):
-            if is_done(name, folderName):
-                print(name + " trial was done in a previous setup...")
-                print()
-                continue
-            else:
-                # should skip to the next trial, but also return to load this trial later.
-                algList.append(trial)
-                if algList.count(trial) > 2:
-                    os.rmdir(folderName + name)
-                    print("Deleting the unfinished folder of ", name, "...")
-                else:
-                    print("Skipping ", name, " for now, as another process runs a trial for it.")
-                trial["name"] = name
-                continue
+        
+        trial_folder = folderName + name + "/"
+        
+        # Check how many trials need to be run:
+        check_folder(trial_folder)
+        count = count_csvs(trial_folder)
+        enough_trials = number_of_tests == count
+        if not enough_trials:
+            print("Running  trials for ", name)
+            result_list, logs = testSetup(env, device, number_of_tests, length_of_tests, trial,
+                                          path=trial_folder,
+                                          randomizeList=randomizedParamList, 
+                                          max_points=max_points)
+            print_trial_stats(result_list, logs, run_metric_percentage, run_metric_final_percentage_weight, trial_start_time)
         else:
-            print("Testing " + name + "...")
-            if not os.path.exists(incompleteTrialFolder):
-                os.makedirs(incompleteTrialFolder)
-
-            if optimize == "Marco":
-                result_list, logs = testSetup(env, device, number_of_tests, length_of_tests, trial,
-                                             randomizeList=randomizedParamList, on_server=on_server,
-                                             max_points=max_points)
-
-                bestResultIdxs = get_best_result_idxs(result_list, 5, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
-                best_params = [randomizedParamList[i] for i in bestResultIdxs]
-                initialBestResults = [result_list[i] for i in bestResultIdxs]
-
-                # runs = get_results_for_idx(path, idx)
-
-                resultList_optim, logs_optim = testSetup(env, device, 5, length_of_tests, trial,
-                                                         randomizeList=best_params, on_server=on_server,
-                                                         max_points=max_points)
-                winnerIdx = getBestResults(resultList_optim, 1)
-                winnerParam = randomizedParamList[winnerIdx]
-                # winner_original_idx =
-                # winnerAdditonalResults = resultList_optim[winnerIdx]
-
-                resultList_winner, logs_winner = testSetup(env, device, 20, length_of_tests, trial,
-                                                           randomizeList=[winnerParam], on_server=on_server,
-                                                           max_points=max_points)
-                # do hyperparameters optimization stuff
-            elif optimize == "tpe":
-                trials_data = optimize_tpe(env, device, number_of_tests, length_of_tests, trial, on_server,
-                                           max_points, number_best_runs=3,
-                                           evals_per_optimization_step=evals_per_optimization_step)
-                # Select the most promising hyperparameter sets
-                trials_results = sorted(trials_data.results, key=lambda x: x['loss'])
-                best_params = trials_results[0]['params']
-
-                result_list, logs = testSetup(env, device, final_evaluation_runs, length_of_tests, trial,
-                                             hyperparamDict=best_params, on_server=on_server, max_points=max_points)
-            elif optimize == "tpe_best" or optimize == "comet_best":
-                # Let TPE run several times, each for number_of_tests runs
-                trials_data = []
-                for i in range(number_of_hyperparam_optimizations):
-                    print("Optimization run ", i, "/", number_of_hyperparam_optimizations)
-                    optimization_experiment = OfflineExperiment(offline_directory="/tmp", project_name="TDEC_BS_optimizations", workspace="antonwiehe", log_code=False, log_graph=False, auto_param_logging=False, auto_metric_logging=False, log_env_details=False, auto_output_logging=None )
-                    optimization_experiment.add_tag(path + ": " + name)
-                    if optimize == "tpe_best":
-                        optimization_results = optimize_tpe(env, device, number_of_tests, length_of_tests, trial, on_server,
-                                                            max_points, optimization_experiment, number_best_runs=number_of_best_runs_to_check,
-                                                            evals_per_optimization_step=evals_per_optimization_step, optimize_only_lr=optimize_only_lr, optimize_only_Q_params=optimize_only_Q_params, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
-                    else:
-                        optimization_results = optimize_comet(env, device, number_of_tests, length_of_tests, trial, on_server,
-                                                            max_points, optimization_experiment, number_best_runs=number_of_best_runs_to_check,
-                                                            evals_per_optimization_step=evals_per_optimization_step, optimize_only_lr=optimize_only_lr, optimize_only_Q_params=optimize_only_Q_params, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
-                    
-                    print("Optimization complete!")
-                    print("Best runs: ")
-                    for i in range(number_of_best_runs_to_check):
-                        print(optimization_results[i])
-                    trials_data.append(optimization_results)
-                print()
-                # Select the most promising hyperparameter sets for each optimization
-                best_runs = []
-                for i in range(number_of_hyperparam_optimizations):
-                    trials_results_current_optimization = sorted(trials_data[i], key=lambda x: x['loss'])
-                    best_runs_current_optimization = [result for result in
-                                                      trials_results_current_optimization[:number_of_best_runs_to_check]]
-                    best_runs.extend(best_runs_current_optimization)
-
-                print("Running additional tests to determine the true winner...")
-                # Run additional tests for the most promising sets
-                max = None
-                for run in best_runs:
-                    params = run["params"]
-                    previous_score = run["loss"] * -1
-                    result_list, logs = testSetup(env, device, number_of_checks_best_runs, length_of_tests, trial,
-                                                 hyperparamDict=params, on_server=on_server, max_points=max_points)
-                    scores_of_trials = [run_metric(log["Total Reward"]) for log in logs]
-                    # Do not append score, as previous_score is very likely an outlier (if only tested once in the objective function)
-                    #scores_of_trials.append(previous_score)
-                    score = np.mean(scores_of_trials)
-                    print("Score:", score)
-                    if max is None or score > max:
-                        max = score
-                        best_params = params
-                        best_results = (result_list, logs)
-
-                print("Running final experiment:")
-                # Run final experiments with the best hyperparameter set
-                result_list, logs = testSetup(env, device, final_evaluation_runs, length_of_tests, trial,
-                                             hyperparamDict=best_params, on_server=on_server, max_points=max_points)
-                result_list.extend(best_results[0])
-                logs.extend(best_results[1])
-              
-            else:
-                result_list, logs = testSetup(env, device, number_of_tests, length_of_tests, trial,
-                                             randomizeList=randomizedParamList, on_server=on_server,
-                                             max_points=max_points)
-            if os.path.exists(incompleteTrialFolder):
-                 os.rmdir(incompleteTrialFolder)
-            print()
+            print("There are already enough trials stored for trial ", name)
 
         
-        # Print trial stats
-        meansPerEpisode = np.mean(result_list, 0)
-        overAllFinalPercent = round(run_metric(meansPerEpisode, percentage=run_metric_percentage, final_percentage_weight=run_metric_final_percentage_weight), 2)
-        overallEpisodeMean = round(np.mean(meansPerEpisode), 2)
-        overallEpisodeStd = round(np.std(meansPerEpisode), 2)
-        overallEpisodeMedian = round(np.median(meansPerEpisode), 2)
 
-
-
-        test_score_per_training_run = [run_metric(log["Test Return"], percentage=run_metric_percentage, final_percentage_weight=run_metric_final_percentage_weight) for log in logs]
-        test_score_mean = round(np.mean(test_score_per_training_run), 3)
-        test_score_std = round(np.std(test_score_per_training_run), 3)
-
-        print("Test mean score:", test_score_mean)
-        print("Test std of score:", test_score_std)
-        print("Trial score: ", overAllFinalPercent)
-        print("Trial mean: ", overallEpisodeMean)
-        print("Trial median: ", overallEpisodeMedian)
-        print("Trial std: ", overallEpisodeStd)
-        print("Trial time: ", round(time.time() - trial_start_time), 2)
-        print()
-
-        storeResults(result_list, trialFolder)
-        storeLogs(logs, trialFolder + "logs/")
-        
-        # Store those hyperparameters in a file:
-        saveList([test_score_mean, test_score_std],  plotsPath + path + "Stats" + name)
-        saveList(test_score_per_training_run,  plotsPath + path + "Test_Scores" + name)
-        if optimize == "tpe_best" or optimize == "comet_best":
-            saveDict_simple(best_params, plotsPath + path + "Hyperparams_" + name)
-        
 
     # Read data:
     name_list = sorted(name_list)
-    loading_name_list = [name + "_done" for name in name_list]
+    loading_name_list = [name for name in name_list]
     dict_of_results = readResults(folderName, loading_name_list)
     dict_of_logs = readLogsNew(folderName, loading_name_list)
     # list_of_hyperparameter_dicts = readHyperparameters(folderName, name_list)
+    
+    
 
     # Plot data:
-    path = plotsPath + path
+    path = plotsPath + path + "/"
     if not os.path.exists(path):
         os.makedirs(path)
+
     totalName = str(number_of_tests) + "_" + str(length_of_tests) + "_" + optimize
     if optimize[-4:] == "best":
         totalName += "_" + str(number_of_best_runs_to_check) + "_" + str(number_of_checks_best_runs) + "_" \
@@ -843,7 +762,7 @@ def runExp(env, algList, number_of_tests=20, length_of_tests=600, window_size=No
     
     
 
-def optimize_comet(env, device, max_evals, length_of_tests, trial, on_server, max_points, optimization_experiment, number_best_runs=1,
+def optimize_comet(env, device, max_evals, length_of_tests, trial, max_points, optimization_experiment, number_best_runs=1,
                  evals_per_optimization_step=1, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
     optimizer = Optimizer("M03EcOc9o9kiG95hws4mq1uqI")
     # Declare your hyper-parameters:
@@ -886,7 +805,7 @@ def optimize_comet(env, device, max_evals, length_of_tests, trial, on_server, ma
             hyperparamDict[key] = suggestion[key]
 
         # Test the model
-        score = train_model_to_optimize(hyperparamDict, length_of_tests, env, device, on_server, trial, max_points, evals_per_optimization_step, iteration, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
+        score = train_model_to_optimize(hyperparamDict, length_of_tests, env, device, trial, max_points, evals_per_optimization_step, iteration, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
 
         optimization_experiment.log_metric("Performance during optimization", score * -1)
         optimization_experiment.set_step(iteration)
@@ -899,11 +818,11 @@ def optimize_comet(env, device, max_evals, length_of_tests, trial, on_server, ma
         
   
 
-def optimize_tpe(env, device, max_evals, length_of_tests, trial, on_server, max_points, optimization_experiment, number_best_runs=1,
+def optimize_tpe(env, device, max_evals, length_of_tests, trial, max_points, optimization_experiment, number_best_runs=1,
                  evals_per_optimization_step=1, optimize_only_lr=False, optimize_only_Q_params=False, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
     trials = Trials()
 
-    space = {"env": env, "device": device, "on_server": on_server, "trial": trial, "max_points": max_points,
+    space = {"env": env, "device": device, "trial": trial, "max_points": max_points,
                  "length_of_tests": length_of_tests, "trials": trials, "optimization_experiment":optimization_experiment,
                  "evals_per_optimization_step": evals_per_optimization_step,
                  "lr_Q": hp.uniform("lr_Q", 0.00001, 0.005),
@@ -935,7 +854,7 @@ def optimize_tpe(env, device, max_evals, length_of_tests, trial, on_server, max_
 # Possibly applies interaction test to test hyperparameter interactions for significance 
 
 #(are the standard tests only for linear interaction?) #TODO: look up
-def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samples=10, runs_per_sample=25, length_of_tests=50000, on_server=True, max_points=2000, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
+def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samples=10, runs_per_sample=25, length_of_tests=50000, max_points=2000, run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     plotPath = "Experiments/Plots/Interaction_Tests"
@@ -980,7 +899,7 @@ def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samp
                 folder_name = alg_folder + "/" + name
                 trial = {"name": name, hyperparam:hyperparam_value}
                 result_list, logs = testSetup(env, device, runs_per_sample, length_of_tests, trial,
-                                                 on_server=on_server, max_points=max_points)
+                                                 max_points=max_points)
 
                 
                 store_results([log["Total Reward"] for log in logs], folder_name)
@@ -1011,3 +930,94 @@ def hyperparameter_interaction_exp(env, algList, hyperparam_dict, number_of_samp
         #TODO: add loading if folder already exists
         
         apply_stats_to_hyperparam_results(hyperparam_results) #TODO: interaction test
+        
+        
+        
+def opt_checks():
+            if optimize == "Marco":
+                result_list, logs = testSetup(env, device, number_of_tests, length_of_tests, trial,
+                                             randomizeList=randomizedParamList,
+                                             max_points=max_points)
+
+                bestResultIdxs = get_best_result_idxs(result_list, 5, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
+                best_params = [randomizedParamList[i] for i in bestResultIdxs]
+                initialBestResults = [result_list[i] for i in bestResultIdxs]
+
+                # runs = get_results_for_idx(path, idx)
+
+                resultList_optim, logs_optim = testSetup(env, device, 5, length_of_tests, trial,
+                                                         randomizeList=best_params, 
+                                                         max_points=max_points)
+                winnerIdx = getBestResults(resultList_optim, 1)
+                winnerParam = randomizedParamList[winnerIdx]
+                # winner_original_idx =
+                # winnerAdditonalResults = resultList_optim[winnerIdx]
+
+                resultList_winner, logs_winner = testSetup(env, device, 20, length_of_tests, trial,
+                                                           randomizeList=[winnerParam], 
+                                                           max_points=max_points)
+                # do hyperparameters optimization stuff
+            elif optimize == "tpe":
+                trials_data = optimize_tpe(env, device, number_of_tests, length_of_tests, trial,
+                                           max_points, number_best_runs=3,
+                                           evals_per_optimization_step=evals_per_optimization_step)
+                # Select the most promising hyperparameter sets
+                trials_results = sorted(trials_data.results, key=lambda x: x['loss'])
+                best_params = trials_results[0]['params']
+
+                result_list, logs = testSetup(env, device, final_evaluation_runs, length_of_tests, trial,
+                                             hyperparamDict=best_params, max_points=max_points)
+            elif optimize == "tpe_best" or optimize == "comet_best":
+                # Let TPE run several times, each for number_of_tests runs
+                trials_data = []
+                for i in range(number_of_hyperparam_optimizations):
+                    print("Optimization run ", i, "/", number_of_hyperparam_optimizations)
+                    optimization_experiment = OfflineExperiment(offline_directory="/tmp", project_name="TDEC_BS_optimizations", workspace="antonwiehe", log_code=False, log_graph=False, auto_param_logging=False, auto_metric_logging=False, log_env_details=False, auto_output_logging=None )
+                    optimization_experiment.add_tag(path + ": " + name)
+                    if optimize == "tpe_best":
+                        optimization_results = optimize_tpe(env, device, number_of_tests, length_of_tests, trial,
+                                                            max_points, optimization_experiment, number_best_runs=number_of_best_runs_to_check,
+                                                            evals_per_optimization_step=evals_per_optimization_step, optimize_only_lr=optimize_only_lr, optimize_only_Q_params=optimize_only_Q_params, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
+                    else:
+                        optimization_results = optimize_comet(env, device, number_of_tests, length_of_tests, trial,
+                                                            max_points, optimization_experiment, number_best_runs=number_of_best_runs_to_check,
+                                                            evals_per_optimization_step=evals_per_optimization_step, optimize_only_lr=optimize_only_lr, optimize_only_Q_params=optimize_only_Q_params, run_metric_percentage=run_metric_percentage, run_metric_final_percentage_weight=run_metric_final_percentage_weight)
+                    
+                    print("Optimization complete!")
+                    print("Best runs: ")
+                    for i in range(number_of_best_runs_to_check):
+                        print(optimization_results[i])
+                    trials_data.append(optimization_results)
+                print()
+                # Select the most promising hyperparameter sets for each optimization
+                best_runs = []
+                for i in range(number_of_hyperparam_optimizations):
+                    trials_results_current_optimization = sorted(trials_data[i], key=lambda x: x['loss'])
+                    best_runs_current_optimization = [result for result in
+                                                      trials_results_current_optimization[:number_of_best_runs_to_check]]
+                    best_runs.extend(best_runs_current_optimization)
+
+                print("Running additional tests to determine the true winner...")
+                # Run additional tests for the most promising sets
+                max = None
+                for run in best_runs:
+                    params = run["params"]
+                    previous_score = run["loss"] * -1
+                    result_list, logs = testSetup(env, device, number_of_checks_best_runs, length_of_tests, trial,
+                                                 hyperparamDict=params, max_points=max_points)
+                    scores_of_trials = [run_metric(log["Total Reward"]) for log in logs]
+                    # Do not append score, as previous_score is very likely an outlier (if only tested once in the objective function)
+                    #scores_of_trials.append(previous_score)
+                    score = np.mean(scores_of_trials)
+                    print("Score:", score)
+                    if max is None or score > max:
+                        max = score
+                        best_params = params
+                        best_results = (result_list, logs)
+
+                print("Running final experiment:")
+                # Run final experiments with the best hyperparameter set
+                result_list, logs = testSetup(env, device, final_evaluation_runs, length_of_tests, trial,
+                                             hyperparamDict=best_params, max_points=max_points)
+                result_list.extend(best_results[0])
+                logs.extend(best_results[1])

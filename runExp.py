@@ -9,58 +9,17 @@ pong = "Pong-v0"
 seaquest = "Seaquest-v0"
 
 paramsQ = {"name": "Q"}
-paramsQ1 = {"name": "Q1"}
-paramsQ2 = {"name": "Q2"}
-paramsQ3 = {"name": "Q3"}
-paramsQ4 = {"name": "Q4"}
-paramsQ5 = {"name": "Q5"}
-paramsQ6 = {"name": "Q6"}
-paramsQ7 = {"name": "Q7"}
-paramsQ8 = {"name": "Q8"}
-paramsQ9 = {"name": "Q9"}
-paramsQ10 = {"name": "Q10"}
-paramsQ11 = {"name": "Q11"}
-paramsQ12 = {"name": "Q12"}
-paramsQ13 = {"name": "Q13"}
-paramsQ14 = {"name": "Q14"}
-paramsQ15 = {"name": "Q15"}
-paramsQ16 = {"name": "Q16"}
-paramsQ17 = {"name": "Q17"}
-paramsQ18 = {"name": "Q18"}
-paramsQ19 = {"name": "Q19"}
-paramsQ20 = {"name": "Q20"}
-paramsQ21 = {"name": "Q21"}
-paramsQ22 = {"name": "Q22"}
-paramsQ23 = {"name": "Q23"}
-paramsQ24 = {"name": "Q24"}
-paramsQ25 = {"name": "Q25"}
-paramsQ26 = {"name": "Q26"}
-paramsQ27 = {"name": "Q27"}
-paramsQ28 = {"name": "Q28"}
-paramsQ29 = {"name": "Q29"}
-paramsQ30 = {"name": "Q30"}
+
+Q_s = [{"name": "Q" + str(i + 1)} for i in range(30)]
 
 Q_no_exp_rep = {"name": "Q-Online", "USE_EXP_REP": False}
 
-Q_offset_01 = { "name": "Q-Offset:-0.1", "critic_output_offset": -0.1}
-Q_offset_1 = { "name": "Q-Offset:-1", "critic_output_offset": -1}
-Q_offset_10 = { "name": "Q-Offset:-10", "critic_output_offset": -10}
 
 paramsQ_target_net_250 = {"name": "Q+Target_250", "TARGET_UPDATE": 250}
 paramsQ_target_net_100 = {"name": "Q+Target_100", "TARGET_UPDATE": 100}
 paramsQ_target_net_50 = {"name": "Q+Target_50", "TARGET_UPDATE": 50}
 
-paramsQV = {"name": "QV", "USE_QV": True}
-paramsQV_split_Q = {"name": "QV-Split_Q", "USE_QV": True, "QV_SPLIT_Q": True}
-paramsQV_split_V = {"name": "QV-Split_V", "USE_QV": True, "QV_SPLIT_V": True}
-paramsQV_split_V_and_Q = {"name": "QV-Split_V_and_Q", "USE_QV": True, "QV_SPLIT_Q": True, "QV_SPLIT_V": True}
-paramsQV_NoTargetQ = {"name": "QV-NoTargetQ", "USE_QV": True, "QV_NO_TARGET_Q": True}
-paramsQV_split_Q_NoTargetQ = {"name": "QV-Split_Q-NoTargetQ", "USE_QV": True, "QV_SPLIT_Q": True,
-                              "QV_NO_TARGET_Q": True}
-paramsQV_split_V_NoTargetQ = {"name": "QV-Split_V-NoTargetQ", "USE_QV": True, "QV_SPLIT_V": True,
-                              "QV_NO_TARGET_Q": True}
-paramsQV_split_V_and_Q_NoTargetQ = {"name": "QV-Split_V_and_Q-NoTargetQ", "USE_QV": True, "QV_SPLIT_Q": True,
-                                    "QV_SPLIT_V": True, "QV_NO_TARGET_Q": True}
+paramsQV = {"name": "QV", "use_QV": True}
 
 paramsEps_2 = {"name": "EpsMid 0.2", "EPS_MID": 0.2}
 paramsEps_1 = {"name": "EpsMid 0.1", "EPS_MID": 0.1}
@@ -71,34 +30,18 @@ paramsEps_001 = {"name": "EpsMid 0.001", "EPS_MID": 0.001}
 paramsEps_0001 = {"name": "EpsMid 0.0001", "EPS_MID": 0.0001}
 
 
-paramsAddHidden = {"name": "AddHidden", "SPLIT_BELLMAN": True, "SPLIT_BELL_add_hidden_layer": True}
-paramsUseSep = {"name": "SeparateNets", "SPLIT_BELLMAN": True, "SPLIT_BELL_use_separate_nets": True}
-paramsIndividualHidden = {"name": "Ind. Hidden", "SPLIT_BELLMAN": True,
-                          "SPLIT_BELL_additional_individual_hidden_layer": True}
-paramsNoTarget_r = {"name": "Q+Split-NoTarget_r", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True}
-paramsSplit = {"name": "Q+Split", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": False}
-paramsAvg = {"name": "Avg for r(s',a)", "SPLIT_BELLMAN": True, "SPLIT_BELL_AVG_r": True}
-paramsNoTarget_r_ind_hidden = {"name": "Q+Split-NoTarget_r+Ind.Hidden", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True,
-                               "SPLIT_BELL_additional_individual_hidden_layer": True}
-paramsNoTarget_r_use_sep = {"name": "Q+Split-NoTarget_r+Sep.Nets", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True,
-                            "SPLIT_BELL_use_separate_nets": True}
-params_split_ind_hidden = {"name": "Q+Split+Ind.Hidden", "SPLIT_BELLMAN": True,
-                               "SPLIT_BELL_additional_individual_hidden_layer": True}
-params_split_use_sep = {"name": "Q+Split+Sep.Nets", "SPLIT_BELLMAN": True,
-                            "SPLIT_BELL_use_separate_nets": True}
-params_Q_2_hidden = {"name": "Q-2Hidden", "hidden_layers": 2}
-params_split_2_hidden = {"name": "Q+Split-2Hidden", "hidden_layers": 2}
-paramsNoTarget_r_2_hidden = {"name": "Q+Split-NoTarget_r-2Hidden", "hidden_layers": 2}    
+paramsSplit = {"name": "Q+Split", "split_Bellman": True}
+ 
 
 params_Q_reward_noise_0_1 = {"name": "Q-RewardNoise0.1", "reward_added_noise_std": 0.1}
 params_Q_reward_noise_1 = {"name": "Q-RewardNoise1", "reward_added_noise_std": 1.0}
 params_Q_reward_noise_10 = {"name": "Q-RewardNoise10", "reward_added_noise_std": 10.0}
-params_split_reward_noise_0_1 = {"name": "Q+Split-RewardNoise0.1", "SPLIT_BELLMAN": True, "reward_added_noise_std": 0.1}
-params_split_reward_noise_1 = {"name": "Q+Split-RewardNoise1", "SPLIT_BELLMAN": True, "reward_added_noise_std": 1.0}
-params_split_reward_noise_10 = {"name": "Q+Split-RewardNoise10", "SPLIT_BELLMAN": True, "reward_added_noise_std": 10.0}  
-paramsNoTarget_r_split_reward_noise_0_1 = {"name": "Q+Split-NoTarget_r-RewardNoise0.1", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 0.1}
-paramsNoTarget_r_split_reward_noise_1 = {"name": "Q+Split-NoTarget_r-RewardNoise1", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 1.0}
-paramsNoTarget_r_split_reward_noise_10 = {"name": "Q+Split-NoTarget_r-RewardNoise10", "SPLIT_BELLMAN": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 10.0}                         
+params_split_reward_noise_0_1 = {"name": "Q+Split-RewardNoise0.1", "split_Bellman": True, "reward_added_noise_std": 0.1}
+params_split_reward_noise_1 = {"name": "Q+Split-RewardNoise1", "split_Bellman": True, "reward_added_noise_std": 1.0}
+params_split_reward_noise_10 = {"name": "Q+Split-RewardNoise10", "split_Bellman": True, "reward_added_noise_std": 10.0}  
+paramsNoTarget_r_split_reward_noise_0_1 = {"name": "Q+Split-NoTarget_r-RewardNoise0.1", "split_Bellman": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 0.1}
+paramsNoTarget_r_split_reward_noise_1 = {"name": "Q+Split-NoTarget_r-RewardNoise1", "split_Bellman": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 1.0}
+paramsNoTarget_r_split_reward_noise_10 = {"name": "Q+Split-NoTarget_r-RewardNoise10", "split_Bellman": True, "SPLIT_BELL_NO_TARGET_r": True, "reward_added_noise_std": 10.0}                         
 
 
 TDEC_pure = {"name": "Q+TDEC", "TDEC_ENABLED": True}
@@ -145,20 +88,14 @@ TDEC_pos_train_0_9 = {"name": "Q+TDEC-posTrain-Scale0.9", "TDEC_ENABLED": True, 
 TDEC_pos_train_1 = {"name": "Q+TDEC-posTrain-Scale1", "TDEC_ENABLED": True, "TDEC_TRAIN_FUNC": "positive",
                     "TDEC_SCALE": 1.0}
 
-reliabilityTest = [paramsQ, paramsQ1, paramsQ2, paramsQ3]
 
-reliabilityTest_long = [paramsQ, paramsQ1, paramsQ2, paramsQ3, paramsQ4, paramsQ5, paramsQ6, paramsQ7, paramsQ8, paramsQ9, paramsQ10, paramsQ11, paramsQ12, paramsQ13, paramsQ14, paramsQ15, paramsQ16, paramsQ17, paramsQ18, paramsQ19, paramsQ20, paramsQ21, paramsQ22, paramsQ23, paramsQ24, paramsQ25, paramsQ26, paramsQ27, paramsQ28, paramsQ29, paramsQ30]
+reliabilityTest_long = Q_s
 
 epsilonList = [paramsEps_2, paramsEps_1, paramsEps_05, paramsEps_01, paramsEps_005, paramsEps_001, paramsEps_0001]
-splitBellList = [paramsQ, paramsSplit, paramsNoTarget_r, paramsNoTarget_r_ind_hidden, params_split_use_sep, params_split_ind_hidden, paramsNoTarget_r_use_sep]       
-
-checkAddedParamsInfluenceList = [paramsQ, paramsSplit, paramsNoTarget_r, paramsNoTarget_r_ind_hidden, params_split_use_sep, params_split_ind_hidden, paramsNoTarget_r_use_sep, params_Q_2_hidden, params_split_2_hidden, paramsNoTarget_r_2_hidden]              
 
 noisyRewardList = [params_Q_reward_noise_0_1, params_Q_reward_noise_1, params_Q_reward_noise_10, params_split_reward_noise_0_1, params_split_reward_noise_1, params_split_reward_noise_10, paramsNoTarget_r_split_reward_noise_0_1, paramsNoTarget_r_split_reward_noise_1, paramsNoTarget_r_split_reward_noise_10]
 
-splitShortList = [paramsQ, paramsSplit, paramsNoTarget_r]
-QV_split = [paramsQ, paramsQV, paramsQV_split_V, paramsQV_split_Q, paramsQV_split_V_and_Q]
-QV_no_target = [paramsQV, paramsQV_NoTargetQ, paramsQV_split_V_and_Q, paramsQV_split_V_and_Q_NoTargetQ]
+splitShortList = [paramsQ, paramsSplit]
 
 Q_list = [paramsQ]
 
@@ -177,19 +114,44 @@ TDEC_smart_list = [paramsQ, TDEC_pure, TDEC_abs_train, TDEC_pos_train, TDEC_pos_
                    
 TDEC_mse = [TDEC_mse_train]
 
-QV_list = [paramsQ, paramsQV, paramsQV_NoTargetQ]
+QV_list = [paramsQ, paramsQV]
 
-Q_offset_list = [paramsQ, Q_offset_01, Q_offset_1, Q_offset_10]
-Q_no_exp_rep_list = [paramsQ, Q_no_exp_rep]
 TDEC_offset_list = [TDEC_pure, TDEC_pure_offset_01, TDEC_pure_offset_1, TDEC_pure_offset_10]
 
 paramsTracesLambda0_8 = {"name": "EligTraces0.8", "use_efficient_traces": 1, "elig_traces_lambda":0.8}
 paramsTracesLambda0_5 = {"name": "EligTraces0.5", "use_efficient_traces": 1, "elig_traces_lambda":0.5}
 paramsTracesAnneal = {"name": "EligTracesAnneal", "use_efficient_traces": 1, "elig_traces_anneal_lambda":1}
-paramsQuick = {"name": "Q", "use_efficient_traces": 0, "n_initial_random_actions":1}
+paramsQuick = {"name": "Q", "n_initial_random_actions":1}
+
+QV_quick = {"name": "QV", "n_initial_random_actions":1, "use_QV": 1}
+
 
 traces = [paramsQ, paramsTracesAnneal, paramsTracesLambda0_8, paramsTracesLambda0_5]
 
+
+PER = {"name": "Q+PER", "use_PER": 1}
+PER2w = {"name": "Q+PER-2worker", "use_PER": 1, "worker": 2}
+PER8w = {"name": "Q+PER-8worker", "use_PER": 1, "worker": 8}
+
+
+large_batch = {"name": "Q+BS256", "batch_size": 256}
+
+
+
+
+# test:
+#runExp(pong, [paramsQuick, QV_quick], number_of_tests=5, length_of_tests=111, path="test")
+
+
+# Test buffer:
+runExp(pong, [paramsQ, PER, PER2w, PER8w], number_of_tests=5, length_of_tests=8000000, path="workers")
+
+# Test PER:
+runExp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_sequest")
+
+
+# Run new Rainbow exps:
+runExp(pong, [paramsQ, paramsQV, paramsSplit, PER], number_of_tests=5, length_of_tests=8000000, path="Pong_Q_PER")
 
 
 # Test:
@@ -199,12 +161,6 @@ traces = [paramsQ, paramsTracesAnneal, paramsTracesLambda0_8, paramsTracesLambda
 
 #runExp(seaquest, traces, number_of_tests=5, length_of_tests=10000000, path="traces_seaquest/", on_server=True, optimize="no", run_metric_percentage=1, run_metric_final_percentage_weight=0)
 
-oldBuffer = {"name": "old", "use_new_buffer": 0}
-newBuffer = {"name": "new", "use_new_buffer": 1}
-newBuffer2 = {"name": "new2", "use_new_buffer": 1, "worker": 2}
-newBuffer8 = {"name": "new8", "use_new_buffer": 1, "worker": 8}
-replay_timing = [oldBuffer, newBuffer, newBuffer2, newBuffer8]
-runExp(pong, replay_timing, number_of_tests=5, length_of_tests=100000, path="new_buffer_timing", on_server=True, optimize="no", run_metric_percentage=1, run_metric_final_percentage_weight=0)
 
 
 ############ Exps:

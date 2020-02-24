@@ -107,7 +107,7 @@ class TempDiffNet(OptimizableNet):
         self.traces[idxs] = traces
         return last_trace_value
 
-    def optimize(self, transitions, importance_weights, actor=None, Q=None, V=None, policy_name=""):
+    def optimize(self, transitions, actor=None, Q=None, V=None, policy_name=""):
         state_features = transitions["state_features"]
         if self.F_sa is not None:
             state_action_features = transitions["state_action_features"]
@@ -118,6 +118,9 @@ class TempDiffNet(OptimizableNet):
         non_final_next_state_features = transitions["non_final_next_state_features"]
         non_final_mask = transitions["non_final_mask"]
         idxs = transitions["idxs"]
+        importance_weights = None
+        if "importance_weights" in transitions:
+            importance_weights = transitions["importance_weights"]
 
         # Compute V(s_t) or Q(s_t, a_t)
         predictions_current, reward_prediction = self.predict_current_state(state_features, state_action_features,

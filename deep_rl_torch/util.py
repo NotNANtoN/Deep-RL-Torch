@@ -19,15 +19,27 @@ import torch.nn.functional as F
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward', 'done'))
 
+def apply_to_state(func, state):
+    if isinstance(state, dict):
+        return apply_rec_to_dict(func, state)
+    else:
+        return func(state)
+
 def apply_rec_to_dict(func, tensor_dict):
-    return_dict = {}
-    for key in tensor_dict:
-        content = tensor_dict[key]
-        if isinstance(content, dict):
-            return_dict[key] = apply_rec_to_dict(func, content)
-        else:
-            return_dict[key] = func(content)
-    return return_dict
+    zipped = zip(tensor_dict.keys(), tensor_dict.values())
+    return {apply_rec_to_dict(func, content) if isinstance(content, dict)
+            else func(content) 
+            for key, content in zipped}
+    
+    
+    #return_dict = {}
+    #for key in tensor_dict:
+    #    content = tensor_dict[key]
+    #    if isinstance(content, dict):
+    #        return_dict[key] = apply_rec_to_dict(func, content)
+    #    else:
+    #        return_dict[key] = func(content)
+    #return return_dict
 
 def meanSmoothing(x, N):
     x = np.array(x)

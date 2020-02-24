@@ -17,7 +17,6 @@ class Log(object):
         self.short_term_count = defaultdict(int)
         self.global_step = 0
         self.tb_path = 'runs'
-        #self.run_tb()
         
     def __getitem__(self, key):
         key = self.transform_name(key)

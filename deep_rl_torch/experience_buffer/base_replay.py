@@ -5,16 +5,17 @@ import numpy as np
 import torch
 import gym
 
-from deep_rl_torch.util import apply_rec_to_dict
+from deep_rl_torch.util import apply_rec_to_dict, apply_to_state
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward', 'done'))
                                                   
-class RLDataset(torch.utils.data.Dataset):
-    def __init__(self, max_size, sample, action_space, size_expert_data, max_weight=1):
-        self.max_weight = max_weight
+class RLDataset(torch.utils.data.IterableDataset):
+    def __init__(self, max_size, sample, action_space, size_expert_data, stack_dim, stack_count, update_freq):
         self.max_size = max_size + size_expert_data
         self.size_expert_data = size_expert_data
+        self.stack_dim = stack_dim
+        self.stack_count = stack_count
+        self.update_freq = update_freq
+        
         if isinstance(sample, torch.Tensor) or isinstance(sample, np.ndarray):
             sample = torch.from_numpy(sample)
             shp = list(sample.shape)
@@ -32,29 +33,66 @@ class RLDataset(torch.utils.data.Dataset):
         else:
             raise TypeError("Unsupport action space type: " + str(action_space))
         # TODO: change zeros back to empty when done with debugging
+        #print("State shape: ", [max_size] + shp)
+        #print("State dtype: ", sample.dtype)
         self.states = torch.zeros([max_size] + shp, dtype=sample.dtype)
         self.rewards = torch.zeros(max_size)
         self.actions = torch.zeros([max_size] + action_shp)
         self.dones = torch.zeros(max_size, dtype=torch.bool)
-        self.weights = torch.zeros(max_size)
         self.next_idx = 0
         self.curr_idx = 0
         self.looped_once = False
+    
+    def __len__(self):
+        """ Return number of transitions stored so far """
+        if self.looped_once:
+            return self.max_size
+        else:
+            return self.next_idx
         
-    def add(self, state, action, next_state, reward, done, store_episodes=False):
-        # 1. store data 2. store pointer to episodic stuff 3. increment index
-       
-        # 1.
+    def __getitem__(self, index):
+        """ Return a single transition """
+        #print("Idx: ", index)
+        # Check if the last state is being attempted to sampled - it has no next state yet:
+        if index == self.curr_idx:
+            index = self.decrement_idx(index)
+        elif index > len(self):
+            raise ValueError("Error: index " + str(index) + " is too large for buffer of size " + str(len(self)))
+        # Stack state:
+        state = self.stack_last_frames_idx(index)
+        # Check if there is a next_state, if so stack frames:
+        next_index = self.increment_idx(index)
+        is_end = self.is_episode_boundary(index)
+        next_state = self.stack_last_frames_idx(next_index) if not is_end else None
+        return [state, self.actions[index], self.rewards[index], next_state, torch.tensor(index)]
+    
+    def __iter__(self):
+        count = 0
+        while True:
+            count += 1
+            idx = self.sample_idx()
+            yield self[idx]
+            if count == self.update_freq:
+                break
+            
+    def sample_idx(self):
+        idx = random.randint(0, len(self) - 1)
+        return idx
+        
+    def add(self, state, action, reward, done, store_episodes=False):
+        # Mark episodic boundaries:
+        #if self.dones[self.next_idx]:
+        #    self.done_idcs.remove(self.next_idx)
+        #if done:
+        #    self.done_idcs.add(self.next_idx)
+            
+        # Store data:
         self.states[self.next_idx] = state
         self.actions[self.next_idx] = action
         self.rewards[self.next_idx] = reward
         self.dones[self.next_idx] = done
-        self.weights[self.next_idx] = self.max_weight
         
-        # 2.
-        pass
-        
-        # 3.
+        # Take care of idcs:
         self.curr_idx = self.next_idx
         self.next_idx = self.increment_idx(self.next_idx)
                 
@@ -73,97 +111,120 @@ class RLDataset(torch.utils.data.Dataset):
             index = len(self) - 1
         return index
         
-    def __len__(self):
-        """ Return number of transitions stored so far """
-        if self.looped_once:
-            return self.max_size
-        else:
-            return self.next_idx
-        
-    def __getitem__(self, index):
-        """ Return a single transition """
-        # Check if the last state is being attempted to sampled - it has no next state yet:
-        if index == self.curr_idx:
-            index = self.decrement_idx(index)
-        # Check if there is a next_state:
-        next_state = self.states[index + 1] if not self.dones[index] else None
-        return self.states[index], self.actions[index], self.rewards[index], next_state, torch.tensor(index), self.weights[index]
-    
-    def __iter__(self):
-        while True:
-            idx = random.randint(0, len(self))
-            yield self[idx]
-        
     def update_stored_hidden_states(self, idxs, hidden_states, seq_lens):
         """ For R2D2, eventually. Updates the stored hidden states """
         pass
-       
+        
+    def is_episode_boundary(self, idx):
+        return self.dones[idx] or idx == self.curr_idx
+        
+    def get_last_frames(self, idx, frames):
+        frame = frames[0]
+        done_flag = False
+        for i in range(self.stack_count - 1):
+            idx = self.decrement_idx(idx)
+            if self.is_episode_boundary(idx):
+                done_flag = True
+            if not done_flag:
+                frame = self.states[idx]
+            frames.append(frame)
+        return frames
+    
+    def stack_last_frames_idx(self, idx):
+        frames = [self.states[idx]]
+        frames = self.get_last_frames(idx, frames)            
+        return self.stack_frames(frames)  
+    
+    def stack_last_frames(self, frame):
+        frames = [frame.squeeze(0)]
+        frames = self.get_last_frames(self.curr_idx, frames)
+        return self.stack_frames(frames).unsqueeze(0)
+    
+    def stack_current_frames(self, frame):
+        return self.stack_last_frames(frame)
     
     def stack_frames(self, frames):
         return torch.cat(list(frames), dim=self.stack_dim)
     
+    def get_last_transition_idx(self):
+        idx = self.decrement_idx(self.curr_idx)
+        return idx
+    
+    def get_episodes(self):
+        episode_list = [idx for idx in self.done_idcs]
+        
+        pass
+        #return self.episodic_transitions, self.episodic_idxs
 
-class ReplayBufferNew(object):
-    def __init__(self, size, sample, action_sample, batch_size, pin_mem, workers, device, use_CER=False, size_expert_data=0):
+    def get_most_recent_episode(self):
+        pass
+        #if self.episodic_transitions[-1] == []:
+        #    return self.episodic_transitions[-2], self.episodic_idxs[-2]
+        #else:
+        #    return self.episodic_transitions[-1], self.episodic_idxs[-1]
+    
+    
+class ReplayBuffer:
+    def __init__(self, data, batch_size, pin_mem, workers, device):
         self.batch_size = batch_size
-        self.use_CER = use_CER
+        self.pin_mem = pin_mem
+        self.workers = workers
         self.device = device
+        self.data = data
         
-        self.data = RLDataset(size, sample, action_sample, size_expert_data)
-        
-        #self._storage = []
         #self._expert_data_storage = []
         #self._maxsize = size + size_expert_data
-        #self._next_idx = 0
-
         #self.size_expert_data = size_expert_data
 
         #self.episodic_transitions = [[]]
         #self.episodic_idxs = [[]]
         
-        sampler = self.construct_sampler(self.data)
-        self.dataloader = torch.utils.data.DataLoader(self.data, batch_size=batch_size,# sampler=sampler,
-                                                  pin_memory=pin_mem,
-                                                  num_workers=workers,
-                                                  collate_fn=self.collate_batch)
+        # Create dataloder    
+        self.transition_names = ["states", "actions", "rewards", "next_states", "idxs"]
+        #self.construct_loader(self.data, batch_size, self.collate_batch)
+        self.iter = None #iter([])
+        self.sampler = None
+        #self.construct_loader(self.data, self.batch_size, self.collate_batch)
+        self.stop_iteration_functions = []
+        
+        
+    def construct_loader(self, data, batch_size, collate_fn):
+        self.sampler = None
+        #self.sampler = self.construct_sampler(self.data, batch_size)
+        self.dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, sampler=self.sampler,
+                                                  pin_memory=self.pin_mem,
+                                                  num_workers=self.workers,
+                                                  collate_fn=collate_fn)
         self.iter = iter(self.dataloader)
         
+    def construct_sampler(self, data, batch_size):
+        #return torch.utils.data.sampler.RandomSampler(data, replacement=True, num_samples=batch_size)
+        return MyRandomSampler(data, replacement=True, num_samples=batch_size)
+        
+    def stack_last_frames(self, state):
+        return self.data.stack_last_frames(state)
                                                   
-    def add(self, state, action, next_state, reward, done, store_episodes=False):
-        self.data.add(state, action, next_state, reward, done, store_episodes)
+    def add(self, state, action, reward, done, store_episodes=False):
+        self.data.add(state, action, reward, done, store_episodes)
         
     def sample(self):
+        if self.iter is None:
+            self.construct_loader(self.data, self.batch_size, self.collate_batch)
+        if self.sampler is not None:
+            self.sampler.n = len(self.data)
         try:
             out = next(self.iter)
         except StopIteration:
             self.iter = iter(self.dataloader)
             out = next(self.iter)
+            for fn in self.stop_iteration_functions:
+                fn()
+            
         out = self.move_batch(out)
         return out
-    
-    def sample_unsafe(self):
-        return next(self.iter)
-        
-    def sample_returns_generator(self):
-        """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """    
-        for transitions in self.dataloader:
-            #print(transitions)
-            yield transitions
-        
-        #transitions= next(self.dataloader)
-        #return transitions
-        
-    def get_transitions_iter(self):
-        """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
-        return next(iter(self.dataloader))
-    
-    def get_transitions_iter(self):
-        """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
-        return next(iter(self.dataloader))
-
+   
     def __len__(self):
         size = len(self.data)
-        print("len of loader: ", size)
         return size
             
     def stack(self, data):
@@ -184,10 +245,12 @@ class ReplayBufferNew(object):
         return batch
         
     def collate_batch(self, batch):
+        #for b in batch:
+        #    print(len(b))
+        #print("len trans nemaes: ", len(self.transition_names))
         # Create dict:
-        batch = [[sample[idx] for sample in batch] for idx in range(len(batch[0]))]
-        names = ["states", "actions", "rewards", "next_states", "idxs", "importance_weights"]
-        batch_dict = {key: value for key, value in zip(names, batch)}
+        batch = [[sample[idx] for sample in batch] for idx in range(len(self.transition_names))]
+        batch_dict = {key: value for key, value in zip(self.transition_names, batch)}
         # Next state:
         batch_dict["non_final_mask"] = torch.tensor([val is not None for val in batch_dict["next_states"]]).bool()
         batch_dict["non_final_next_states"] = [state for state in batch_dict["next_states"] if state is not None]
@@ -207,12 +270,51 @@ class ReplayBufferNew(object):
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
         return batch_dict
     
+
+
+class CERWrapper:
+    def __init__(self, buffer):
+        self.buffer = buffer
+        
+        self.old_loader = self.buffer.construct_loader
+        self.buffer.construct_loader = lambda data, batch, collate: self.old_loader(data, batch - 1, self.collate_batch)
+        
+        self.update_freq = buffer.data.update_freq // buffer.batch_size * buffer.workers
+        self.buffer.stop_iteration_functions.append(self.reset_idx)
+        self.count = 1
+        
+        # Create new dataloader with a batch size reduced by 1
+        #self.construct_loader(buffer.data, buffer.batch_size, self.collate_batch)
+        
+    def __getattr__(self, attr):
+        return getattr(self.buffer, attr)
     
-    def construct_sampler(self, data):
-        return torch.utils.data.sampler.RandomSampler(data, replacement=True, num_samples=self.batch_size)
+    def reset_idx(self):
+        self.count = 1
+
+    def collate_batch(self, batch):
+        # Adds the most recent (as recent as possible) transition to the batch
+        workers = self.buffer.workers
+        idx = self.buffer.data.get_last_transition_idx()
+        # If we have multiple workers we need to assign a different idx per worker id
+        # Also we need to count until when the buffer will be updated with new transitions:
+        # this influences the CER idx
+        if workers > 0:
+            id_ = torch.utils.data.get_worker_info().id
+            idx = self.buffer.data.get_last_transition_idx()
+            subtract = self.update_freq * workers
+            idx = min(idx - subtract + id_ + self.count * workers, idx)
+            idx = max(idx, 0)
+            self.count += 1
+        batch.append(self.data[idx])
+        return self.buffer.collate_batch(batch)
+        
+    
+    
 
 
-class PrioritizedReplayBufferNew(ReplayBufferNew):
+        
+class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, size, sample, action_sample, batch_size, pin_mem, workers, alpha, use_CER=False, max_priority=1.0, size_expert_data=0):
         """
         Create Prioritized Replay buffer.
@@ -229,8 +331,8 @@ class PrioritizedReplayBufferNew(ReplayBufferNew):
         self._alpha = alpha
         self.max_priority = max_priority
         
-    def construct_sampler(self, data):
-        return torch.utils.data.sampler.WeightedRandomSampler(self.weights, self.batch_size, replacement=True)
+    def construct_sampler(self, data, batch_size):
+        return torch.utils.data.sampler.WeightedRandomSampler(self.weights, batch_size, replacement=True)
     
     def update_weights(self, idcs, weights):
         self.dataloader.sampler.weights[idcs] = weights
@@ -247,7 +349,9 @@ class PrioritizedReplayBufferNew(ReplayBufferNew):
         
 
 
-class ReplayBuffer(object):
+        
+
+class ReplayBufferOld:
     def __init__(self, size, use_CER=False, size_expert_data=0):
         """
         Implements a ring buffer (FIFO).
