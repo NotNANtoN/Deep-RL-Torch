@@ -32,7 +32,6 @@ def get_env(parameters):
     cheetah = "HalfCheetah-v2"
     human = "Humanoid-v2"
     human_stand = "HumanoidStandup-v2"
-
     # MineRL:
     tree = "MineRLTreechop-v0"
     nav_dense = "MineRLNavigateDense-v0"
@@ -43,6 +42,12 @@ def get_env(parameters):
     pickaxe_dense = "MineRLObtainIronPickaxeDense-v0"
     diamond = "MineRLObtainDiamond-v0"
     diamond_dense = "MineRLObtainDiamondDense-v0"
+    # Aigar:
+    pellet = "AigarPellet-v0"
+    pellet_grid = "AigarPelletGrid-v0"
+    greedy = "AigarGreedy1-v0"
+    greedy_grid = "AigarGreedy1Grid-v0"
+
     env_short = parameters["env"]
     if env_short == "cart":
         env = cart
@@ -66,6 +71,14 @@ def get_env(parameters):
         env = "Pong-ram-v0"
     elif env_short == "atlantis":
         env = "Atlantis-v0"
+    elif env_short == "pellet":
+        env = pellet
+    elif env_short == "pellet_grid":
+        env = pellet_grid
+    elif env_short == "greedy":
+        env = greedy
+    elif env_short == "greedy_grid":
+        env = greedy_gird
     else:
         env = env_short
     return env

@@ -9,9 +9,9 @@ from .normalizer import Normalizer
 from deep_rl_torch.util import apply_rec_to_dict
 
 class ProcessState(OptimizableNet):
-    def __init__(self, env, log, device, hyperparameters, is_target_net=False):
+    def __init__(self, state_sample, env, log, device, hyperparameters, is_target_net=False):
         super(ProcessState, self).__init__(env, device, log, hyperparameters)
-
+        self.state_sample = state_sample
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_conv"]
         self.normalize_obs = hyperparameters["normalize_obs"]
@@ -24,7 +24,7 @@ class ProcessState(OptimizableNet):
         else:
             self.use_target_net = hyperparameters["use_target_net"]
 
-        self.processing_list, merge_input_size = self.create_input_layers(env)
+        self.processing_list, merge_input_size = self.create_input_layers(state_sample)
 
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
@@ -102,25 +102,22 @@ class ProcessState(OptimizableNet):
         layer_dict["Name"] = name
         return layer_dict, output_size
 
-    def create_input_layers(self, env):
+    def create_input_layers(self, state_sample):
         if self.verbose:
             print("Creating state processor input layers...")
-        # Get a sample to assess the shape of the observations easily:
-        obs_space = env.observation_space
-        sample = obs_space.sample()
 
         processing_list = []
         merge_input_size = 0
         # If the obs is a dict:
-        if isinstance(sample, dict):
-            for key in sample:
-                obs = sample[key]
+        if isinstance(state_sample, dict):
+            for key in state_sample:
+                obs = state_sample[key]
                 layer_dict, output_size = self.create_layer_dict(obs, name=key)
                 processing_list.append(layer_dict)
                 merge_input_size += output_size
         # If the obs is simply a np array:
         else:
-            layer_dict, output_size = self.create_layer_dict(sample, name="input_array")
+            layer_dict, output_size = self.create_layer_dict(state_sample, name="input_array")
             processing_list.append(layer_dict)
             merge_input_size += output_size
 
@@ -170,7 +167,7 @@ class ProcessState(OptimizableNet):
         self.log_layer_data(self.layers_merge, "F_s Merge", extra_name=name)
 
     def recreate_self(self):
-        return self.__class__(self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
+        return self.__class__(self.state_sample, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
 
     def get_updateable_params(self):
         params = list(self.layers_merge.parameters())

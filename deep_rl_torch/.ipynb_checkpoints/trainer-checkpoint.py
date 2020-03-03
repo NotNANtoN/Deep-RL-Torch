@@ -2,14 +2,17 @@ import collections
 import time
 import itertools
 import os
+import psutil
 
 import numpy as np
 import minerl
+import aigar
 import gym
 gym.logger.set_level(40)
 import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
+
 
 from .agent import Agent
 from .env_wrappers import FrameSkip, FrameStack
@@ -39,9 +42,11 @@ class Trainer:
         self.rgb2gray = hyperparameters["rgb_to_gray"]
         self.pin_tensors = hyperparameters["pin_tensors"]
         self.store_on_gpu = hyperparameters["store_on_gpu"]
-        hyperparamters["verbose"] = verbose
+        hyperparameters["verbose"] = verbose
         self.hyperparameters = hyperparameters
         self.verbose = verbose
+        # Logging:
+        self.psutil_process = psutil.Process()
 
         # Init env:
         self.env_name = env_name
@@ -97,6 +102,7 @@ class Trainer:
             hyperparameters["num_expert_samples"] = num_expert_samples
         else:
             hyperparameters["num_expert_samples"] = 0
+                
         # Init Policy:
         self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
@@ -114,8 +120,8 @@ class Trainer:
         if hyperparameters["convert_2_torch_wrapper"]:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
             env = wrapper(env, self.rgb2gray)
-        if hyperparameters["frame_stack"] > 1:
-            env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
+        #if hyperparameters["frame_stack"] > 1:
+        #    env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
             exclude_keys = hyperparameters["exclude_keys"]
@@ -147,10 +153,10 @@ class Trainer:
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.agent.F_s.observe(state)
+                self.agent.observe(state)
                 # TODO: normalize actions too # self.policy.F_sa.observe(action)
 
-            self.agent.remember(state, action, next_state, reward, done, filling_buffer=True)
+            self.agent.remember(state, action, reward, done, filling_buffer=True)
             # Delete data from data list when processed to save memory
             del data[0]
         pbar.close()
@@ -290,7 +296,7 @@ class Trainer:
             pbar.update(1)
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.agent.F_s.observe(state)
+                self.agent.observe(state)
                 # TODO: normalize (observe) actions too for actor critic
             action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
                                                          explore=True, filling_buffer=True)
@@ -346,7 +352,7 @@ class Trainer:
             next_state = None
         # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
-            self.agent.remember(state, raw_action, next_state, reward, done, filling_buffer=filling_buffer)
+            self.agent.remember(state, raw_action, reward, done, filling_buffer=filling_buffer)
         # Calculate TDE for debugging purposes:
         # TODO: implement logging of TDE
         # tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
@@ -406,8 +412,17 @@ class Trainer:
             #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
             #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
         print()
-
-    def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, on_server=True):
+        
+    def log_usage(self):
+        cpu_ram_GB = self.psutil_process.memory_info()[0] / 1024. ** 3
+        cpu_usage = self.psutil_process.cpu_percent()
+        gpu_mem = torch.cuda.memory_allocated() / 8 / 1024. ** 3
+        
+        self.log.add("Usage/CPU_mem", cpu_ram_GB, skip_steps=self.log_freq)
+        self.log.add("Usage/CPU_usage", cpu_usage, skip_steps=self.log_freq)
+        self.log.add("Usage/GPU_mem", gpu_mem, skip_steps=self.log_freq)
+        
+    def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, disable_tqdm=True):
         assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
         verbose = verbose or self.verbose
         steps_done = 0
@@ -445,7 +460,9 @@ class Trainer:
         if verbose:
             print("Start training in the env:")
         time_after_optimize = None
-        #pbar = tqdm(total=n_steps, desc="Total Training", disable=self.disable_tqdm)
+        if n_steps == 0:
+            disable_tqdm = True
+        pbar = tqdm(total=n_steps, desc="Total Training", disable=disable_tqdm)
         train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
         while train_fraction < 1:
             i_episode += 1
@@ -490,17 +507,17 @@ class Trainer:
                  #                skip_steps=self.log_freq)
                 self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
                              store_episodic=True)
+                # Log RAM and GPU usage:
+                self.log_usage()
 
                 if render:
                     self.env.render()
 
                 self.log.step()
-                if done or (n_steps and steps_done >= n_steps) or (n_episodes and i_episode >= n_episodes) or\
-                        (n_hours and (time.time() - start_time) / 360 >= n_hours):
-
-
-                    #pbar.update(t)
-
+                
+                episodes_done = (n_episodes and i_episode >= n_episodes)
+                time_done = (n_hours and (time.time() - start_time) / 360 >= n_hours)
+                if done or episodes_done or time_done:
                     self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
                     self.log.add("Episode Len", t, steps=i_episode)
                     if verbose:
@@ -509,7 +526,7 @@ class Trainer:
                     state = None
                     break
                 train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
-            train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+            pbar.update(t)
 
         # Save the model:
         self.agent.update_targets(steps_done, train_fraction=1.0)
@@ -517,7 +534,7 @@ class Trainer:
             print('Done.')
         
         self.env.close()
-        #pbar.close()
+        pbar.close()
         return i_episode, self.log
         
     def close(self):

@@ -16,7 +16,7 @@ except ImportError:
     pass
 
 # Internal Imports:
-from deep_rl_torch.experience_buffer import ReplayBuffer, PrioritizedReplayBuffer, ReplayBufferNew
+from deep_rl_torch.experience_buffer import ReplayBuffer, CERWrapper, PERBuffer, RLDataset, PERDataset
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
 
@@ -87,6 +87,8 @@ class BasePolicy:
         self.elig_traces_anneal_lambda = hyperparameters["elig_traces_anneal_lambda"]
         self.lambda_val = hyperparameters["elig_traces_lambda"]
         # Set up replay buffer:
+        self.stack_dim = hyperparameters["stack_dim"]
+        self.stack_count = hyperparameters["frame_stack"]
         self.buffer_size = hyperparameters["replay_buffer_size"] + hyperparameters["num_expert_samples"]
         self.use_PER = hyperparameters["use_PER"]
         self.use_CER = hyperparameters["use_CER"]
@@ -94,6 +96,8 @@ class BasePolicy:
         self.PER_start_beta = hyperparameters["PER_beta"]
         self.PER_beta = self.PER_start_beta
         self.PER_anneal_beta = hyperparameters["PER_anneal_beta"]
+        self.PER_max_priority = hyperparameters["PER_max_priority"]
+        self.PER_running_avg = hyperparameters["PER_running_avg"]
         self.importance_weights = None
             
         # Create replay buffer:
@@ -112,18 +116,27 @@ class BasePolicy:
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
         
     def create_replay_buffer(self):
-        if self.hyperparameters["use_new_buffer"]:
-            obs_sample = self.env.observation_space.sample()
-            #action_sample = self.env.action_space.sample()
-            action_space = self.env.action_space
-            worker = self.hyperparameters["worker"]
-            memory = ReplayBufferNew(self.buffer_size, obs_sample, action_space, self.batch_size, False, worker, self.device, use_CER=self.use_CER)
-            self.get_transitions = self.get_transitions_new
-            return memory
+        obs_sample = self.env.observation_space.sample()
+        #action_sample = self.env.action_space.sample()
+        action_space = self.env.action_space
+        worker = self.hyperparameters["worker"]
+        pin_mem = False
+        size_expert_data = 0
+        update_freq = self.hyperparameters["buffer_update_steps"] * self.batch_size
+        if not worker:
+            update_freq = 0
+            
+        args = (self.log, self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count, update_freq)
+        bargs = (self.batch_size, pin_mem, worker, self.device)
         if self.use_PER:
-            memory = PrioritizedReplayBuffer(self.buffer_size, self.PER_alpha, use_CER=self.use_CER)
+            dataset = PERDataset(self.PER_alpha, *args, max_priority=self.PER_max_priority, running_avg=self.PER_running_avg)
+            memory = PERBuffer(dataset, *bargs)
         else:
-            memory = ReplayBuffer(self.buffer_size, use_CER=self.use_CER)
+            dataset = RLDataset(*args)
+            memory = ReplayBuffer(dataset, *bargs)
+        # Wrap buffer to add functionalities:
+        if self.use_CER:
+            memory = CERWrapper(memory) 
         return memory
         
 
@@ -148,8 +161,13 @@ class BasePolicy:
             action += torch.tensor(np.random.normal(0, self.gaussian_action_noise, len(action)), dtype=torch.float)
             action = np.clip(action, self.action_low, self.action_high)
         return action
+    
+    def stack_current_frame(self, state):
+        return self.memory.stack_last_frames(state)
 
     def choose_action(self, state, calc_state_features=True):
+        state = self.stack_current_frame(state)
+        state = self.state2device(state)
         with torch.no_grad():
             if calc_state_features:
                 state_features = self.F_s(state)
@@ -159,8 +177,6 @@ class BasePolicy:
         return action
 
     def explore(self, state, fully_random=False):
-        state = self.state2device(state)
-
         # Epsilon-Greedy:
         sample = random.random()
         if fully_random or sample < self.epsilon:
@@ -198,8 +214,6 @@ class BasePolicy:
         return state
 
     def exploit(self, state):
-        state = self.state2device(state)
-
         raw_action = self.choose_action(state)
         if self.discrete_env:
             action = torch.argmax(raw_action).item()
@@ -242,15 +256,13 @@ class BasePolicy:
         loss = 0
         if self.V is not None:
             V.retain_graph = True
-            TDE_V, loss_V = V.optimize(transitions, importance_weights=transitions["importance_weights"], actor=self.actor,
-                               Q=Q, V=None, policy_name=self.name)
+            TDE_V, loss_V = V.optimize(transitions, actor=self.actor, Q=Q, V=None, policy_name=self.name)
             loss += loss_V
 
         # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
         TDE_Q = 0
         if self.Q is not None:
-            TDE_Q, loss_Q = Q.optimize(transitions, importance_weights=transitions["importance_weights"], actor=self.actor,
-                               Q=None, V=V, policy_name=self.name)
+            TDE_Q, loss_Q = Q.optimize(transitions, actor=self.actor, Q=None, V=V, policy_name=self.name)
             loss += loss_Q
 
         TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
@@ -303,7 +315,7 @@ class BasePolicy:
         # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
 
-    def get_transitions_new(self):
+    def get_transitions(self):
         """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
         if self.use_PER:
             return self.memory.sample(self.PER_beta)
@@ -313,7 +325,7 @@ class BasePolicy:
             return trans
         
 
-    def get_transitions(self):
+    def get_transitions_old(self):
         sampling_size = min(len(self.memory), self.batch_size)
         if self.use_PER:
             transitions, importance_weights, idxs = self.memory.sample(sampling_size, self.PER_beta)
@@ -410,13 +422,13 @@ class BasePolicy:
         if self.actor is not None:
             self.actor.retain_graph = val
 
-    def remember(self, state, action, reward, next_state, done, filling_buffer=False):
+    def remember(self, state, action, reward, done, filling_buffer=False):
         if self.use_efficient_traces:
-            transition = (state, action, reward, next_state, done)
+            transition = (state, action, reward, done)
             self.current_episode.append(transition)
             if done:
-                for state, action, reward, next_state, done in self.current_episode:
-                    self.memory.add(state, action, reward, next_state, done, store_episodes=True)
+                for state, action, reward, done in self.current_episode:
+                    self.memory.add(state, action, reward, done, store_episodes=True)
                 self.current_episode = []
                 # Update episode trace:
                 if not filling_buffer:
@@ -424,7 +436,7 @@ class BasePolicy:
                     self.update_episode_trace(most_recent_episode, idxs)
 
         else:
-            self.memory.add(state, action, reward, next_state, done)
+            self.memory.add(state, action, reward, done)
 
     def update_targets(self, n_steps, train_fraction=None):
         if self.use_efficient_traces:
@@ -436,38 +448,6 @@ class BasePolicy:
             self.V.update_targets(n_steps)
         if self.actor is not None and self.use_actor_critic:
             self.actor.update_targets(n_steps)
-
-    def get_tensor_size(self, tensor):
-        multiplier = None
-        if tensor.dtype == torch.float16:
-            multiplier = 16
-        elif tensor.dtype == torch.int8:
-            multiplier = 8
-        elif tensor.dtype == torch.float32:
-            multiplier = 32
-        else:
-            raise TypeError("Unknown input type: ", tensor.dtype)
-        bit_size = tensor.view(-1).shape[0] * multiplier
-
-        return bit_size
-
-    def get_largest_tensor_size_from_dict(self, tensor_dict):
-        biggest = 0
-        for key in tensor_dict:
-            value = tensor_dict[key]
-            if isinstance(value, torch.tensor):
-                size = self.get_tensor_size(value)
-            elif isinstance(value, dict):
-                size = self.get_largest_tensor_size_from_dict(value)
-            else:
-                raise TypeError("Unkown type " + type(value) + " in dict " + tensor_dict)
-
-            if size > biggest:
-                biggest = size
-
-        if biggest == 0:
-            raise ValueError("No tensor of a size was found in the observation sample!")
-        return biggest
     
     def calc_max_batch_size(self):
         # Calculate remaining gpu mem:
@@ -531,6 +511,7 @@ class BasePolicy:
             # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
             for episode, idxs in tqdm.tqdm(zip(episodes, idx_list), disable=not self.verbose):
                 self.update_episode_trace(episode, idxs)
+                
 
     def freeze_normalizers(self):
         self.F_s.freeze_normalizers()

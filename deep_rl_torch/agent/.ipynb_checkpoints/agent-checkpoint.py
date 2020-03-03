@@ -41,7 +41,7 @@ class AgentInterface:
     def calculate_TDE(self, state, action, reward, next_state):
         raise NotImplementedError
 
-    def remember(self, state, action, next_state, reward, done):
+    def remember(self, state, action, reward, done):
         raise NotImplementedError
 
     def display_debug_info(self):
@@ -69,7 +69,10 @@ class Agent(AgentInterface):
         self.stored_percentage = 0
         self.load_path = hyperparameters["load_path"]
         self.batch_size = hyperparameters["batch_size"]
+        self.stack_dim = hyperparameters["stack_dim"]
+        self.stack_count = hyperparameters["frame_stack"]
 
+        # Create NNs and support structures:
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
 
@@ -83,9 +86,19 @@ class Agent(AgentInterface):
             self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
             if self.use_half:
                 _, self.optimizer = amp.initialize([], self.optimizer)
+                
+    def fake_stack(self, state_sample):
+        shp = list(state_sample.shape)
+        if shp[0] == 1 or len(shp) == 1:
+            state_sample = np.concatenate([state_sample] * self.stack_count)
+        else:
+            state_sample = np.stack([state_sample] * self.stack_count)
+        return state_sample
 
     def init_feature_extractors(self):
-        F_s = ProcessState(self.env, self.log, self.device, self.hyperparameters)
+        state_sample = self.env.observation_space.sample()
+        state_sample = self.fake_stack(state_sample)
+        F_s = ProcessState(state_sample, self.env, self.log, self.device, self.hyperparameters)
         if self.log and self.verbose:
             print("F_s:")
             print(F_s)
@@ -136,8 +149,8 @@ class Agent(AgentInterface):
         return policy
 
     #@profile
-    def remember(self, state, action, next_state, reward, done, filling_buffer=False):
-        self.policy.remember(state, action, next_state, reward, done, filling_buffer=filling_buffer)
+    def remember(self, state, action, reward, done, filling_buffer=False):
+        self.policy.remember(state, action, reward, done, filling_buffer=filling_buffer)
 
     #@profile
     def optimize(self, steps_done, train_fraction):
@@ -180,6 +193,10 @@ class Agent(AgentInterface):
             #if self.F_sa is not None:
             #    self.F_sa.log_nn_data("")
             #self.policy.log_nn_data()
+            
+    def observe(self, state):
+        state = self.policy.stack_current_frame(state)
+        self.F_s.observe(state)
     
     def calc_mem_usage(self):
         """ Calculates the memory usage of training.
@@ -209,8 +226,6 @@ class Agent(AgentInterface):
             print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
         return single_transition
         
-        
-
     def explore(self, state, fully_random=False):
         return self.policy.explore(state, fully_random)
 
