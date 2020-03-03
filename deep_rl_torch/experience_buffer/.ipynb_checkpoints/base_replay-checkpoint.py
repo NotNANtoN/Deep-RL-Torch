@@ -9,12 +9,13 @@ from deep_rl_torch.util import apply_rec_to_dict, apply_to_state
 
                                                   
 class RLDataset(torch.utils.data.IterableDataset):
-    def __init__(self, max_size, sample, action_space, size_expert_data, stack_dim, stack_count, update_freq):
+    def __init__(self, log, max_size, sample, action_space, size_expert_data, stack_dim, stack_count, update_freq):
         self.max_size = max_size + size_expert_data
         self.size_expert_data = size_expert_data
         self.stack_dim = stack_dim
         self.stack_count = stack_count
         self.update_freq = update_freq
+        self.log = log
         
         if isinstance(sample, torch.Tensor) or isinstance(sample, np.ndarray):
             sample = torch.from_numpy(sample)
@@ -53,6 +54,7 @@ class RLDataset(torch.utils.data.IterableDataset):
     def __getitem__(self, index):
         """ Return a single transition """
         #print("Idx: ", index)
+        self.log.add("Sampled Idx", index, make_distribution=True, skip_steps=10000)
         # Check if the last state is being attempted to sampled - it has no next state yet:
         if index == self.curr_idx:
             index = self.decrement_idx(index)

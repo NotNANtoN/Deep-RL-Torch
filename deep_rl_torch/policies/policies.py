@@ -126,7 +126,7 @@ class BasePolicy:
         if not worker:
             update_freq = 0
             
-        args = (self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count, update_freq)
+        args = (self.log, self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count, update_freq)
         bargs = (self.batch_size, pin_mem, worker, self.device)
         if self.use_PER:
             dataset = PERDataset(self.PER_alpha, *args, max_priority=self.PER_max_priority, running_avg=self.PER_running_avg)
