@@ -78,7 +78,7 @@ def get_env(parameters):
     elif env_short == "greedy":
         env = greedy
     elif env_short == "greedy_grid":
-        env = greedy_gird
+        env = greedy_grid
     else:
         env = env_short
     return env
@@ -123,11 +123,17 @@ def create_arg_dict(env=None, verbose=False):
                        ]
 
     vizdoom_winner = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
-                           {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
-                           {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
-                           {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 1, "act_func": "relu"},
-                           {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
-                           ]
+                        {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                        {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                        {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 1, "act_func": "relu"},
+                        {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                      ]
+    own_arch = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                ]
     # TODO: define R2D2 conv architecture! (IMPALA uses the same)
     layers_conv = standard_hidden_block
 
@@ -186,6 +192,8 @@ def create_arg_dict(env=None, verbose=False):
         parameters["layers_conv"] = mnhi_later
     elif parameters["layers_conv"] == "vizdoom_winner":
         parameters["layers_conv"] = vizdoom_winner
+    elif parameters["layers_conv"] == "own":
+        parameters["layers_conv"] = own_arch
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -256,6 +264,7 @@ def create_comment():
     parameters["tb_comment"] = tensorboard_comment
     return tensorboard_comment
 
+
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
     
@@ -272,7 +281,7 @@ if __name__ == "__main__":
 
     trainer = Trainer(env, parameters, log=parameters["log"], tb_comment=tensorboard_comment, verbose=True)
     try:
-        trainer.run(n_steps=parameters["n_steps"], n_episodes=parameters["n_episodes"], n_hours=parameters["n_hours"],
+        trainer.run(total_steps=parameters["steps"], n_episodes=parameters["episodes"], n_hours=parameters["hours"],
                 render=parameters["render"], verbose=parameters["verbose"])
     except KeyboardInterrupt:
         print("KeyboardInterrupt - Goodbye!")
@@ -283,6 +292,3 @@ if __name__ == "__main__":
         trainer.close()
         del trainer
         raise
-
-    # TODO: log TDE of new incoming transitions and expected Q-vals
-

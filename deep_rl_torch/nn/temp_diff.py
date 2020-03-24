@@ -1,7 +1,6 @@
 import os
 
 import torch
-
 from .networks import OptimizableNet
 from .nn_utils import *
 
@@ -157,7 +156,6 @@ class TempDiffNet(OptimizableNet):
         TDE_TD, loss_TD = self.optimize_net(predictions_current, expected_value_next_state, self.optimizer_TD, "TD",
                           sample_weights=importance_weights)
 
-        #self.log_nn_data(policy_name + "_TD-net", r_net=False)
         self.TDE = (abs(TDE_r) + abs(TDE_TD))
         loss = loss_TD + loss_r
         return self.TDE, loss

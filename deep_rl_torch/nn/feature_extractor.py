@@ -124,10 +124,8 @@ class ProcessState(OptimizableNet):
         return processing_list, merge_input_size
 
     def forward(self, state):
-        #print(state.shape)
         x = self.apply_processing_list(state, self.processing_list)
         x = torch.cat(x, dim=1)
-        #print(x.shape)
         x = apply_layers(x, self.layers_merge, self.act_functs_merge)
         return x
 
@@ -161,9 +159,9 @@ class ProcessState(OptimizableNet):
             if self.normalize_obs and not self.freeze_normalizer:
                 normalizer.observe(state)
 
-    def log_nn_data(self, name):
+    def log_nn_data(self, name=""):
         for layers in self.processing_list:
-            self.log_layer_data(layers["Layers"], "F_s-" + layers["Name"], extra_name=name)
+            self.log_layer_data(layers["Layers"], "F_s_" + layers["Name"], extra_name=name)
         self.log_layer_data(self.layers_merge, "F_s Merge", extra_name=name)
 
     def recreate_self(self):

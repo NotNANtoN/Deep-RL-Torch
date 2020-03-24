@@ -602,7 +602,7 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, path, 
         trial_idx = max_trial_idx(path)
         with MockTrialFile(path, trial_idx):
             trainer = Trainer(env, args)
-            n_eps, log = trainer.run(verbose=False, n_steps=length_of_tests, disable_tqdm=False)
+            n_eps, log = trainer.run(verbose=False, total_steps=length_of_tests, disable_tqdm=False)
         log = log.storage
         
         rewards = np.array(log["Test Return"])

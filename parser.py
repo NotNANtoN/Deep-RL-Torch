@@ -4,14 +4,14 @@ def create_parser():
     parser = argparse.ArgumentParser()
     # General:
     train_time_group = parser.add_mutually_exclusive_group()
-    train_time_group.add_argument("--n_steps", type=int, default=0)
-    train_time_group.add_argument("--n_episodes", type=int, default=0)
-    train_time_group.add_argument("--n_hours", type=float, default=0.0)
+    train_time_group.add_argument("--steps", type=int, default=0)
+    train_time_group.add_argument("--episodes", type=int, default=0)
+    train_time_group.add_argument("--hours", type=float, default=0.0)
     parser.add_argument("--env", help="Env name", default="cart")
     # User experience:
     parser.add_argument("--tb_comment", help="comment that is added to tensorboard", default="")
-    parser.add_argument("--save_path", default="train/")
-    parser.add_argument("--save_percentage", type=float, default=0.05)
+    parser.add_argument("--save_path", default="saved_models/")
+    parser.add_argument("--save_percentage", type=float, default=0)#0.05)
     parser.add_argument("--load", type=int, default=0)
     parser.add_argument("--load_path", default="")
     parser.add_argument("--tqdm", type=int, help="comment that is added to tensorboard", default=0)
@@ -21,8 +21,6 @@ def create_parser():
     parser.add_argument("--log", type=int, default=1)
     parser.add_argument("--log_freq", type=int, default=1000)
     # Train basics:
-    parser.add_argument("--store_on_gpu", type=int, default=0)
-    parser.add_argument("--pin_tensors", type=int,  default=0)
     parser.add_argument("--gamma", type=float, help="Discount factor", default=0.99)
     parser.add_argument("--frame_stack", type=int, help="How many frames to stack", default=4)
     parser.add_argument("--stack_dim", type=int, help="Which dimension of the tensor to stack the frames at", default=0)
@@ -32,7 +30,7 @@ def create_parser():
     parser.add_argument("--reward_std", type=float, default=0.0)
     # Target net:
     parser.add_argument("--use_target_net", type=int, default=1)
-    parser.add_argument("--use_polyak_averaging", type=int, default=1)
+    parser.add_argument("--use_polyak_averaging", type=int, default=0)
     parser.add_argument("--target_network_hard_steps", type=int, default=10000)
     parser.add_argument("--polyak_averaging_tau", type=float, default=0.0025)
     # Experience replay:
@@ -46,17 +44,17 @@ def create_parser():
     parser.add_argument("--PER_anneal_beta", type=int, default=1)
     parser.add_argument("--PER_max_priority", type=float, default=1.0)
     parser.add_argument("--PER_running_avg", type=float, default=0.0)
-    parser.add_argument("--use_CER", type=int, default=1)
+    parser.add_argument("--use_CER", type=int, default=0)
     # Expert Data:
     parser.add_argument("--use_expert_data", type=int, default=0)
     parser.add_argument("--pretrain_percentage", type=float, default=0.1)
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
-    parser.add_argument("--epsilon_mid", type=float, default=0.1)
+    parser.add_argument("--epsilon_mid", type=float, default=0.05)
     parser.add_argument("--explore_until_reward", type=int, default=0)
     parser.add_argument("--action_sigma", type=float, default=0.0)
-    parser.add_argument("--n_initial_random_actions", type=int, default=50000)
+    parser.add_argument("--initial_steps", type=int, default=50000)
     # Split reward:
     parser.add_argument("--split_Bellman", type=int, default=0)
     # QV:
@@ -75,7 +73,7 @@ def create_parser():
     parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
                         default=255)
     # NN Architecture:
-    parser.add_argument("--layers_conv", default="mnhi_later")
+    parser.add_argument("--layers_conv", default="own")
     parser.add_argument("--hidden_size", default=512)
     # NN Training:
     parser.add_argument("--optimize_centrally", type=int, default=1)
@@ -89,6 +87,8 @@ def create_parser():
     parser.add_argument("--lr_V", type=float, default=0.0002)
     parser.add_argument("--lr_r", type=float, default=0.0001)
     parser.add_argument("--lr_actor", type=float, default=0.00005)
+    parser.add_argument("--store_on_gpu", type=int, default=0)
+    parser.add_argument("--pin_tensors", type=int,  default=0)
     # REM:
     parser.add_argument("--use_REM", type=int, default=0)
     parser.add_argument("--REM_num_heads", type=int, default=5)

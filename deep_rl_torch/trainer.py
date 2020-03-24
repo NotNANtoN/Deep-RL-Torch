@@ -8,11 +8,11 @@ import numpy as np
 import minerl
 import aigar
 import gym
+
 gym.logger.set_level(40)
 import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
-
 
 from .agent import Agent
 from .env_wrappers import FrameSkip, FrameStack
@@ -20,10 +20,9 @@ from .util import display_top_memory_users, apply_rec_to_dict
 from .log import Log
 
 
-
-def calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
-    if n_steps:
-        fraction = steps_done / n_steps
+def calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
+    if total_steps:
+        fraction = steps_done / total_steps
     elif n_episodes:
         fraction = i_episode / n_episodes
     else:
@@ -48,6 +47,9 @@ class Trainer:
         # Logging:
         self.psutil_process = psutil.Process()
 
+        # Cuda there?
+        self.cuda = torch.cuda.is_available()
+
         # Init env:
         self.env_name = env_name
         self.env = self.create_env(hyperparameters)
@@ -69,7 +71,7 @@ class Trainer:
 
         # Exploration params:
         self.use_elig_traces = hyperparameters["use_efficient_traces"]
-        self.n_initial_random_actions = hyperparameters["n_initial_random_actions"]
+        self.n_initial_random_actions = hyperparameters["initial_steps"]
         self.explore_until_reward = hyperparameters["explore_until_reward"]
 
         self.normalize_observations = hyperparameters["normalize_obs"]
@@ -85,7 +87,7 @@ class Trainer:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
         if self.max_steps_per_episode:
             self.tqdm_episode_len = self.max_steps_per_episode
-        #elif self.env._max_episode_steps:
+        # elif self.env._max_episode_steps:
         #    self.tqdm_episode_len = env._max_episode_steps
         else:
             self.tqdm_episode_len = None
@@ -102,7 +104,7 @@ class Trainer:
             hyperparameters["num_expert_samples"] = num_expert_samples
         else:
             hyperparameters["num_expert_samples"] = 0
-                
+
         # Init Policy:
         self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
@@ -120,7 +122,7 @@ class Trainer:
         if hyperparameters["convert_2_torch_wrapper"]:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
             env = wrapper(env, self.rgb2gray)
-        #if hyperparameters["frame_stack"] > 1:
+        # if hyperparameters["frame_stack"] > 1:
         #    env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
@@ -131,8 +133,9 @@ class Trainer:
         return env
 
     def reset(self):
-        self.episode_durations = []
-        self.agent.reset()
+        raise NotImplementedError
+        # self.episode_durations = []
+        # self.agent.reset()
 
     def optimize(self):
         self.agent.optimize()
@@ -161,12 +164,12 @@ class Trainer:
             del data[0]
         pbar.close()
 
-
     def use_data_pipeline_MineRL(self, pipeline):
-        #return [sample for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm)]
+        # return [sample for sample in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm)]
 
         data = []
-        for state, raw_action, reward, next_state, done in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1), disable=self.disable_tqdm):
+        for state, raw_action, reward, next_state, done in tqdm(pipeline.sarsd_iter(num_epochs=1, max_sequence_len=1),
+                                                                disable=self.disable_tqdm):
 
             # TODO: think about filtering out the end of an episode that did not lead to a reward. So if [0,0,1,2,0, 0,1,0 0 ,0] are the episode rewards, it should be cut to [0, 0, 1, 2, 0, 0, 1]
             # TODO: this could be good because it filters unsuccesfull runs... but maybe it is good to have some unsucessfull runs if we assume that the player handled the difficulties in a relatively good way
@@ -185,10 +188,10 @@ class Trainer:
             if raw_action["forward"] and raw_action["back"]:
                 raw_action["forward"] = 0
                 raw_action["back"] = 0
-            if ("place" in raw_action and raw_action["place"]) or\
-                    ("craft" in raw_action and raw_action["craft"]) or\
-                    ("nearbyCraft" in raw_action and raw_action["nearbyCraft"]) or\
-                    ("nearbySmelt" in raw_action and raw_action["nearbySmelt"]) or\
+            if ("place" in raw_action and raw_action["place"]) or \
+                    ("craft" in raw_action and raw_action["craft"]) or \
+                    ("nearbyCraft" in raw_action and raw_action["nearbyCraft"]) or \
+                    ("nearbySmelt" in raw_action and raw_action["nearbySmelt"]) or \
                     ("equip" in raw_action and raw_action["equip"]):
                 raw_action["left"] = 0
                 raw_action["right"] = 0
@@ -221,12 +224,12 @@ class Trainer:
         folder = 'data'
         if not os.path.exists(folder):
             os.mkdir(folder)
-        minerl.data.download(folder) 
-        #ver_or_download_data(self.env_name)
-        #env_name_data = 'MineRLObtainDiamond-v0'
+        minerl.data.download(folder)
+        # ver_or_download_data(self.env_name)
+        # env_name_data = 'MineRLObtainDiamond-v0'
         data_pipeline = minerl.data.make(
-            self.env_name,
-            data_dir='data')
+                self.env_name,
+                data_dir='data')
         data = self.use_data_pipeline_MineRL(data_pipeline)
 
         return data
@@ -247,7 +250,7 @@ class Trainer:
         # TODO: implement supervised leanring according to DQfD
 
         # TODO: implement weight decay according to DQfD
-        #self.policy.set_weight_decay(self.pretrain_weight_decay)
+        # self.policy.set_weight_decay(self.pretrain_weight_decay)
         if steps:
             for step in tqdm(range(steps), disable=self.disable_tqdm):
                 # Perform one step of the optimization
@@ -260,7 +263,7 @@ class Trainer:
                 self.log.step()
         elif time:
             pbar = tqdm(disable=self.disable_tqdm, total=hours)
-            for t in count():
+            for step in itertools.count():
                 pbar.update((time.time() - start_time) / 360)
 
                 # Perform one step of the optimization
@@ -268,7 +271,7 @@ class Trainer:
 
                 train_fraction = (time.time() - start_time) / 360 / hours
                 # Update the target network
-                self.agent.update_targets(t, train_fraction)
+                self.agent.update_targets(step, train_fraction)
 
                 self.log.step()
 
@@ -276,11 +279,12 @@ class Trainer:
                     break
         if self.verbose:
             print("Done Pretraining.")
+        return step
 
-        #self.policy.set_weight_decay(0)
+        # self.policy.set_weight_decay(0)
 
-    def fill_replay_buffer(self, n_steps):
-        assert n_steps > 0
+    def fill_replay_buffer(self, total_steps):
+        assert total_steps > 0
         if self.verbose:
             print("Filling Replay Buffer....")
         state = self.env.reset()
@@ -316,7 +320,7 @@ class Trainer:
                     do_break = True
             else:
                 i += 1
-                if i >= n_steps:
+                if i >= total_steps:
                     do_break = True
 
             # For eligibility traces we need to complete at least one episode to properly start training
@@ -327,11 +331,9 @@ class Trainer:
                 else:
                     break
 
-
         if self.verbose:
             print("Done with filling replay buffer.")
             print()
-
 
     def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, filling_buffer=False):
         # Select an action
@@ -340,8 +342,8 @@ class Trainer:
             action, raw_action = self.agent.explore(state, fully_random=filling_buffer)
         else:
             action, raw_action = self.agent.exploit(state)
-
-        self.log.add("ActionIdx", action, make_distribution=True, skip_steps=self.log_freq)
+        if not filling_buffer and self.log.is_available("ActIndex", factor=10):
+            self.log.add("ActionIdx", action, make_distribution=True, skip_steps=True)
 
         # Apply the action:
         next_state, reward, done, _ = env.step(action)
@@ -356,7 +358,7 @@ class Trainer:
         # Calculate TDE for debugging purposes:
         # TODO: implement logging of TDE
         # tde = self.policy.calculate_Q_and_TDE(state, raw_action, next_state, reward, done)
-        #self.log.add("TDE_live", tde)
+        # self.log.add("TDE_live", tde)
         # Render:
         if render:
             self.env.render()
@@ -377,11 +379,11 @@ class Trainer:
         reward_sum /= self.eval_rounds
         return reward_sum
 
-
     def _act_in_test_env(self, test_state, test_episode_rewards):
         if self.test_env is None:
             self.test_env = gym.make(self.env_name)
-        _, next_state, reward, done = self._act(self.test_env, test_state, explore=False, store_in_exp_rep=False, render=False)
+        _, next_state, reward, done = self._act(self.test_env, test_state, explore=False, store_in_exp_rep=False,
+                                                render=False)
 
         test_episode_rewards.append(reward)
         self.log.add("Test_Env Reward", np.sum(test_episode_rewards))
@@ -392,38 +394,25 @@ class Trainer:
         return next_state
 
     def _display_debug_info(self, i_episode, steps_done, train_fraction):
-        episode_return = self.log.get_episodic("Return")
-        #sampling_time = self.log.get_episodic("Sampling_Time")
+        episode_return = self.log.get_episodic("Metrics/Return")
+        # sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Timings/Optimize_Time")
         non_optimize_time = self.log.get_episodic("Timings/Non-Optimize_Time")
-        print(round(train_fraction * 100, 1), "%")
-        print("#Episode ", i_episode)
-        print("#Steps: ", steps_done)
-        print("Return:", episode_return[0])
+        print("Ep:", i_episode, " Step:", steps_done, round(train_fraction * 100, 1), "%", "Ret:", episode_return[0], )
 
-        #print( "Total Opt-time: ", round(np.mean(optimize_time), 4), "s")
-        #print(" Sampling-time: ", round(np.mean(sampling_time), 4), "s")
-        #print(" Non-Opt-time: ", round(np.mean(non_optimize_time), 4), "s")
-        if i_episode % 10 == 0:
-            pass
-            # TODO: do an extensive test in test_env every N percentage points of training
-            # Not needed anymore, because he have tensorboard now
-            #plot_rewards(rewards)
-            #plot_rewards(self.log.storage["Test_Env Reward"], "Test_Env Reward")
-            #plot_rewards(self.log.storage["Return"], "Return", xlabel="Episodes")
-        print()
-        
     def log_usage(self):
-        cpu_ram_GB = self.psutil_process.memory_info()[0] / 1024. ** 3
-        cpu_usage = self.psutil_process.cpu_percent()
-        gpu_mem = torch.cuda.memory_allocated() / 8 / 1024. ** 3
-        
-        self.log.add("Usage/CPU_mem", cpu_ram_GB, skip_steps=self.log_freq)
-        self.log.add("Usage/CPU_usage", cpu_usage, skip_steps=self.log_freq)
-        self.log.add("Usage/GPU_mem", gpu_mem, skip_steps=self.log_freq)
-        
-    def run(self, n_hours=0.0, n_episodes=0, n_steps=0, verbose=False, render=False, disable_tqdm=True):
-        assert (bool(n_steps) ^ bool(n_episodes) ^ bool(n_hours))
+        if self.log.is_available("Usage", factor=10):
+            cpu_ram_GB = self.psutil_process.memory_info()[0] / 1024. ** 3
+            cpu_usage = self.psutil_process.cpu_percent()
+
+            self.log.add("Usage/CPU_mem", cpu_ram_GB)
+            self.log.add("Usage/CPU_usage", cpu_usage)
+            if self.cuda:
+                gpu_mem = torch.cuda.memory_allocated() / 8 / 1024. ** 3
+                self.log.add("Usage/GPU_mem", gpu_mem)
+
+    def run(self, n_hours=0.0, n_episodes=0, total_steps=0, verbose=False, render=False, disable_tqdm=True):
+        assert (bool(total_steps) ^ bool(n_episodes) ^ bool(n_hours))
         verbose = verbose or self.verbose
         steps_done = 0
         i_episode = 0
@@ -431,113 +420,117 @@ class Trainer:
         state = None
         # Fill replay buffer with random actions:
         if not self.use_expert_data:
-            self.fill_replay_buffer(n_steps=self.n_initial_random_actions)
-
+            self.fill_replay_buffer(total_steps=self.n_initial_random_actions)
+            # episodes, time = self.fill_replay_buffer(total_steps=self.n_initial_random_actions)
+            # if total_steps == 0:
+            #    if n_episodes != 0:
+            #        total_steps = self.n_initial_random_actions / episodes * n_episodes
+            #    elif n_hours != 0:
+            #        total_steps = self.n_initial_random_actions / time * n_hours
+        # Based on how long it took to gather data, determine how often metrics are logged:
+        # TODO: only works for total_steps, not for n_episodes nor for n_hours
+        self.log_steps = total_steps // self.log_freq
+        self.log.set_log_steps(self.log_steps)
+        # Freeze input feature normalizer after collecting a set of experiences:
         if self.freeze_normalizer:
             if verbose:
                 print("Freeze observation Normalizer.")
             self.agent.freeze_normalizers()
-            
         # Calculate the memory usage of training. Used for eligibility traces and could be used for batch_size determination:
         self.agent.calc_mem_usage()
         # Update targets to calc initial elig traces:
         self.agent.update_targets(0, 0)
-
+        # Pretrain if expert data is available:
         if self.use_expert_data and self.do_pretrain:
-            pretrain_steps = int(self.pretrain_percentage * n_steps)
+            pretrain_steps = int(self.pretrain_percentage * total_steps)
             pretrain_episodes = int(self.pretrain_percentage * n_episodes)
             pretrain_time = int(self.pretrain_percentage * n_hours)
             if pretrain_episodes:
                 pretrain_steps = pretrain_episodes * 5000
                 # TODO: instead of hardcoding 5000 get an expected episode duration by taking the mean episode length of the data
-
-            self.pretrain(pretrain_steps, pretrain_time, start_time)
-            steps_done += pretrain_steps
+            n_pretrain_steps_done = self.pretrain(pretrain_steps, pretrain_time, start_time)
+            steps_done += n_pretrain_steps_done
             i_episode += pretrain_episodes
-
 
         # Do the actual training:
         if verbose:
             print("Start training in the env:")
         time_after_optimize = None
-        if n_steps == 0:
+        if total_steps == 0:
             disable_tqdm = True
-        pbar = tqdm(total=n_steps, desc="Total Training", disable=disable_tqdm)
-        train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+        pbar = tqdm(total=total_steps, desc="Training", disable=disable_tqdm)
+        train_fraction = calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
         while train_fraction < 1:
             i_episode += 1
             # Initialize the environment and state. Do not reset
             if state is None:
                 state = self.env.reset()
 
-            for t in tqdm(itertools.count(), desc="Episode Progress", total=self.tqdm_episode_len, disable=self.disable_tqdm):
+            for t in tqdm(itertools.count(), desc="Episode Progress", total=self.tqdm_episode_len,
+                          disable=self.disable_tqdm):
                 steps_done += 1
 
                 # Act in train env:
                 action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
                                                              explore=True)
                 # Evaluate agent thoroughly sometimes:
-                if self.eval_rounds > 0 and (train_fraction - self.stored_percentage >= self.eval_percentage \
-                        or train_fraction == 0):
+                if self.eval_rounds > 0 and (train_fraction >= self.eval_percentage + self.stored_percentage \
+                                             or train_fraction == 0):
                     self.stored_percentage = train_fraction
                     test_return = self.evaluate_model()
-                    self.log.add("Test Return", test_return, steps=steps_done)#steps=train_fraction * 100)
+                    self.log.add("Metrics/Test Return", test_return, steps=steps_done)  # steps=train_fraction * 100)
                     if verbose:
                         print("Model performance after ", steps_done, "steps: ", test_return)
+                        print()
 
                 # Move to the next state
                 state = next_state
 
+                # Log timings:
                 time_before_optimize = time.time()
-                # Log time between optimizations:
-                non_optimize_time = 0
                 if time_after_optimize is not None:
                     non_optimize_time = time_before_optimize - time_after_optimize
-                self.log.add("Timings/Non-Optimize_Time", non_optimize_time, skip_steps=self.log_freq, store_episodic=True)
+                    self.log.add("Timings/Non-Optimize_Time", non_optimize_time, skip_steps=True, store_episodic=True)
 
                 # Optimize the agent (on the target network)      
                 self.agent.optimize(steps_done, train_fraction)
 
-                time_after_optimize = time.time()
-
                 # Log reward and time:
-                self.log.add("Train_Reward", reward.item(), skip_steps=10, store_episodic=True)
-                #if len(self.log.get_episodic("Train_Reward")) >= 1:
-                 #   self.log.add("Train_Sum_Episode_Reward", np.sum(self.log.get_episodic("Train_Reward")),
-                 #                skip_steps=self.log_freq)
-                self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=self.log_freq,
+                self.log.add("Metrics/Reward", reward.item(), skip_steps=True, store_episodic=True)
+                time_after_optimize = time.time()
+                self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=True,
                              store_episodic=True)
                 # Log RAM and GPU usage:
                 self.log_usage()
-
-                if render:
-                    self.env.render()
-
+                # Count steps in logger:
                 self.log.step()
-                
+
+                # Check if training or the episode is done:
                 episodes_done = (n_episodes and i_episode >= n_episodes)
                 time_done = (n_hours and (time.time() - start_time) / 360 >= n_hours)
                 if done or episodes_done or time_done:
-                    self.log.add("Return", np.sum(self.log.get_episodic("Train_Reward")), steps=i_episode, store_episodic=True)
-                    self.log.add("Episode Len", t, steps=i_episode)
+                    episode_return = np.sum(self.log.get_episodic("Metrics/Reward"))
+                    self.log.add("Metrics/Return", episode_return, steps=i_episode, store_episodic=True)
+                    self.log.add("Metrics/Episode Len", t, steps=i_episode)
                     if verbose:
                         self._display_debug_info(i_episode, steps_done, train_fraction)
                     self.log.flush_episodic()
                     state = None
                     break
-                train_fraction = calc_train_fraction(n_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+                train_fraction = calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours,
+                                                     start_time)
+            pbar.set_postfix(ep_return=episode_return)
             pbar.update(t)
 
         # Save the model:
         self.agent.update_targets(steps_done, train_fraction=1.0)
         if verbose:
             print('Done.')
-        
+
         self.env.close()
         pbar.close()
         return i_episode, self.log
-        
+
     def close(self):
         self.env.close()
         self.log.flush()
-

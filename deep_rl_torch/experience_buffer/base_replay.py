@@ -1,5 +1,4 @@
 import random
-from collections import namedtuple
 
 import numpy as np
 import torch
@@ -25,7 +24,7 @@ class RLDataset(torch.utils.data.IterableDataset):
         elif isinstance(sample, dict):
             raise NotImplementedError("No dict support yet")
         else:
-            raise TypeError("Unknown type: " + str(type(sample)) + " of the env sample. Can only use Tensor, list or dict.")
+            raise TypeError("Unknown type: " + str(type(sample)) + " of env sample. Can only use Tensor, list or dict.")
             
         if isinstance(action_space, gym.spaces.Box):
             action_shp = [len(action_space.low)]
@@ -33,13 +32,11 @@ class RLDataset(torch.utils.data.IterableDataset):
             action_shp = [action_space.n]
         else:
             raise TypeError("Unsupport action space type: " + str(action_space))
-        # TODO: change zeros back to empty when done with debugging
-        #print("State shape: ", [max_size] + shp)
-        #print("State dtype: ", sample.dtype)
-        self.states = torch.zeros([max_size] + shp, dtype=sample.dtype)
-        self.rewards = torch.zeros(max_size)
-        self.actions = torch.zeros([max_size] + action_shp)
-        self.dones = torch.zeros(max_size, dtype=torch.bool)
+
+        self.states = torch.empty([max_size] + shp, dtype=sample.dtype)
+        self.rewards = torch.empty(max_size)
+        self.actions = torch.empty([max_size] + action_shp)
+        self.dones = torch.empty(max_size, dtype=torch.bool)
         self.next_idx = 0
         self.curr_idx = 0
         self.looped_once = False
@@ -53,12 +50,11 @@ class RLDataset(torch.utils.data.IterableDataset):
         
     def __getitem__(self, index):
         """ Return a single transition """
-        #print("Idx: ", index)
-        self.log.add("Sampled Idx", index, make_distribution=True, skip_steps=10000)
+        self.log.add("Sampled Idx", index, make_distribution=True, skip_steps=True)
         # Check if the last state is being attempted to sampled - it has no next state yet:
         if index == self.curr_idx:
             index = self.decrement_idx(index)
-        elif index > len(self):
+        elif index >= len(self):
             raise ValueError("Error: index " + str(index) + " is too large for buffer of size " + str(len(self)))
         # Stack state:
         state = self.stack_last_frames_idx(index)
@@ -75,7 +71,7 @@ class RLDataset(torch.utils.data.IterableDataset):
             idx = self.sample_idx()
             yield self[idx]
             if count == self.update_freq:
-                break
+                raise StopIteration
             
     def sample_idx(self):
         idx = random.randint(0, len(self) - 1)
@@ -114,13 +110,17 @@ class RLDataset(torch.utils.data.IterableDataset):
         return index
         
     def update_stored_hidden_states(self, idxs, hidden_states, seq_lens):
-        """ For R2D2, eventually. Updates the stored hidden states """
+        """ For R2D2, eventually. Updates the stored hidden states. Note: might be better to store hidden states in
+        network similar as is being done with eligibility traces """
         pass
         
     def is_episode_boundary(self, idx):
         return self.dones[idx] or idx == self.curr_idx
         
     def get_last_frames(self, idx, frames):
+        """Create list of frames going back from idx with the current frame already filled in frames.
+        If an episode boundary is encountered, the last frame is repeated
+        """
         frame = frames[0]
         done_flag = False
         for i in range(self.stack_count - 1):
@@ -185,23 +185,17 @@ class ReplayBuffer:
         self.transition_names = ["states", "actions", "rewards", "next_states", "idxs"]
         #self.construct_loader(self.data, batch_size, self.collate_batch)
         self.iter = None #iter([])
-        self.sampler = None
         #self.construct_loader(self.data, self.batch_size, self.collate_batch)
         self.stop_iteration_functions = []
         
         
     def construct_loader(self, data, batch_size, collate_fn):
-        self.sampler = None
-        #self.sampler = self.construct_sampler(self.data, batch_size)
-        self.dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, sampler=self.sampler,
+        self.dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, sampler=None,
                                                   pin_memory=self.pin_mem,
                                                   num_workers=self.workers,
                                                   collate_fn=collate_fn)
         self.iter = iter(self.dataloader)
-        
-    def construct_sampler(self, data, batch_size):
-        #return torch.utils.data.sampler.RandomSampler(data, replacement=True, num_samples=batch_size)
-        return MyRandomSampler(data, replacement=True, num_samples=batch_size)
+
         
     def stack_last_frames(self, state):
         return self.data.stack_last_frames(state)
@@ -212,8 +206,7 @@ class ReplayBuffer:
     def sample(self):
         if self.iter is None:
             self.construct_loader(self.data, self.batch_size, self.collate_batch)
-        if self.sampler is not None:
-            self.sampler.n = len(self.data)
+
         try:
             out = next(self.iter)
         except StopIteration:
@@ -232,7 +225,8 @@ class ReplayBuffer:
     def stack(self, data):
         if isinstance(data, dict):
             return apply_rec_to_dict(lambda x: torch.stack(x), data)
-        return torch.stack(data)
+        else:
+            return torch.stack(data)
     
     def move_batch(self, batch):
         for key in batch:
@@ -251,9 +245,8 @@ class ReplayBuffer:
         #    print(len(b))
         #print("len trans nemaes: ", len(self.transition_names))
         # Create dict:
-        batch = [[sample[idx] for sample in batch] for idx in range(len(self.transition_names))]
-        batch_dict = {key: value for key, value in zip(self.transition_names, batch)}
-        # Next state:
+        batch_dict = {trans_name: [x[idx] for x in batch] for idx, trans_name in enumerate(self.transition_names)}
+        # Next states:
         batch_dict["non_final_mask"] = torch.tensor([val is not None for val in batch_dict["next_states"]]).bool()
         batch_dict["non_final_next_states"] = [state for state in batch_dict["next_states"] if state is not None]
         if batch_dict["non_final_next_states"] != []:
@@ -265,10 +258,12 @@ class ReplayBuffer:
         batch_dict["action_argmax"] = torch.argmax(self.stack(batch_dict["actions"]), 1).unsqueeze(1)
         # Stack in tensors:
         for key in batch_dict:
-            if key in ["action_argmax", "non_final_mask", "non_final_next_states"]:
-                continue
-            content = self.stack(batch_dict[key])
-            batch_dict[key] = content
+            if key not in ("action_argmax", "non_final_mask", "non_final_next_states"):
+                content = self.stack(batch_dict[key])
+                batch_dict[key] = content
+            if key not in ("action_argmax", "non_final_mask"):
+                batch_dict[key] = batch_dict[key].float()
+        # Bring rewards in correct shape
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
         return batch_dict
     

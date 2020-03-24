@@ -9,6 +9,7 @@ import torch
 import tqdm
 from pynvml import nvmlDeviceGetMemoryInfo, nvmlDeviceGetHandleByIndex, nvmlInit
 from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
+
 # Silent error - but it will be raised in trainer.py, so it is fine. relates to apex
 try:
     from apex import amp
@@ -29,7 +30,6 @@ class BasePolicy:
         self.hyperparameters = hyperparameters
         self.ground_policy = ground_policy
         self.name = ""
-        self.log_freq = self.hyperparameters["log_freq"]
         self.verbose = hyperparameters["verbose"]
 
         # Check env:
@@ -65,7 +65,7 @@ class BasePolicy:
         self.epsilon = hyperparameters["epsilon"]
         self.epsilon_mid = hyperparameters["epsilon_mid"]
         if self.epsilon_mid:
-            self.eps_factor = self.epsilon_mid ** (1 / hyperparameters["n_steps"])
+            self.eps_factor = self.epsilon_mid ** (1 / hyperparameters["steps"])
             self.epsilon = 1
         # General:
         self.use_half = hyperparameters["use_half"]
@@ -77,9 +77,10 @@ class BasePolicy:
 
         # TODO: -add goal to replay buffer and Transition (For HRL)
         # Eligibility traces:
-        nvmlInit()
-        self.nvml_handle = nvmlDeviceGetHandleByIndex(0)
-        self.max_gpu_bytes = torch.cuda.get_device_properties(self.device).total_memory
+        if torch.cuda.is_available():
+            nvmlInit()
+            self.nvml_handle = nvmlDeviceGetHandleByIndex(0)
+            self.max_gpu_bytes = torch.cuda.get_device_properties(self.device).total_memory
         self.mem_usage = None
         self.current_episode = []
         self.use_efficient_traces = hyperparameters["use_efficient_traces"]
@@ -99,7 +100,7 @@ class BasePolicy:
         self.PER_max_priority = hyperparameters["PER_max_priority"]
         self.PER_running_avg = hyperparameters["PER_running_avg"]
         self.importance_weights = None
-            
+
         # Create replay buffer:
         self.memory = self.create_replay_buffer()
 
@@ -114,31 +115,30 @@ class BasePolicy:
         self.use_half = hyperparameters["use_half"] and torch.cuda.is_available()
         self.nets = []
         self.actor, self.Q, self.V = self.init_actor_critic(self.F_s, self.F_sa)
-        
+
     def create_replay_buffer(self):
         obs_sample = self.env.observation_space.sample()
-        #action_sample = self.env.action_space.sample()
+        # action_sample = self.env.action_space.sample()
         action_space = self.env.action_space
         worker = self.hyperparameters["worker"]
         pin_mem = False
         size_expert_data = 0
-        update_freq = self.hyperparameters["buffer_update_steps"] * self.batch_size
-        if not worker:
-            update_freq = 0
-            
-        args = (self.log, self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count, update_freq)
+        update_freq = self.hyperparameters["buffer_update_steps"] * self.batch_size * bool(worker)
+
+        args = (self.log, self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count,
+                update_freq)
         bargs = (self.batch_size, pin_mem, worker, self.device)
         if self.use_PER:
-            dataset = PERDataset(self.PER_alpha, *args, max_priority=self.PER_max_priority, running_avg=self.PER_running_avg)
+            dataset = PERDataset(self.PER_alpha, *args, max_priority=self.PER_max_priority,
+                                 running_avg=self.PER_running_avg)
             memory = PERBuffer(dataset, *bargs)
         else:
             dataset = RLDataset(*args)
             memory = ReplayBuffer(dataset, *bargs)
         # Wrap buffer to add functionalities:
         if self.use_CER:
-            memory = CERWrapper(memory) 
+            memory = CERWrapper(memory)
         return memory
-        
 
     def random_action(self):
         action = (self.action_high - self.action_low) * torch.rand(self.num_actions, device=self.device,
@@ -161,7 +161,7 @@ class BasePolicy:
             action += torch.tensor(np.random.normal(0, self.gaussian_action_noise, len(action)), dtype=torch.float)
             action = np.clip(action, self.action_low, self.action_high)
         return action
-    
+
     def stack_current_frame(self, state):
         return self.memory.stack_last_frames(state)
 
@@ -189,8 +189,8 @@ class BasePolicy:
                 if self.use_actor_critic:
                     pass
                 else:
-                    self.recent_q_val = torch.max(raw_action)
-                    self.log.add("Q-val", self.recent_q_val, skip_steps=10)
+                    recent_q_val = torch.max(raw_action)
+                    self.log.add("Diagnostics/Q-val", recent_q_val, skip_steps=10, make_distribution=True)
             # Add Gaussian noise:
             if self.gaussian_action_noise:
                 raw_action = self.add_noise(raw_action)
@@ -205,7 +205,7 @@ class BasePolicy:
 
     def act(self, state):
         return self.explore(state)
-        
+
     def state2device(self, state):
         if isinstance(state, dict):
             state = apply_rec_to_dict(lambda x: x.to(self.device).float(), state)
@@ -255,14 +255,14 @@ class BasePolicy:
         TDE_V = 0
         loss = 0
         if self.V is not None:
-            V.retain_graph = True
-            TDE_V, loss_V = V.optimize(transitions, actor=self.actor, Q=Q, V=None, policy_name=self.name)
+            self.V.retain_graph = True
+            TDE_V, loss_V = self.V.optimize(transitions, actor=self.actor, Q=Q, V=None, policy_name=self.name)
             loss += loss_V
 
         # Only if we use standard CACLA (and we do not train the V net using QVMAX) we do not need a Q net:
         TDE_Q = 0
         if self.Q is not None:
-            TDE_Q, loss_Q = Q.optimize(transitions, actor=self.actor, Q=None, V=V, policy_name=self.name)
+            TDE_Q, loss_Q = self.Q.optimize(transitions, actor=self.actor, Q=None, V=V, policy_name=self.name)
             loss += loss_Q
 
         TDE = (TDE_Q + TDE_V) / ((self.V is not None) + (self.Q is not None))
@@ -287,7 +287,7 @@ class BasePolicy:
         before_sampling = time.time()
         # Get Batch:
         transitions = self.get_transitions()
-        self.log.add("Timings/Sampling_Time", time.time() - before_sampling, skip_steps=self.log_freq, store_episodic=True)
+        self.log.add("Timings/Sampling_Time", time.time() - before_sampling, skip_steps=True, store_episodic=True)
         # Extract state features
         self.extract_features(transitions)
         # Optimize:
@@ -305,25 +305,26 @@ class BasePolicy:
 
         return loss
 
-
-    def decay_exploration(self, n_steps, train_fraction):
+    def update_parameters(self, n_steps, train_fraction):
         if self.epsilon_mid:
             self.epsilon *= self.eps_factor
-            self.log.add("Epsilon", self.epsilon)
+            self.log.add("Params/Epsilon", self.epsilon)
         if self.use_PER and self.PER_anneal_beta:
             self.PER_beta = self.PER_start_beta + train_fraction * (1 - self.PER_start_beta)
         # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
-
     def get_transitions(self):
-        """ Gets transitions from dataloader, which is a batch of transitions. It is a dict of the form {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences, "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor, "Importance_Weights: Tensor, "Idxs": Tensor} """
+        """Gets transitions from dataloader, which is a batch of transitions.
+         It is a dict of the form
+         {"states": Tensor, "actions_argmax": Tensor of Ints, "actions": Tensor of raw action preferences,
+          "rewards": Tensor, "non_final_next_states": Tensor, "non_final_mask": Tensor of bools, "Dones": Tensor,
+           "Importance_Weights: Tensor, "Idxs": Tensor} """
         if self.use_PER:
             return self.memory.sample(self.PER_beta)
         else:
             trans = self.memory.sample()
-            #print(trans)
+            # print(trans)
             return trans
-        
 
     def get_transitions_old(self):
         sampling_size = min(len(self.memory), self.batch_size)
@@ -343,9 +344,6 @@ class BasePolicy:
         return transitions
 
     def extract_batch(self, transitions):
-        # TODO: How fast is this? Can't we put it into arrays?
-        # TODO: We sample, then concatenate the sampled parts into multiple arrays, transposing it before...
-
         # Transpose the batch (see http://stackoverflow.com/a/19343/3343043 for
         # detailed explanation).
         batch = Transition(*zip(*transitions))
@@ -362,7 +360,10 @@ class BasePolicy:
         # Create state batch:
         if isinstance(batch.state[0], dict):
             # Concat the states per key:
-            state_batch = {key: torch.cat([x[key] if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device, non_blocking=True) for key in batch.state[0]}
+            state_batch = {
+                key: torch.cat([x[key] if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device,
+                                                                                                         non_blocking=True)
+                for key in batch.state[0]}
         else:
             state_batch = torch.cat(batch.state).type(dtype).to(self.device, non_blocking=True)
 
@@ -372,13 +373,15 @@ class BasePolicy:
         # print("non final next state batch: ", non_final_next_states)
 
         # Create next state batch:
-        
+
         non_final_next_states = [s for s in batch.next_state if s is not None]
-        #print(non_final_next_states)
+        # print(non_final_next_states)
         if non_final_next_states:
             if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {key: torch.cat([x[key] if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(self.device, non_blocking=True)
-                                         for key in non_final_next_states[0]}
+                non_final_next_states = {
+                    key: torch.cat([x[key] if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(
+                        self.device, non_blocking=True)
+                    for key in non_final_next_states[0]}
             else:
                 non_final_next_states = torch.cat(non_final_next_states).type(dtype).to(self.device, non_blocking=True)
         else:
@@ -448,38 +451,38 @@ class BasePolicy:
             self.V.update_targets(n_steps)
         if self.actor is not None and self.use_actor_critic:
             self.actor.update_targets(n_steps)
-    
+
     def calc_max_batch_size(self):
+        if not torch.cuda.is_available():
+            return 1000
         # Calculate remaining gpu mem:
-        current_gpu_bytes = nvmlDeviceGetMemoryInfo(self.nvml_handle).used #torch.cuda.memory_allocated(self.device)
-        
+        current_gpu_bytes = nvmlDeviceGetMemoryInfo(self.nvml_handle).used  # torch.cuda.memory_allocated(self.device)
 
         available_gpu_bytes = self.max_gpu_bytes - current_gpu_bytes
         # Leave some room, at least 4mb:
         available_gpu_bytes -= 4 * 1024 ** 2
         max_batch_size = available_gpu_bytes // self.mem_usage
-        #print("Mem per transition: ", self.mem_usage / 1024 ** 2)
-        #print("Available mbs: ", available_gpu_bytes / 1024 ** 2)
-        #print("Max batch size: ", max_batch_size)
+        # print("Mem per transition: ", self.mem_usage / 1024 ** 2)
+        # print("Available mbs: ", available_gpu_bytes / 1024 ** 2)
+        # print("Max batch size: ", max_batch_size)
         return max_batch_size
 
     def split_batch(self, batch, start_idx, end_idx):
         return apply_rec_to_dict(lambda x: x[start_idx:end_idx], batch)
-        
-    
+
     def update_episode_trace(self, episode, idxs):
         if episode == []:
             return
 
         # Split batch into chunks to avoid overloading GPU memory:
         if torch.cuda.is_available():
-            #ep_len = episode["rewards"].shape[0]
+            # ep_len = episode["rewards"].shape[0]
             ep_len = len(episode)
             max_batch_size = self.calc_max_batch_size()
             if ep_len > max_batch_size:
                 ep_starts = range(0, ep_len, max_batch_size)
-                ep_ends = [min(start_idx + max_batch_size, len(episode))  for start_idx in ep_starts]
-                #episode_parts = [self.split_batch(episode, start_idx, end_idx) for start_idx, end_idx in zip(ep_starts, ep_end)]
+                ep_ends = [min(start_idx + max_batch_size, len(episode)) for start_idx in ep_starts]
+                # episode_parts = [self.split_batch(episode, start_idx, end_idx) for start_idx, end_idx in zip(ep_starts, ep_end)]
                 episode_parts = [episode[start_idx:end_idx] for start_idx, end_idx in zip(ep_starts, ep_end)]
             else:
                 episode_parts = [episode]
@@ -493,9 +496,11 @@ class BasePolicy:
             episode_transitions["idxs"] = idxs
             self.extract_features(episode_transitions)
             if self.V is not None:
-                last_trace_value_V = self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None, Q=self.Q, last_trace_value=last_trace_value_V)
+                last_trace_value_V = self.V.update_traces(episode_transitions, self.lambda_val, actor=None, V=None,
+                                                          Q=self.Q, last_trace_value=last_trace_value_V)
             if self.Q is not None:
-                last_trace_value_Q = self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor, V=self.V, Q=None, last_trace_value=last_trace_value_Q)
+                last_trace_value_Q = self.Q.update_traces(episode_transitions, self.lambda_val, actor=self.actor,
+                                                          V=self.V, Q=None, last_trace_value=last_trace_value_Q)
 
         # TODO: when calculating eligibility traces we could also estimate the TD error for PER
 
@@ -511,13 +516,15 @@ class BasePolicy:
             # TODO: instead of updating all episode traces, only update a fraction of them: the oldest ones (or at least do not update the most recent episodes [unless episodes are very long])
             for episode, idxs in tqdm.tqdm(zip(episodes, idx_list), disable=not self.verbose):
                 self.update_episode_trace(episode, idxs)
-                
 
     def freeze_normalizers(self):
         self.F_s.freeze_normalizers()
         if self.F_sa is not None:
             self.F_sa.freeze_normalizers()
 
+    def norm_gradient(self):
+        for net in self.nets:
+            net.norm_gradient()
 
     def log_nn_data(self, name=""):
         for net in self.nets:
@@ -531,7 +538,6 @@ class BasePolicy:
 
     def get_updateable_params(self):
         raise NotImplementedError
-
 
 
 class ActorCritic(BasePolicy):
@@ -604,7 +610,6 @@ class ActorCritic(BasePolicy):
                 params += new_params
         return params
 
-
         params = list(self.layers_TD.parameters())
         if self.split:
             params += list(self.layers_r.parameters())
@@ -645,5 +650,3 @@ class Q_Policy(BasePolicy):
             new_params = list(net.get_updateable_params())
             params += new_params
         return params
-
-

@@ -482,8 +482,8 @@ class AtariObsWrapper(gym.ObservationWrapper):
         self.observation_space = spaces.Box(low=0, high=255, shape=(1, 80, 80), dtype=env.observation_space.dtype)
 
 
-    def observation(self, observation):
-        obs = torch.from_numpy(np.ascontiguousarray(observation))
+    def observation(self, obs):
+        obs = torch.from_numpy(np.ascontiguousarray(obs))
         obs = obs[35:195]
         obs = obs[::2, ::2]
         if self.last_obs:

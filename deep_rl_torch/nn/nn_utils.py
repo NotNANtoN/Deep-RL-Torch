@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -74,7 +75,6 @@ def create_conv_layers(input_matrix_shape, layer_dict):
         act_functs.append(query_act_funct(layer))
 
     conv_output_size = matrix_width * matrix_height * channel_last_layer
-
     return layers, conv_output_size, act_functs
 
 
@@ -92,18 +92,43 @@ def one_hot_encode(x, num_actions):
     y = torch.zeros(x.shape[0], num_actions).float()
     return y.scatter(1, x, 1)
 
+
+
 def calc_gradient_norm(layers):
-    total_norm = 0
-    for p in layers.parameters():
-        param_norm = p.grad.data.norm(2)
-        total_norm += param_norm.item() ** 2
-    return total_norm ** (1. / 2)
+    grads = [p.grad.data for p in layers.parameters()]
+    return calc_list_norm(grads)
+    #total_norm = 0
+    #for p in layers.parameters():
+    #    param_norm = p.grad.data.norm(2)
+    #    total_norm += param_norm.item() ** 2
+    #return total_norm ** (1. / 2)
 
 def calc_norm(layers):
+    params = layers.parameters()
+    return calc_list_norm(params)
+
+    # total_norm = torch.tensor(0.)
+    # for param in layers.parameters():
+    #     total_norm += torch.norm(param)
+    # return total_norm
+
+def calc_list_norm(layer_list):
     total_norm = torch.tensor(0.)
-    for param in layers.parameters():
+    for param in layer_list:
         total_norm += torch.norm(param)
-    return total_norm
+    return total_norm.item()
+
+def calc_list_norm_std(layer_list):
+    all_norms = []
+    total_norm = torch.tensor(0.)
+    for param in layer_list:
+        norm = torch.norm(param)
+
+        param_norm = p.grad.data.norm(norm_type)
+        total_norm += param_norm.item() ** norm_type
+        total_norm += norm
+        all_norms.append(norm)
+    return torch.sqrt(total_norm), torch.std(torch.tensor(all_norms))
 
 def soft_update(net, net_target, tau):
     for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):

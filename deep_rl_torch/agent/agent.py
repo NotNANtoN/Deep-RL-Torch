@@ -164,6 +164,7 @@ class Agent(AgentInterface):
         self.update_targets(steps_done, train_fraction=train_fraction)
         # Reduce epsilon and other exploratory values:
         self.decay_exploration(steps_done, train_fraction)
+        self.save(train_fraction)
                     
     def backward(self, loss):
         if self.use_half:
@@ -177,22 +178,29 @@ class Agent(AgentInterface):
         loss = self.policy.optimize()
 
         if self.optimize_centrally:
+            all_nets = [self.F_s, self.policy]
+            if self.F_sa is not None:
+                all_nets.append(self.F_sa)
+
             self.optimizer.zero_grad()
             self.backward(loss)
+            # Scale the norm of gradients if necessary:
+            for net in all_nets:
+                net.norm_gradient()
+                net.scale_gradient()
             # Scale gradient of networks according to how many outgoing networks it receives gradients from
-            self.F_s.scale_gradient()
-            if self.F_sa is not None:
-                self.F_sa.scale_gradient()
+            #self.F_s.scale_gradient()
+            #if self.F_sa is not None:
+            #    self.F_sa.scale_gradient()
             #self.policy.scale_gradient()
-            # TODO: do we need to scale the gradients of the policy? Could be scaled according to ratio of network lr to general_lr
+            # TODO: do we need to scale the gradients of the policy?
+            #  Could be scaled according to ratio of network lr to general_lr but it is much smarter to scale loss directly
             self.optimizer.step()
     
-            # TODO: Maybe log more useful info than all weights and grads (grad norm, maximum weight, weight norm)
             # Log gradients and weights:
-            #self.F_s.log_nn_data("")
-            #if self.F_sa is not None:
-            #    self.F_sa.log_nn_data("")
-            #self.policy.log_nn_data()
+            for net in all_nets:
+                net.log_nn_data()
+
             
     def observe(self, state):
         state = self.policy.stack_current_frame(state)
@@ -204,6 +212,8 @@ class Agent(AgentInterface):
         Returns the use CUDA memory of optimizing the network on a single transition.
         
         Requires that enough transitions are stored in memory such that self.policy.optimize is callable"""
+        if not torch.cuda.is_available():
+            return
         test_tensor = torch.tensor([0], dtype=torch.bool, device=self.device)
         batch_results = []
         for _ in range(1):
@@ -233,7 +243,7 @@ class Agent(AgentInterface):
         return self.policy.exploit(state)
 
     def decay_exploration(self, n_steps, train_fraction):
-        self.policy.decay_exploration(n_steps, train_fraction)
+        self.policy.update_parameters(n_steps, train_fraction)
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         return self.policy.calculate_TDE(state, action, next_state, reward, done)
@@ -244,34 +254,32 @@ class Agent(AgentInterface):
             self.policy.F_sa.update_targets(n_steps)
         self.policy.update_targets(n_steps, train_fraction)
 
+    def save(self, train_fraction):
         # Check if a certain percentage of training time was reached:
         if self.save_threshold and train_fraction - self.stored_percentage >= self.save_threshold:
             self.stored_percentage = train_fraction
 
-            self.save(train_fraction)
+            # "train" folder
+            if not os.path.exists(self.save_path):
+                os.mkdir(self.save_path)
+            # tb_comment folder (model specific):
+            tb_folder = self.save_path + self.hyperparameters["tb_comment"] + "/"
+            if not os.path.exists(tb_folder):
+                os.mkdir(tb_folder)
+            # Folder of the current training percentage
+            current_folder = tb_folder + str(int(train_fraction * 100)) + "/"
+            if not os.path.exists(current_folder):
+                os.mkdir(current_folder)
 
-    def save(self, train_fraction):
-        # "train" folder
-        if not os.path.exists(self.save_path):
-            os.mkdir(self.save_path)
-        # tb_comment folder (model specific):
-        tb_folder = self.save_path + self.hyperparameters["tb_comment"] + "/"
-        if not os.path.exists(tb_folder):
-            os.mkdir(tb_folder)
-        # Folder of the current training percentage
-        current_folder = tb_folder + str(int(train_fraction * 100)) + "/"
-        if not os.path.exists(current_folder):
-            os.mkdir(current_folder)
+            # Save models:
+            # torch.save(self.policy.F_s, current_folder + "F_s.pth")
+            self.policy.F_s.save(current_folder + "F_s/")
+            # self.policy.F_s.save(self.save_path)
+            if self.policy.F_sa is not None:
+                self.policy.F_sa.save(current_folder + "F_sa/")
+            self.policy.save(current_folder)
 
-        # Save models:
-        # torch.save(self.policy.F_s, current_folder + "F_s.pth")
-        self.policy.F_s.save(current_folder + "F_s/")
-        # self.policy.F_s.save(self.save_path)
-        if self.policy.F_sa is not None:
-            self.policy.F_sa.save(current_folder + "F_sa/")
-        self.policy.save(current_folder)
-
-        # TODO: track performance of the model from every last checkpoint and save the model as "best" if it had the best performance so far
+            # TODO: track performance of the model from every last checkpoint and save the model as "best" if it had the best performance so far
 
     def load(self):
         if self.load_path:

@@ -144,7 +144,7 @@ large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 
 # Test buffer:
-runExp(pong, [paramsQ, PER, PER2w, PER8w], number_of_tests=5, length_of_tests=8000000, path="workers")
+runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
 
 # Test PER:
 runExp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_sequest")

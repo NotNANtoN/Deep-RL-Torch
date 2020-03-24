@@ -1,17 +1,10 @@
-import copy
-import itertools
-import math
-import numpy as np
-
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
 
-from .nn_utils import *
+from .nn_utils import calc_gradient_norm, calc_norm, soft_update, hard_update
 
 
-class OptimizableNet(nn.Module):
+class OptimizableNet(torch.nn.Module):
     # def __repr__(self):
     # TODO: return summary using pytorch
     #    return str(self.type)
@@ -20,7 +13,6 @@ class OptimizableNet(nn.Module):
         super(OptimizableNet, self).__init__()
         self.env = env
         self.log = log
-        self.log_freq = hyperparameters["log_freq"]
         self.device = device
         self.hyperparameters = hyperparameters
         self.verbose = hyperparameters["verbose"]
@@ -72,26 +64,21 @@ class OptimizableNet(nn.Module):
         return loss, reduced_loss
 
     def optimize_net(self, output, target, optimizer, name="", sample_weights=None, retain_graph=False):
-        #print("output: ", output)
-        #print("target: ", target)
+        """Start loss calculation and optimize parameters if they are not optimized centrally"""
         loss, reduced_loss = self.compute_loss(output, target, sample_weights)
 
         if not self.optimize_centrally:
             optimizer.zero_grad()
             reduced_loss.backward(retain_graph=self.retain_graph + retain_graph)
-            #if self.max_norm:
-                #torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
+            self.scale_gradient()
+            self.norm_gradient()
             optimizer.step()
 
-            # Log weight and gradient norms:
-            #if self.log.do_logging and self.log.log_NNs:
-            #    self.log_nn_data()
+            self.log_nn_data()
 
-        name = "loss_" + self.name + (("_" + name) if name != "" else "")
+        name = "losses/loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = reduced_loss.detach().clone().item()
-        self.log.add(name, detached_loss, skip_steps=100)
-        #print("detached loss: ", detached_loss)
-        #print("loss: ", loss)
+        self.log.add(name, detached_loss, skip_steps=True)
 
         PER_weights = loss.detach().clone().cpu()
 
@@ -107,6 +94,7 @@ class OptimizableNet(nn.Module):
         return self.parameters()
 
     def update_targets(self, steps):
+        """Update weights of the target networks."""
         if self.target_network_polyak:
             soft_update(self, self.target_net, self.tau)
         else:
@@ -114,11 +102,10 @@ class OptimizableNet(nn.Module):
                 hard_update(self, self.target_net)
 
     def create_target_net(self):
+        """Create a target network of itself with frozen weights"""
         target_net = None
         if self.use_target_net:
             target_net = self.recreate_self()
-            # TODO(small): check if the following line makes sense - do we want different initial weights for the target network if we use polyak averaging?
-            # target_net.apply(self.weights_init)
             for param in target_net.parameters():
                 param.requires_grad = False
             target_net.use_target_net = False
@@ -126,23 +113,31 @@ class OptimizableNet(nn.Module):
         return target_net
 
     def log_layer_data(self, layers, name, extra_name=""):
-        #weight_norm = calc_norm(layers)
-        #grad_norm = calc_gradient_norm(layers)
-        #self.log.add(name + " Weight Norm", weight_norm)
-        #self.log.add(name + "_" + extra_name + " Grad Norm", grad_norm)
-        name += "_" + extra_name + "_" if extra_name else ""
-        weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()]).view(-1)
-        #for layer in layers.parameters():
-        #    print(layer.grad)
-        gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()]).view(-1)
-        self.log.add(name + "Weights", weights, distribution=True, skip_steps=self.log_freq)
-        self.log.add(name + "Gradients", gradients, distribution=True, skip_steps=self.log_freq)
+        """Log diagnostic information on the NN."""
+        if self.log.is_available("NN_diagnostics", factor=10):
+            print("CALCULATE NN Grad Norm!")
+            name = name + " " + extra_name if extra_name else name
+            weight_norm = calc_norm(layers)
+            grad_norm = calc_gradient_norm(layers)
+            self.log.add("Weight Norm/" + name, weight_norm)
+            self.log.add("Grad Norm/" + name, grad_norm)
+            name += "_" + extra_name + "_" if extra_name else ""
+
+            if self.log.is_available("NN_distributions", factor=10):
+                weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()]).view(-1)
+                gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()]).view(-1)
+                self.log.add("Weights/" + name, weights, distribution=True)
+                self.log.add("Gradients/" + name, gradients, distribution=True)
+
+    def norm_gradient(self):
+        if self.max_norm:
+            torch.nn.utils.clip_grad.clip_grad_norm_(self.parameters(), self.max_norm)
 
     def scale_gradient(self):
+        """Scales the gradient of this network based on how many networks let their gradients flow into it"""
         params = self.get_updateable_params()
         for layer in params:
             layer.grad.data = layer.grad.data / self.head_count
-
         # Reset head count:
         self.head_count = 0
 
