@@ -1,11 +1,12 @@
-apt-get --purge remove "*cublas*" "cuda*"
+sudo apt-get --purge remove "*cublas*" "cuda*"
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-repo-ubuntu1804_10.1.168-1_amd64.deb
 sudo dpkg -i cuda-repo-ubuntu1804_10.1.168-1_amd64.deb
 sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/7fa2af80.pub
-apt install cuda-10-1
+sudo apt install cuda-10-1
+sudo reboot
 export LD_LIBRARY_PATH=/usr/local/cuda-10.1/lib64\
                          ${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
 export LD_LIBRARY_PATH=/usr/local/cuda-10.1/lib\
                          ${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+export PATH=/usr/local/cuda-10.1/bin${PATH:+:${PATH}}
 
-reboot
