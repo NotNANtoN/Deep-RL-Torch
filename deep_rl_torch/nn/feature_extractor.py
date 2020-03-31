@@ -15,7 +15,6 @@ class ProcessState(OptimizableNet):
         self.vector_layers = hyperparameters["layers_feature_vector"]
         self.matrix_layers = hyperparameters["layers_conv"]
         self.normalize_obs = hyperparameters["normalize_obs"]
-        self.pin_tensors = hyperparameters["pin_tensors"]
 
         self.freeze_normalizer = False
 
@@ -78,7 +77,7 @@ class ProcessState(OptimizableNet):
         
         if isinstance(obs, np.ndarray):
             obs = torch.from_numpy(obs)
-        obs = obs.squeeze()
+        #obs = obs.squeeze()
 
         normalizer = Normalizer(obs.shape, self.device, verbose=self.verbose)
         # Create feedforward layers:

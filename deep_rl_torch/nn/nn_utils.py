@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 def conv2d_size_out(size, kernel_size=5, stride=2):
     return (size - (kernel_size - 1) - 1) // stride + 1
 
@@ -93,15 +94,15 @@ def one_hot_encode(x, num_actions):
     return y.scatter(1, x, 1)
 
 
-
 def calc_gradient_norm(layers):
     grads = [p.grad.data for p in layers.parameters()]
     return calc_list_norm(grads)
-    #total_norm = 0
-    #for p in layers.parameters():
+    # total_norm = 0
+    # for p in layers.parameters():
     #    param_norm = p.grad.data.norm(2)
     #    total_norm += param_norm.item() ** 2
-    #return total_norm ** (1. / 2)
+    # return total_norm ** (1. / 2)
+
 
 def calc_norm(layers):
     params = layers.parameters()
@@ -112,11 +113,13 @@ def calc_norm(layers):
     #     total_norm += torch.norm(param)
     # return total_norm
 
+
 def calc_list_norm(layer_list):
     total_norm = torch.tensor(0.)
     for param in layer_list:
         total_norm += torch.norm(param)
     return total_norm.item()
+
 
 def calc_list_norm_std(layer_list):
     all_norms = []
@@ -130,6 +133,7 @@ def calc_list_norm_std(layer_list):
         all_norms.append(norm)
     return torch.sqrt(total_norm), torch.std(torch.tensor(all_norms))
 
+
 def soft_update(net, net_target, tau):
     for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
         param_target.data.copy_(param_target.data * (1.0 - tau) + param.data * tau)
@@ -138,3 +142,10 @@ def soft_update(net, net_target, tau):
 def hard_update(net, net_target):
     for param_target, param in zip(net_target.get_updateable_params(), net.get_updateable_params()):
         param_target.data.copy_(param.data)
+
+
+def count_parameters(param_list):
+    return sum(p.numel() for p in param_list if p.requires_grad)
+
+def count_model_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)

@@ -208,7 +208,7 @@ class Actor(OptimizableNet):
             actor_loss = q_vals.mean() * -1
             actor_loss.backward(retain_graph=True)  # retain necessary? I thnk so
             gradients = actions_current_state_detached.grad
-            self.log.add("DDPG Action Gradient", gradients.mean(), skip_steps=self.log_freq)
+            self.log.add("DDPG Action Gradient", gradients.mean(), use_skip=self.log_freq)
 
             # Normalize gradients:
             # gradients = self.normalize_gradients(gradients)
@@ -289,7 +289,7 @@ class Actor(OptimizableNet):
             # print("No Training for Actor...")
 
         if self.use_CACLA_V or self.use_CACLA_Q or self.use_SPG:
-            self.log.add("Actor_actual_train_batch_size", len(output), skip_steps=self.log_freq)
+            self.log.add("Actor_actual_train_batch_size", len(output), use_skip=self.log_freq)
 
         return error, loss
 

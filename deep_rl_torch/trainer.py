@@ -37,10 +37,7 @@ class Trainer:
         self.path = os.getcwd()
         self.log = Log(self.path + '/tb_log', log, tb_comment, env_name)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.max_val = hyperparameters["matrix_max_val"]
         self.rgb2gray = hyperparameters["rgb_to_gray"]
-        self.pin_tensors = hyperparameters["pin_tensors"]
-        self.store_on_gpu = hyperparameters["store_on_gpu"]
         hyperparameters["verbose"] = verbose
         self.hyperparameters = hyperparameters
         self.verbose = verbose
@@ -50,9 +47,16 @@ class Trainer:
         # Cuda there?
         self.cuda = torch.cuda.is_available()
 
+        # Evaluation params:
+        self.eval_rounds = hyperparameters["eval_rounds"]
+        self.eval_percentage = hyperparameters["eval_percentage"]
+        self.stored_percentage = 0
+
         # Init env:
         self.env_name = env_name
         self.env = self.create_env(hyperparameters)
+        if self.eval_rounds > 0:
+            self.test_env = self.create_env(hyperparameters)
 
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]
@@ -78,10 +82,6 @@ class Trainer:
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
         self.log_freq = hyperparameters["log_freq"]
 
-        # Evaluation params:
-        self.eval_rounds = hyperparameters["eval_rounds"]
-        self.eval_percentage = hyperparameters["eval_percentage"]
-        self.stored_percentage = 0
 
         # Show proper tqdm progress if possible:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
@@ -122,8 +122,9 @@ class Trainer:
         if hyperparameters["convert_2_torch_wrapper"]:
             wrapper = hyperparameters["convert_2_torch_wrapper"]
             env = wrapper(env, self.rgb2gray)
-        # if hyperparameters["frame_stack"] > 1:
-        #    env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"])
+        if hyperparameters["frame_stack"] > 1 and hyperparameters["use_list"]:
+            env = FrameStack(env, hyperparameters["frame_stack"], stack_dim=hyperparameters["stack_dim"],
+                             store_stacked=hyperparameters["store_stacked"])
         if hyperparameters["action_wrapper"]:
             always_keys = hyperparameters["always_keys"]
             exclude_keys = hyperparameters["exclude_keys"]
@@ -150,13 +151,14 @@ class Trainer:
         if self.verbose:
             print("Moving Expert Data into the replay buffer...")
         pbar = tqdm(total=len(data), disable=self.disable_tqdm)
+        source = "expert_data"
         while len(data) > 0:
             pbar.update(1)
             state, action, reward, next_state, done = data[0]
 
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.agent.observe(state)
+                self.agent.observe(state, source, done)
                 # TODO: normalize actions too # self.policy.F_sa.observe(action)
 
             self.agent.remember(state, action, reward, done, filling_buffer=True)
@@ -284,6 +286,7 @@ class Trainer:
         # self.policy.set_weight_decay(0)
 
     def fill_replay_buffer(self, total_steps):
+        source = "filling"
         assert total_steps > 0
         if self.verbose:
             print("Filling Replay Buffer....")
@@ -293,17 +296,17 @@ class Trainer:
         # Fill exp replay buffer so that we can start training immediately:
         pbar = tqdm(disable=self.disable_tqdm)
         i = 0
-        done = True
         done_count = 0
         do_break = False
         while True:
             pbar.update(1)
+
+            action, next_state, reward, done = self._act(self.env, state, source, store_in_exp_rep=True, render=False,
+                                                         explore=True, filling_buffer=True)
             # To initialize the normalizer:
             if self.normalize_observations:
-                self.agent.observe(state)
+                self.agent.observe(state, source)
                 # TODO: normalize (observe) actions too for actor critic
-            action, next_state, reward, done = self._act(self.env, state, store_in_exp_rep=True, render=False,
-                                                         explore=True, filling_buffer=True)
 
             state = next_state
             if done:
@@ -335,23 +338,29 @@ class Trainer:
             print("Done with filling replay buffer.")
             print()
 
-    def _act(self, env, state, explore=True, render=False, store_in_exp_rep=True, filling_buffer=False):
+    def _act(self, env, state, source, explore=True, render=False, store_in_exp_rep=True, filling_buffer=False):
         # Select an action
         if explore:
             # Raw actions are the logits for the actions. Useful for e.g. DDPG training in discrete envs.
-            action, raw_action = self.agent.explore(state, fully_random=filling_buffer)
+            action, raw_action = self.agent.explore(state, source, fully_random=filling_buffer)
         else:
-            action, raw_action = self.agent.exploit(state)
-        if not filling_buffer and self.log.is_available("ActIndex", factor=10):
-            self.log.add("ActionIdx", action, make_distribution=True, skip_steps=True)
+            action, raw_action = self.agent.exploit(state, source)
+
+        if not filling_buffer and self.log.is_available("ActionIdx", factor=10, reset=False):
+            self.log.add("ActionIdx", action, make_distr=True, distr_steps=self.log.mean_ep_len)
 
         # Apply the action:
-        next_state, reward, done, _ = env.step(action)
+        next_obs, reward, done, _ = env.step(action)
         # Add possible noise to the reward:
-        reward = self.modify_env_reward(reward)
+        if explore:
+            reward = self.modify_env_reward(reward)
+        # Count ep len:
+        self.log.count_eps_step(source)
         # Define next state in case it is terminal:
         if done:
-            next_state = None
+            next_obs = None
+            self.agent.clean_state(source)
+            self.log.count_eps(source)
         # Store the transition in memory:
         if self.use_exp_rep and store_in_exp_rep:
             self.agent.remember(state, raw_action, reward, done, filling_buffer=filling_buffer)
@@ -363,35 +372,22 @@ class Trainer:
         if render:
             self.env.render()
 
-        return action, next_state, reward, done
+        return action, next_obs, reward, done
 
     def evaluate_model(self):
         reward_sum = 0
-        test_env = self.create_env(self.hyperparameters)
+        #   test_env = self.create_env(self.hyperparameters)
+        source = "Evaluation"
         for i in range(self.eval_rounds):
-            test_state = test_env.reset()
+            test_state = self.test_env.reset()
             for t in itertools.count():
-                action, _ = self.agent.exploit(test_state)
-                test_state, reward, done, _ = test_env.step(action)
+                action, next_obs, reward, done = self._act(self.test_env, test_state, source, explore=True, store_in_exp_rep=False)
                 reward_sum += reward
                 if done:
+                    print(t)
                     break
-        reward_sum /= self.eval_rounds
-        return reward_sum
-
-    def _act_in_test_env(self, test_state, test_episode_rewards):
-        if self.test_env is None:
-            self.test_env = gym.make(self.env_name)
-        _, next_state, reward, done = self._act(self.test_env, test_state, explore=False, store_in_exp_rep=False,
-                                                render=False)
-
-        test_episode_rewards.append(reward)
-        self.log.add("Test_Env Reward", np.sum(test_episode_rewards))
-        if done or (self.max_steps_per_episode > 0 and len(test_episode_rewards) >= self.max_steps_per_episode):
-            next_state = self.test_env.reset()
-            test_episode_rewards.clear()
-
-        return next_state
+        reward_mean = reward_sum / self.eval_rounds
+        return reward_mean
 
     def _display_debug_info(self, i_episode, steps_done, train_fraction):
         episode_return = self.log.get_episodic("Metrics/Return")
@@ -460,6 +456,7 @@ class Trainer:
             disable_tqdm = True
         pbar = tqdm(total=total_steps, desc="Training", disable=disable_tqdm)
         train_fraction = calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours, start_time)
+        source = "train"
         while train_fraction < 1:
             i_episode += 1
             # Initialize the environment and state. Do not reset
@@ -471,10 +468,10 @@ class Trainer:
                 steps_done += 1
 
                 # Act in train env:
-                action, next_state, reward, done = self._act(self.env, state, render=render, store_in_exp_rep=True,
-                                                             explore=True)
+                action, next_state, reward, done = self._act(self.env, state, source, render=render,
+                                                             store_in_exp_rep=True, explore=True)
                 # Evaluate agent thoroughly sometimes:
-                if self.eval_rounds > 0 and (train_fraction >= self.eval_percentage + self.stored_percentage \
+                if self.eval_rounds > 0 and (train_fraction >= self.eval_percentage + self.stored_percentage
                                              or train_fraction == 0):
                     self.stored_percentage = train_fraction
                     test_return = self.evaluate_model()
@@ -490,15 +487,15 @@ class Trainer:
                 time_before_optimize = time.time()
                 if time_after_optimize is not None:
                     non_optimize_time = time_before_optimize - time_after_optimize
-                    self.log.add("Timings/Non-Optimize_Time", non_optimize_time, skip_steps=True, store_episodic=True)
+                    self.log.add("Timings/Non-Optimize_Time", non_optimize_time, use_skip=True, store_episodic=True)
 
                 # Optimize the agent (on the target network)      
                 self.agent.optimize(steps_done, train_fraction)
 
                 # Log reward and time:
-                self.log.add("Metrics/Reward", reward.item(), skip_steps=True, store_episodic=True)
+                self.log.add("Metrics/Reward", reward.item(), use_skip=True, store_episodic=True)
                 time_after_optimize = time.time()
-                self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, skip_steps=True,
+                self.log.add("Timings/Optimize_Time", time_after_optimize - time_before_optimize, use_skip=True,
                              store_episodic=True)
                 # Log RAM and GPU usage:
                 self.log_usage()
@@ -510,8 +507,9 @@ class Trainer:
                 time_done = (n_hours and (time.time() - start_time) / 360 >= n_hours)
                 if done or episodes_done or time_done:
                     episode_return = np.sum(self.log.get_episodic("Metrics/Reward"))
-                    self.log.add("Metrics/Return", episode_return, steps=i_episode, store_episodic=True)
+                    self.log.add("Metrics/Return", episode_return, store_episodic=True)
                     self.log.add("Metrics/Episode Len", t, steps=i_episode)
+                    self.log.add("Metrics/Mean Ep Len", self.log.mean_ep_len)
                     if verbose:
                         self._display_debug_info(i_episode, steps_done, train_fraction)
                     self.log.flush_episodic()

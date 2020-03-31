@@ -121,12 +121,12 @@ class BasePolicy:
         # action_sample = self.env.action_space.sample()
         action_space = self.env.action_space
         worker = self.hyperparameters["worker"]
-        pin_mem = False
+        pin_mem = self.hyperparameters["pin_mem"]
         size_expert_data = 0
         update_freq = self.hyperparameters["buffer_update_steps"] * self.batch_size * bool(worker)
 
         args = (self.log, self.buffer_size, obs_sample, action_space, size_expert_data, self.stack_dim, self.stack_count,
-                update_freq)
+                update_freq, self.hyperparameters["use_list"])
         bargs = (self.batch_size, pin_mem, worker, self.device)
         if self.use_PER:
             dataset = PERDataset(self.PER_alpha, *args, max_priority=self.PER_max_priority,
@@ -162,11 +162,7 @@ class BasePolicy:
             action = np.clip(action, self.action_low, self.action_high)
         return action
 
-    def stack_current_frame(self, state):
-        return self.memory.stack_last_frames(state)
-
     def choose_action(self, state, calc_state_features=True):
-        state = self.stack_current_frame(state)
         state = self.state2device(state)
         with torch.no_grad():
             if calc_state_features:
@@ -190,7 +186,9 @@ class BasePolicy:
                     pass
                 else:
                     recent_q_val = torch.max(raw_action)
-                    self.log.add("Diagnostics/Q-val", recent_q_val, skip_steps=10, make_distribution=True)
+                    if self.log.is_available("Diagnostics/Q-val", factor=10, reset=False):
+                        self.log.add("Diagnostics/Q-val", recent_q_val, make_distr=True,
+                                     distr_steps=self.log.mean_ep_len * 5)
             # Add Gaussian noise:
             if self.gaussian_action_noise:
                 raw_action = self.add_noise(raw_action)
@@ -200,7 +198,6 @@ class BasePolicy:
             action = self.explore_discrete_actions(raw_action)
         else:
             action = raw_action[0].numpy()
-
         return action, raw_action
 
     def act(self, state):
@@ -287,7 +284,7 @@ class BasePolicy:
         before_sampling = time.time()
         # Get Batch:
         transitions = self.get_transitions()
-        self.log.add("Timings/Sampling_Time", time.time() - before_sampling, skip_steps=True, store_episodic=True)
+        self.log.add("Timings/Sampling_Time", time.time() - before_sampling, use_skip=True, store_episodic=True)
         # Extract state features
         self.extract_features(transitions)
         # Optimize:
@@ -326,83 +323,6 @@ class BasePolicy:
             # print(trans)
             return trans
 
-    def get_transitions_old(self):
-        sampling_size = min(len(self.memory), self.batch_size)
-        if self.use_PER:
-            transitions, importance_weights, idxs = self.memory.sample(sampling_size, self.PER_beta)
-            # print(importance_weights)
-            importance_weights = torch.tensor(importance_weights, device=self.device).float()
-        else:
-            transitions, idxs = self.memory.sample(sampling_size)
-            importance_weights = None
-        # Transform the stored tuples into torch arrays:
-        transitions = self.extract_batch(transitions)
-        # Save PER relevant info:
-        transitions["idxs"] = idxs
-        transitions["importance_weights"] = importance_weights
-
-        return transitions
-
-    def extract_batch(self, transitions):
-        # Transpose the batch (see http://stackoverflow.com/a/19343/3343043 for
-        # detailed explanation).
-        batch = Transition(*zip(*transitions))
-
-        # Compute a mask of non-final states and concatenate the batch elements
-        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
-                                                batch.next_state)), device=self.device, dtype=torch.bool)
-
-        if self.use_half:
-            dtype = torch.half
-        else:
-            dtype = torch.float
-
-        # Create state batch:
-        if isinstance(batch.state[0], dict):
-            # Concat the states per key:
-            state_batch = {
-                key: torch.cat([x[key] if key == "pov" else x[key] for x in batch.state]).type(dtype).to(self.device,
-                                                                                                         non_blocking=True)
-                for key in batch.state[0]}
-        else:
-            state_batch = torch.cat(batch.state).type(dtype).to(self.device, non_blocking=True)
-
-        # print("non_final mask: ", non_final_mask)
-        # print("state batch: ", state_batch)
-        # print("next state batch: ", next_state_batch)
-        # print("non final next state batch: ", non_final_next_states)
-
-        # Create next state batch:
-
-        non_final_next_states = [s for s in batch.next_state if s is not None]
-        # print(non_final_next_states)
-        if non_final_next_states:
-            if isinstance(non_final_next_states[0], dict):
-                non_final_next_states = {
-                    key: torch.cat([x[key] if key == "pov" else x[key] for x in non_final_next_states]).type(dtype).to(
-                        self.device, non_blocking=True)
-                    for key in non_final_next_states[0]}
-            else:
-                non_final_next_states = torch.cat(non_final_next_states).type(dtype).to(self.device, non_blocking=True)
-        else:
-            non_final_next_states = None
-
-        # Create action batch:
-        # print(batch.action)
-        action_batch = torch.cat(batch.action).type(dtype).to(self.device, non_blocking=True)
-
-        action_argmax = torch.argmax(action_batch, 1).unsqueeze(1)
-
-        # Create Reward batch:
-        reward_batch = torch.cat(batch.reward).unsqueeze(1).type(dtype).to(self.device, non_blocking=True)
-
-        transitions = {"states": state_batch, "actions": action_batch, "rewards": reward_batch,
-                       "non_final_next_states": non_final_next_states, "non_final_mask": non_final_mask,
-                       "importance_weights": None, "idxs": None,
-                       "action_argmax": action_argmax}
-
-        return transitions
-
     def optimize_networks(self, transitions):
         raise NotImplementedError
 
@@ -418,12 +338,9 @@ class BasePolicy:
                                                V=self.V)
 
     def set_retain_graph(self, val):
-        if self.Q is not None:
-            self.Q.retain_graph = val
-        if self.V is not None:
-            self.V.retain_graph = val
-        if self.actor is not None:
-            self.actor.retain_graph = val
+        for net in self.nets:
+            net.retain_graph = val
+
 
     def remember(self, state, action, reward, done, filling_buffer=False):
         if self.use_efficient_traces:
@@ -437,7 +354,6 @@ class BasePolicy:
                 if not filling_buffer:
                     most_recent_episode, idxs = self.memory.get_most_recent_episode()
                     self.update_episode_trace(most_recent_episode, idxs)
-
         else:
             self.memory.add(state, action, reward, done)
 

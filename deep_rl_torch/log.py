@@ -18,9 +18,14 @@ class Log(object):
         self.storage = {}
         self.short_term_storage = defaultdict(int)
         self.short_term_count = defaultdict(int)
+        self.distr_count = defaultdict(int)
         self.global_step = 0
         self.tb_path = 'runs'
         self.log_steps = None
+        # Keep track of ep lens:
+        self.mean_ep_len = 100
+        self.total_eps = 1
+        self.ep_len_count = defaultdict(int)
         
     def __getitem__(self, key):
         key = self.transform_name(key)
@@ -29,6 +34,14 @@ class Log(object):
     def __iter__(self):
         for key in self.storage:
             yield key
+
+    def count_eps_step(self, source):
+        self.ep_len_count[source] += 1
+
+    def count_eps(self, source):
+        self.total_eps += 1
+        self.mean_ep_len = (self.mean_ep_len * (self.total_eps - 1) + self.ep_len_count[source]) / self.total_eps
+        del self.ep_len_count[source]
 
     def set_log_steps(self, val):
         self.log_steps = val
@@ -60,23 +73,28 @@ class Log(object):
             value = (storage[name] * (n - 1) + value) / n
         return value
 
-    def do_save_log(self, name, skip_steps=False, factor=1):
-        return not skip_steps or self.short_term_count[name] >= self.log_steps * factor
+    def do_save_log(self, name, use_skip, skip_steps=0, factor=1, make_distr=False, distr_steps=0):
+        if make_distr:
+            return self.distr_count[name] >= distr_steps
+        else:
+            threshold = skip_steps if skip_steps else self.log_steps * factor
+            return not use_skip or self.short_term_count[name] >= threshold
 
     def add_count(self, name):
         self.short_term_count[name] += 1
 
-    def is_available(self, name, factor=1):
+    def is_available(self, name, factor=1, reset=True, skip_steps=0):
         self.add_count(name)
-        if self.do_save_log(name, skip_steps=True, factor=factor):
-            del self.short_term_count[name]
+        if self.do_save_log(name, use_skip=True, skip_steps=skip_steps, factor=factor):
+            if reset:
+                del self.short_term_count[name]
             return True
         else:
             return False
 
-    def add(self, name, value, distribution=False, make_distribution=False, steps=None, skip_steps=False,
+    def add(self, name, value, distribution=False, make_distr=False, distr_steps=0, steps=None, use_skip=False, skip_steps=0,
             store_episodic=False):
-        if not distribution and not make_distribution:
+        if not distribution and not make_distr:
             self._add_to_storage(self.storage, name, value)
         if store_episodic:
             self._add_to_storage(self.episodic_storage, name, value)
@@ -84,15 +102,18 @@ class Log(object):
         if self.do_logging:
             self.add_count(name)
             # Save in RAM:
-            if make_distribution:
+            if make_distr:
+                self.distr_count[name] += 1
                 if name not in self.short_term_storage:
                     self.short_term_storage[name] = [value]
                 else:
                     self.short_term_storage[name].append(value)
+
             else:
                 self.short_term_storage[name] = self.calc_running_mean(name, value)
 
-            if self.do_save_log(name, skip_steps):
+            if self.do_save_log(name, use_skip, skip_steps=skip_steps, make_distr=make_distr,
+                                distr_steps=distr_steps):
                 # Save in Tensorboard:
                 tb_value = self.short_term_storage[name]
                 if not isinstance(tb_value, torch.Tensor):
@@ -100,10 +121,12 @@ class Log(object):
                 tb_value = tb_value.detach()
                 del self.short_term_storage[name]
                 del self.short_term_count[name]
+                if make_distr:
+                    del self.distr_count[name]
 
                 if steps is None:
                     steps = self.global_step
-                if distribution or make_distribution:
+                if distribution or make_distr:
                     add_func = self.writer.add_histogram
                 else:
                     add_func = self.writer.add_scalar

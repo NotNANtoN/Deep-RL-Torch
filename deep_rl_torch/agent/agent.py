@@ -1,4 +1,5 @@
 # External imports:
+import collections
 import itertools
 import logging
 import gym
@@ -10,45 +11,16 @@ from pytorch_memlab import LineProfiler, profile, profile_every, set_target_gpu
 # Internal Imports:
 from deep_rl_torch.nn import ProcessState, ProcessStateAction
 from deep_rl_torch.policies import Q_Policy, ActorCritic, REM, MineRLHierarchicalPolicy
+from deep_rl_torch.nn.nn_utils import count_parameters, count_model_parameters
 from deep_rl_torch.util import *
-import copy
+
 try:
     from apex import amp
 except:
     print("WARNING: apex could not be imported.")
 
 
-# This is the interface for the agent being trained by a Trainer instance
-class AgentInterface:
-    def __init__(self):
-        pass
-
-    def optimize(self):
-        raise NotImplementedError
-
-    def exploit(self, state):
-        raise NotImplementedError
-
-    def explore(self, state):
-        raise NotImplementedError
-
-    def update_targets(self, n_steps):
-        raise NotImplementedError
-
-    def decay_exploration(self, n_steps):
-        raise NotImplementedError
-
-    def calculate_TDE(self, state, action, reward, next_state):
-        raise NotImplementedError
-
-    def remember(self, state, action, reward, done):
-        raise NotImplementedError
-
-    def display_debug_info(self):
-        raise NotImplementedError
-
-
-class Agent(AgentInterface):
+class Agent:
     def __init__(self, env, device, log, hyperparameters):
         self.verbose = hyperparameters["verbose"]
         self.discrete_env = True if "Discrete" in str(env.action_space)[:8] else False
@@ -69,39 +41,43 @@ class Agent(AgentInterface):
         self.stored_percentage = 0
         self.load_path = hyperparameters["load_path"]
         self.batch_size = hyperparameters["batch_size"]
+        # Frame stacking:
+        self.use_list = hyperparameters["use_list"]
         self.stack_dim = hyperparameters["stack_dim"]
         self.stack_count = hyperparameters["frame_stack"]
+        self.store_stacked = hyperparameters["store_stacked"]
+        self.recent_states = collections.defaultdict(lambda: collections.deque(maxlen=self.stack_count))
 
         # Create NNs and support structures:
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
 
+        # Collect all parameters:
+        params = self.policy.get_updateable_params()
+        params += self.F_s.get_updateable_params()
+        if self.F_sa is not None:
+            params += self.F_sa.get_updateable_params()
+        if self.verbose:
+            print("Total trainable parameters: ", count_parameters(params))
         # Set up Optimizer:
         if self.optimize_centrally:
-            params = self.policy.get_updateable_params()
-            params += self.F_s.get_updateable_params()
-            if self.F_sa is not None:
-                params += self.F_sa.get_updateable_params()
             general_lr = hyperparameters["general_lr"]
             self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
             if self.use_half:
                 _, self.optimizer = amp.initialize([], self.optimizer)
-                
-    def fake_stack(self, state_sample):
-        shp = list(state_sample.shape)
-        if shp[0] == 1 or len(shp) == 1:
-            state_sample = np.concatenate([state_sample] * self.stack_count)
-        else:
-            state_sample = np.stack([state_sample] * self.stack_count)
-        return state_sample
+
 
     def init_feature_extractors(self):
         state_sample = self.env.observation_space.sample()
-        state_sample = self.fake_stack(state_sample)
+        if not self.use_list:
+            state_sample = self.fake_stack(state_sample)
+
+        print("State sample shape: ", state_sample.shape)
         F_s = ProcessState(state_sample, self.env, self.log, self.device, self.hyperparameters)
         if self.log and self.verbose:
             print("F_s:")
             print(F_s)
+            print("Trainable params: ", count_model_parameters(F_s))
         if self.use_half:
             F_s = amp.initialize(F_s, verbosity=0)
         F_sa = None
@@ -201,9 +177,8 @@ class Agent(AgentInterface):
             for net in all_nets:
                 net.log_nn_data()
 
-            
-    def observe(self, state):
-        state = self.policy.stack_current_frame(state)
+    def observe(self, obs, source):
+        state = self.make_state(obs, source)
         self.F_s.observe(state)
     
     def calc_mem_usage(self):
@@ -214,6 +189,7 @@ class Agent(AgentInterface):
         Requires that enough transitions are stored in memory such that self.policy.optimize is callable"""
         if not torch.cuda.is_available():
             return
+        # create tensor on GPU
         test_tensor = torch.tensor([0], dtype=torch.bool, device=self.device)
         batch_results = []
         for _ in range(1):
@@ -235,11 +211,45 @@ class Agent(AgentInterface):
         if self.verbose:
             print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
         return single_transition
-        
-    def explore(self, state, fully_random=False):
+
+    def fake_stack(self, state_sample):
+        shp = list(state_sample.shape)
+        if self.stack_count <= 1:
+            if shp[0] == 1 or len(shp) == 1:
+                state_sample = state_sample
+            else:
+                state_sample = np.expand_dims(state_sample, 0)
+        elif shp[0] == 1 or len(shp) == 1:
+            state_sample = np.concatenate([state_sample] * self.stack_count)
+        else:
+            state_sample = np.stack([state_sample] * self.stack_count)
+        return state_sample
+
+    def make_state(self, obs, source):
+        if self.stack_count <= 1 or self.use_list:
+            if not isinstance(obs, torch.Tensor):
+                state = obs.make_state()
+            else:
+                state = obs
+        else:
+            obs = obs.squeeze(0)
+            self.recent_states[source].append(obs)
+            obs_list = list(self.recent_states[source])
+            for _ in range(self.stack_count - len(obs_list)):
+                obs_list.append(obs_list[-1])
+            state = torch.cat(obs_list, dim=self.stack_dim).unsqueeze(0)
+        return state
+
+    def clean_state(self, source):
+        if source in self.recent_states:
+            del self.recent_states[source]
+
+    def explore(self, obs, source, fully_random=False):
+        state = self.make_state(obs, source)
         return self.policy.explore(state, fully_random)
 
-    def exploit(self, state):
+    def exploit(self, obs, source):
+        state = self.make_state(obs, source)
         return self.policy.exploit(state)
 
     def decay_exploration(self, n_steps, train_fraction):

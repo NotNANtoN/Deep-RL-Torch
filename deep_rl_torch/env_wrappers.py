@@ -12,7 +12,6 @@ from gym.wrappers.monitoring.stats_recorder import StatsRecorder
 from gym import spaces
 import minerl
 
-
 from .util import apply_rec_to_dict
 
 cv2.ocl.setUseOpenCL(False)
@@ -31,7 +30,7 @@ def map2closest_val(val, number_list):
 
 
 class FrameStack(gym.Wrapper):
-    def __init__(self, env, k, stack_dim=-1):
+    def __init__(self, env, k, store_stacked, stack_dim=0):
         """Stack k last frames.
         Returns lazy array, which is much more memory efficient.
         See Also
@@ -42,27 +41,27 @@ class FrameStack(gym.Wrapper):
         self.k = k
         self.frames = deque([], maxlen=k)
         self.stack_dim = stack_dim
+        self.store_stacked = store_stacked
         self.obs_is_dict = False
 
-        if isinstance(env.observation_space, dict) or isinstance(env.observation_space, minerl.env.spaces.Dict):  
+        if isinstance(env.observation_space, dict) or isinstance(env.observation_space, minerl.env.spaces.Dict):
             new_space = apply_rec_to_dict(self.transform_obs_space, env.observation_space)
             self.observation_space = ItObsDict(new_space)
             self.obs_is_dict = True
         else:
             self.observation_space = self.transform_obs_space(self.observation_space)
-        
+
         # The first dim of obs is the batch_size, skip it:
         self.stack_dim += 1
-        
-    def transform_obs_space(self, obs_space):
-            shp = obs_space.shape
-            stack_dim = self.stack_dim
-            if stack_dim == -1:
-                stack_dim = len(shp) - 1
-            shp = [size * self.k if idx == stack_dim else size for idx, size in enumerate(shp)]
-            obs_space = spaces.Box(low=0, high=255, shape=shp, dtype=obs_space.dtype)
-            return obs_space
 
+    def transform_obs_space(self, obs_space):
+        shp = obs_space.shape
+        stack_dim = self.stack_dim
+        if stack_dim == -1:
+            stack_dim = len(shp) - 1
+        shp = [size * self.k if idx == stack_dim else size for idx, size in enumerate(shp)]
+        obs_space = spaces.Box(low=0, high=255, shape=shp, dtype=obs_space.dtype)
+        return obs_space
 
     def reset(self):
         ob = self.env.reset()
@@ -77,24 +76,11 @@ class FrameStack(gym.Wrapper):
 
     def _get_ob(self):
         assert len(self.frames) == self.k
-        #return LazyFrames(list(self.frames))
-        if self.obs_is_dict:
-            obs = {}
-            for key in self.frames[0]:
-                key_frames = [frame [key] for frame in self.frames]
-                stacked = self.stack_frames(key_frames)
-                obs[key] = stacked
-        else:
-            #obs = torch.cat(list(self.frames), dim=self.stack_dim)
-            obs = self.stack_frames(self.frames)
-        return obs
-            
-    def stack_frames(self, frames):
-        return torch.cat(list(frames), dim=self.stack_dim)
-        
-        
-class LazyFrames(object):
-    def __init__(self, frames):
+        return LazyFrames(list(self.frames), self.obs_is_dict, self.stack_dim, self.store_stacked)
+
+
+class LazyFrames:
+    def __init__(self, frames, obs_is_dict, stack_dim, store_stacked):
         """This object ensures that common frames between the observations are only stored once.
         It exists purely to optimize memory usage which can be huge for DQN's 1M frames replay
         buffers.
@@ -102,12 +88,34 @@ class LazyFrames(object):
         You'd not believe how complex the previous solution was."""
         self._frames = frames
         self._out = None
+        self.obs_is_dict = obs_is_dict
+        self.stack_dim = stack_dim
+        self.store_stacked = store_stacked
 
     def _force(self):
-        if self._out is None:
-            self._out = torch.cat(self._frames, dim=-1)
-            self._frames = None
-        return self._out
+        if self.store_stacked:
+            if self._out is None:
+                self._out = self.stack_frames(self._frames)
+                self._frames = None
+            return self._out
+        else:
+            return self.stack_frames(self._frames)
+
+    def stack_frames(self, frames):
+        if self.obs_is_dict:
+            obs = {
+                self.stack([frame[key] for frame in frames])
+                for key in frames[0]
+            }
+        else:
+            obs = self.stack(frames)
+        return obs
+
+    def stack(self, frames):
+        return torch.cat(list(frames), dim=self.stack_dim)
+
+    def make_state(self):
+        return self._force()
 
     def __array__(self, dtype=None):
         out = self._force()
@@ -127,6 +135,7 @@ class LazyFrames(object):
 
     def frame(self, i):
         return self._force()[..., i]
+
 
 class HierarchicalActionWrapper(gym.ActionWrapper):
     """Convert MineRL env's `Dict` action space as a serial discrete action space.
@@ -161,7 +170,7 @@ class HierarchicalActionWrapper(gym.ActionWrapper):
         if len(set(self.always_keys) | set(self.reverse_keys) | set(self.exclude_keys)) != \
                 len(self.always_keys) + len(self.reverse_keys) + len(self.exclude_keys):
             raise ValueError('always_keys ({}) or reverse_keys ({}) or exclude_keys ({}) intersect each other.'.format(
-                self.always_keys, self.reverse_keys, self.exclude_keys))
+                    self.always_keys, self.reverse_keys, self.exclude_keys))
         self.exclude_noop = exclude_noop
 
         self.wrapping_action_space = self.env.action_space
@@ -413,6 +422,7 @@ def process_equipped(mainhand_dict):
     item_type = one_hot_encode_single(obj_type, 9)
     return torch.cat([dmg, max_dmg, item_type], dim=0)
 
+
 class DefaultWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
@@ -421,28 +431,29 @@ class DefaultWrapper(gym.ObservationWrapper):
         obs = torch.from_numpy(observation).float().unsqueeze(0)
         return obs
 
+
 class ItObsDict(minerl.env.spaces.Dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-    
+
     def __iter__(self):
         for key in self.spaces:
             yield key
-            
-    
+
+
 class Convert2TorchWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
         super().__init__(env)
         self.rgb2gray = rgb2gray
 
         sample = env.observation_space.sample()
-            
+
         changed_sampled = apply_rec_to_dict(lambda x: x.squeeze(0), self.observation(sample))
-        
-        new_space = apply_rec_to_dict(lambda x: spaces.Box(low=0, high=255, shape=x.shape, dtype=np.float), changed_sampled)
-        
+
+        new_space = apply_rec_to_dict(lambda x: spaces.Box(low=0, high=255, shape=x.shape, dtype=np.float),
+                                      changed_sampled)
+
         self.observation_space = ItObsDict(new_space)
-        
 
     def observation(self, obs_dict, expert_data=False):
         new_obs = {}
@@ -455,7 +466,8 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             elif key == "inventory":
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
-                obs = torch.cat([torch.from_numpy(np.ascontiguousarray(inv_dict[key])).unsqueeze(0) for key in inv_dict])
+                obs = torch.cat(
+                        [torch.from_numpy(np.ascontiguousarray(inv_dict[key])).unsqueeze(0) for key in inv_dict])
             elif key == "pov":
                 obs = torch.from_numpy(np.ascontiguousarray(obs_dict[key]))
                 if self.rgb2gray:
@@ -471,8 +483,9 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
             if expert_data:
                 obs = obs.squeeze().unsqueeze(0)
             new_obs[key] = obs.unsqueeze(0)
-            
+
         return new_obs
+
 
 class AtariObsWrapper(gym.ObservationWrapper):
     def __init__(self, env, rgb2gray):
@@ -480,7 +493,6 @@ class AtariObsWrapper(gym.ObservationWrapper):
         self.rgb2gray = rgb2gray
         self.last_obs = None
         self.observation_space = spaces.Box(low=0, high=255, shape=(1, 80, 80), dtype=env.observation_space.dtype)
-
 
     def observation(self, obs):
         obs = torch.from_numpy(np.ascontiguousarray(obs))
@@ -619,7 +631,7 @@ class SerialDiscreteActionWrapper(gym.ActionWrapper):
         if len(set(self.always_keys) | set(self.reverse_keys) | set(self.exclude_keys)) != \
                 len(self.always_keys) + len(self.reverse_keys) + len(self.exclude_keys):
             raise ValueError('always_keys ({}) or reverse_keys ({}) or exclude_keys ({}) intersect each other.'.format(
-                self.always_keys, self.reverse_keys, self.exclude_keys))
+                    self.always_keys, self.reverse_keys, self.exclude_keys))
         self.exclude_noop = exclude_noop
 
         self.wrapping_action_space = self.env.action_space

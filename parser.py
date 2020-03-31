@@ -26,6 +26,9 @@ def create_parser():
     parser.add_argument("--stack_dim", type=int, help="Which dimension of the tensor to stack the frames at", default=0)
     parser.add_argument("--frameskip", type=int, help="The number of times the env.step() is called per action",
                         default=4)
+    parser.add_argument("--store_stacked", type=int, help="Store a stacked state after its individual frames have been"
+                                                          " stacked. This can increase speed, but costs memory space. ",
+                        default=0)
     parser.add_argument("--max_episode_steps", type=int, help="Limit the length of episodes", default=0)
     parser.add_argument("--reward_std", type=float, default=0.0)
     # Target net:
@@ -34,7 +37,7 @@ def create_parser():
     parser.add_argument("--target_network_hard_steps", type=int, default=10000)
     parser.add_argument("--polyak_averaging_tau", type=float, default=0.0025)
     # Experience replay:
-    parser.add_argument("--use_new_buffer", type=int, default=1)
+    parser.add_argument("--use_list", type=int, default=1)
     parser.add_argument("--buffer_update_steps", type=int, default=10)
     parser.add_argument("--use_exp_rep", type=int, default=1)
     parser.add_argument("--worker", type=int, default=0)
@@ -52,7 +55,7 @@ def create_parser():
     parser.add_argument("--pretrain_weight_decay", type=float, default=0.0)
     # Exploration:
     parser.add_argument("--epsilon", type=float, default=0.1)
-    parser.add_argument("--epsilon_mid", type=float, default=0.05)
+    parser.add_argument("--epsilon_mid", type=float, default=0.00)
     parser.add_argument("--explore_until_reward", type=int, default=0)
     parser.add_argument("--action_sigma", type=float, default=0.0)
     parser.add_argument("--initial_steps", type=int, default=50000)
@@ -71,8 +74,8 @@ def create_parser():
     parser.add_argument("--normalize_obs", type=int, default=1)
     parser.add_argument("--freeze_normalize_after_initial", type=int, default=1)
     parser.add_argument("--rgb_to_gray", type=int, default=1)
-    parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
-                        default=255)
+    #parser.add_argument("--matrix_max_val", type=int, help="Maximum value an element in an input matrix can have",
+    #                    default=255)
     # NN Architecture:
     parser.add_argument("--layers_conv", default="own")
     parser.add_argument("--hidden_size", default=512)
@@ -89,7 +92,7 @@ def create_parser():
     parser.add_argument("--lr_r", type=float, default=0.0001)
     parser.add_argument("--lr_actor", type=float, default=0.00005)
     parser.add_argument("--store_on_gpu", type=int, default=0)
-    parser.add_argument("--pin_tensors", type=int,  default=0)
+    parser.add_argument("--pin_mem", type=int,  default=0)
     # REM:
     parser.add_argument("--use_REM", type=int, default=0)
     parser.add_argument("--REM_num_heads", type=int, default=5)

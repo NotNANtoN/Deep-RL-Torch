@@ -203,7 +203,7 @@ def create_arg_dict(env=None, verbose=False):
     if verbose:
         print("Env: ", env)
 
-    atari_envs = ["Pong-v0", "Pong-ram-v0" "Atlantis-v0", "Seaquest-v0", "Qbert-v0"]
+    atari_envs = ["Pong-v0", "Pong-ram-v0" "Atlantis-v0", "Seaquest-v0", "Qbert-v0", "Breakout-v0"]
     if "MineRL" in env:
         if verbose:
             print("MineRL env!")

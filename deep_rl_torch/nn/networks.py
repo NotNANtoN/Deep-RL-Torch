@@ -78,7 +78,7 @@ class OptimizableNet(torch.nn.Module):
 
         name = "losses/loss_" + self.name + (("_" + name) if name != "" else "")
         detached_loss = reduced_loss.detach().clone().item()
-        self.log.add(name, detached_loss, skip_steps=True)
+        self.log.add(name, detached_loss, use_skip=True)
 
         PER_weights = loss.detach().clone().cpu()
 
@@ -123,9 +123,11 @@ class OptimizableNet(torch.nn.Module):
             self.log.add("Grad Norm/" + name, grad_norm)
             name += "_" + extra_name + "_" if extra_name else ""
 
-            if self.log.is_available("NN_distributions", factor=10):
-                weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()]).view(-1)
-                gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()]).view(-1)
+            if self.log.is_available("NN_distributions", skip_steps=10):
+                weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])\
+                    .view(-1)
+                gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])\
+                    .view(-1)
                 self.log.add("Weights/" + name, weights, distribution=True)
                 self.log.add("Gradients/" + name, gradients, distribution=True)
 

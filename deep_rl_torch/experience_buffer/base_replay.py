@@ -8,35 +8,46 @@ from deep_rl_torch.util import apply_rec_to_dict, apply_to_state
 
                                                   
 class RLDataset(torch.utils.data.IterableDataset):
-    def __init__(self, log, max_size, sample, action_space, size_expert_data, stack_dim, stack_count, update_freq):
+    def __init__(self, log, max_size, sample, action_space, size_expert_data, stack_dim, stack_count, update_freq,
+                 use_list):
         self.max_size = max_size + size_expert_data
         self.size_expert_data = size_expert_data
         self.stack_dim = stack_dim
         self.stack_count = stack_count
         self.update_freq = update_freq
         self.log = log
-        
-        if isinstance(sample, torch.Tensor) or isinstance(sample, np.ndarray):
-            sample = torch.from_numpy(sample)
-            shp = list(sample.shape)
-        elif isinstance(sample, list):
-            raise NotImplementedError("No list support yet")
-        elif isinstance(sample, dict):
-            raise NotImplementedError("No dict support yet")
-        else:
-            raise TypeError("Unknown type: " + str(type(sample)) + " of env sample. Can only use Tensor, list or dict.")
-            
-        if isinstance(action_space, gym.spaces.Box):
-            action_shp = [len(action_space.low)]
-        elif isinstance(action_space, gym.spaces.Discrete):
-            action_shp = [action_space.n]
-        else:
-            raise TypeError("Unsupport action space type: " + str(action_space))
+        self.use_list = use_list
+        if not use_list:
+            # Get state space shape:
+            if isinstance(sample, torch.Tensor) or isinstance(sample, np.ndarray):
+                if isinstance(sample, np.ndarray):
+                    sample = torch.from_numpy(sample)
+                shp = list(sample.shape)
+            elif isinstance(sample, list):
+                raise NotImplementedError("No observation list support yet")
+            elif isinstance(sample, dict):
+                raise NotImplementedError("No obsservation dict support yet")
+            else:
+                raise TypeError("Unknown type: " + str(type(sample)) + " of env sample. Can only use Tensor, list or dict.")
+            # Get action space shape:
+            if isinstance(action_space, gym.spaces.Box):
+                action_shp = [len(action_space.low)]
+            elif isinstance(action_space, gym.spaces.Discrete):
+                action_shp = [action_space.n]
+            else:
+                raise TypeError("Unsupport action space type: " + str(action_space))
 
-        self.states = torch.empty([max_size] + shp, dtype=sample.dtype)
-        self.rewards = torch.empty(max_size)
-        self.actions = torch.empty([max_size] + action_shp)
-        self.dones = torch.empty(max_size, dtype=torch.bool)
+            self.states = torch.empty([max_size] + shp, dtype=sample.dtype)
+            self.rewards = torch.empty(max_size)
+            self.actions = torch.empty([max_size] + action_shp)
+            self.dones = torch.empty(max_size, dtype=torch.bool)
+        else:
+            self.states = []
+            self.rewards = []
+            self.actions = []
+            self.dones = []
+
+        # Indexing fields:
         self.next_idx = 0
         self.curr_idx = 0
         self.looped_once = False
@@ -50,19 +61,29 @@ class RLDataset(torch.utils.data.IterableDataset):
         
     def __getitem__(self, index):
         """ Return a single transition """
-        self.log.add("Sampled Idx", index, make_distribution=True, skip_steps=True)
+        if self.log.is_available("Sampled Idx", factor=1, reset=False):
+            self.log.add("Sampled Idx", index, make_distr=True, distr_steps=self.log.log_steps // 4)
         # Check if the last state is being attempted to sampled - it has no next state yet:
         if index == self.curr_idx:
             index = self.decrement_idx(index)
         elif index >= len(self):
             raise ValueError("Error: index " + str(index) + " is too large for buffer of size " + str(len(self)))
-        # Stack state:
-        state = self.stack_last_frames_idx(index)
         # Check if there is a next_state, if so stack frames:
         next_index = self.increment_idx(index)
         is_end = self.is_episode_boundary(index)
-        next_state = self.stack_last_frames_idx(next_index) if not is_end else None
-        return [state, self.actions[index], self.rewards[index], next_state, torch.tensor(index)]
+        if not self.use_list:
+            # Stack state:
+            state = self.stack_last_frames_idx(index)
+            next_state = self.stack_last_frames_idx(next_index) if not is_end else None
+        else:
+            if not isinstance(self.states[index], torch.Tensor):
+                state = self.states[index].make_state().squeeze()
+                next_state = self.states[next_index].make_state().squeeze() if not is_end else None
+            else:
+                state = self.states[index].squeeze(0)
+                next_state = self.states[next_index].squeeze(0) if not is_end else None
+
+        return [state, self.actions[index].squeeze(), self.rewards[index].squeeze(), next_state, torch.tensor(index)]
     
     def __iter__(self):
         count = 0
@@ -74,9 +95,8 @@ class RLDataset(torch.utils.data.IterableDataset):
                 raise StopIteration
             
     def sample_idx(self):
-        idx = random.randint(0, len(self) - 1)
-        return idx
-        
+        return random.randint(0, len(self) - 1)
+
     def add(self, state, action, reward, done, store_episodes=False):
         # Mark episodic boundaries:
         #if self.dones[self.next_idx]:
@@ -85,10 +105,16 @@ class RLDataset(torch.utils.data.IterableDataset):
         #    self.done_idcs.add(self.next_idx)
             
         # Store data:
-        self.states[self.next_idx] = state
-        self.actions[self.next_idx] = action
-        self.rewards[self.next_idx] = reward
-        self.dones[self.next_idx] = done
+        if self.use_list and not self.looped_once:
+            self.states.append(state)
+            self.actions.append(action)
+            self.rewards.append(reward)
+            self.dones.append(done)
+        else:
+            self.states[self.next_idx] = state
+            self.actions[self.next_idx] = action
+            self.rewards[self.next_idx] = reward
+            self.dones[self.next_idx] = done
         
         # Take care of idcs:
         self.curr_idx = self.next_idx
@@ -97,8 +123,7 @@ class RLDataset(torch.utils.data.IterableDataset):
     def increment_idx(self, index):
         """ Loop the idx from front to end. Skip expert data, as we want to keep that forever"""
         index += 1
-        remainder = index % self.max_size
-        if remainder == 0: 
+        if index == self.max_size:
             index = 0 + self.size_expert_data
             self.looped_once = True
         return index
@@ -110,18 +135,19 @@ class RLDataset(torch.utils.data.IterableDataset):
         return index
         
     def update_stored_hidden_states(self, idxs, hidden_states, seq_lens):
-        """ For R2D2, eventually. Updates the stored hidden states. Note: might be better to store hidden states in
-        network similar as is being done with eligibility traces """
+        """ For R2D2, eventually. Updates the stored hidden states.
+        Note: might be better to store hidden states in
+        network similar as is being done with eligibility traces! """
         pass
         
     def is_episode_boundary(self, idx):
         return self.dones[idx] or idx == self.curr_idx
         
-    def get_last_frames(self, idx, frames):
+    def get_preceeding_frames(self, idx, frame):
         """Create list of frames going back from idx with the current frame already filled in frames.
         If an episode boundary is encountered, the last frame is repeated
         """
-        frame = frames[0]
+        frames = [frame]
         done_flag = False
         for i in range(self.stack_count - 1):
             idx = self.decrement_idx(idx)
@@ -130,20 +156,21 @@ class RLDataset(torch.utils.data.IterableDataset):
             if not done_flag:
                 frame = self.states[idx]
             frames.append(frame)
+
         return frames
     
     def stack_last_frames_idx(self, idx):
-        frames = [self.states[idx]]
-        frames = self.get_last_frames(idx, frames)            
+        """Stack frames for buffer based on index"""
+        frame = self.states[idx]
+        frames = self.get_preceeding_frames(idx, frame)
         return self.stack_frames(frames)  
     
     def stack_last_frames(self, frame):
-        frames = [frame.squeeze(0)]
-        frames = self.get_last_frames(self.curr_idx, frames)
+        """Stack frames for actor based on frame. assumes the frame to be the most recently added frame"""
+        frame = frame.squeeze(0)
+        frames = self.get_preceeding_frames(self.curr_idx, frame)
         return self.stack_frames(frames).unsqueeze(0)
-    
-    def stack_current_frames(self, frame):
-        return self.stack_last_frames(frame)
+
     
     def stack_frames(self, frames):
         return torch.cat(list(frames), dim=self.stack_dim)
@@ -258,6 +285,7 @@ class ReplayBuffer:
         batch_dict["action_argmax"] = torch.argmax(self.stack(batch_dict["actions"]), 1).unsqueeze(1)
         # Stack in tensors:
         for key in batch_dict:
+
             if key not in ("action_argmax", "non_final_mask", "non_final_next_states"):
                 content = self.stack(batch_dict[key])
                 batch_dict[key] = content
@@ -265,6 +293,7 @@ class ReplayBuffer:
                 batch_dict[key] = batch_dict[key].float()
         # Bring rewards in correct shape
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
+
         return batch_dict
     
 
