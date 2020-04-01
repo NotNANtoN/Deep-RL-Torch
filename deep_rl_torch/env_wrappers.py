@@ -12,7 +12,7 @@ from gym.wrappers.monitoring.stats_recorder import StatsRecorder
 from gym import spaces
 import minerl
 
-from .util import apply_rec_to_dict
+from .util import apply_rec_to_dict, apply_to_state, apply_to_state_list
 
 cv2.ocl.setUseOpenCL(False)
 logger = getLogger(__name__)
@@ -42,12 +42,10 @@ class FrameStack(gym.Wrapper):
         self.frames = deque([], maxlen=k)
         self.stack_dim = stack_dim
         self.store_stacked = store_stacked
-        self.obs_is_dict = False
 
         if isinstance(env.observation_space, dict) or isinstance(env.observation_space, minerl.env.spaces.Dict):
             new_space = apply_rec_to_dict(self.transform_obs_space, env.observation_space)
             self.observation_space = ItObsDict(new_space)
-            self.obs_is_dict = True
         else:
             self.observation_space = self.transform_obs_space(self.observation_space)
 
@@ -76,11 +74,11 @@ class FrameStack(gym.Wrapper):
 
     def _get_ob(self):
         assert len(self.frames) == self.k
-        return LazyFrames(list(self.frames), self.obs_is_dict, self.stack_dim, self.store_stacked)
+        return LazyFrames(list(self.frames), self.stack_dim, self.store_stacked)
 
 
 class LazyFrames:
-    def __init__(self, frames, obs_is_dict, stack_dim, store_stacked):
+    def __init__(self, frames, stack_dim, store_stacked):
         """This object ensures that common frames between the observations are only stored once.
         It exists purely to optimize memory usage which can be huge for DQN's 1M frames replay
         buffers.
@@ -88,28 +86,31 @@ class LazyFrames:
         You'd not believe how complex the previous solution was."""
         self._frames = frames
         self._out = None
-        self.obs_is_dict = obs_is_dict
+        self.obs_is_dict = isinstance(self._frames[0], dict)
         self.stack_dim = stack_dim
         self.store_stacked = store_stacked
 
     def _force(self):
         if self.store_stacked:
-            if self._out is None:
-                self._out = self.stack_frames(self._frames)
-                self._frames = None
-            return self._out
+            raise NotImplementedError("Just don't...")
+            #if self._out is None:
+            #    self._out = self.stack_frames(self._frames)
+            #    self._frames = None
+            #return self._out
         else:
             return self.stack_frames(self._frames)
 
     def stack_frames(self, frames):
-        if self.obs_is_dict:
-            obs = {
-                self.stack([frame[key] for frame in frames])
-                for key in frames[0]
-            }
-        else:
-            obs = self.stack(frames)
+        obs = apply_to_state_list(self.stack, frames)
         return obs
+        #if self.obs_is_dict:
+        #    obs = {
+        #        self.stack([frame[key] for frame in frames])
+        #        for key in frames[0]
+        #    }
+        #else:
+        #    obs = self.stack(frames)
+        #return obs
 
     def stack(self, frames):
         return torch.cat(list(frames), dim=self.stack_dim)
@@ -118,22 +119,28 @@ class LazyFrames:
         return self._force()
 
     def __array__(self, dtype=None):
+        print("Access forbidden array")
         out = self._force()
         if dtype is not None:
             out = out.type(dtype)
         return out
 
     def __len__(self):
+        print("Access forbidden len")
         return len(self._force())
 
     def __getitem__(self, i):
-        return self._force()[i]
+        print("Access forbidden getitem")
+        #return self._force()[i]
+        return self._frames[i]
 
     def count(self):
+        print("Access forbidden count")
         frames = self._force()
         return frames.shape[frames.ndim - 1]
 
     def frame(self, i):
+        print("Access forbidden frame")
         return self._force()[..., i]
 
 
