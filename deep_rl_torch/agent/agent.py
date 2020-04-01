@@ -61,11 +61,23 @@ class Agent:
             print("Total trainable parameters: ", count_parameters(params))
         # Set up Optimizer:
         if self.optimize_centrally:
-            general_lr = hyperparameters["general_lr"]
-            self.optimizer = hyperparameters["optimizer"](params, lr=general_lr)
-            if self.use_half:
-                _, self.optimizer = amp.initialize([], self.optimizer)
+            self.optimizer = self.create_optimizer(hyperparameters, params)
 
+    def create_optimizer(hyperparameters, parameters_to_optimize):
+        optimizer_type = hyperparameters["optimizer"]
+        kwargs = {}
+        kwargs["lr"] = hyperparameters["general_lr"]
+        if optimizer_type == "Adam":
+            if hyperparameters["Adam_epsilon"]:
+                kwargs["eps"] = hyperparameters["Adam_epsilon"]
+            elif hyperparameters["Adam_beta1"] or hyperparameters["Adam_beta2"]:
+                assert hyperparameters["Adam_beta1"] and hyperparameters["Adam_beta2"]
+                kwargs["betas"] = (hyperparameters["Adam_beta1"], hyperparameters["Adam_beta2"])
+        optimizer = optimizer_type(params, lr=general_lr **kwargs)
+        if self.use_half:
+            _, optimizer = amp.initialize([], optimizer)
+        return optimizer
+        
 
     def init_feature_extractors(self):
         state_sample = self.env.observation_space.sample()

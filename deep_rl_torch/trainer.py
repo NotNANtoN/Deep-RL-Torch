@@ -74,7 +74,6 @@ class Trainer:
         self.use_exp_rep = hyperparameters["use_exp_rep"]
 
         # Exploration params:
-        self.use_elig_traces = hyperparameters["use_efficient_traces"]
         self.n_initial_random_actions = hyperparameters["initial_steps"]
         self.explore_until_reward = hyperparameters["explore_until_reward"]
 
@@ -91,7 +90,8 @@ class Trainer:
         #    self.tqdm_episode_len = env._max_episode_steps
         else:
             self.tqdm_episode_len = None
-
+        
+        # Pretrain hyperparams:
         self.use_expert_data = hyperparameters["use_expert_data"]
         self.pretrain_percentage = hyperparameters["pretrain_percentage"]
         self.do_pretrain = self.pretrain_percentage > 0
@@ -105,7 +105,9 @@ class Trainer:
         else:
             hyperparameters["num_expert_samples"] = 0
 
-        # Init Policy:
+        # Agent params:
+        
+        # Init Agent:
         self.agent = Agent(self.env, self.device, self.log, hyperparameters)
         if hyperparameters["load"]:
             self.agent.load()
@@ -328,11 +330,7 @@ class Trainer:
 
             # For eligibility traces we need to complete at least one episode to properly start training
             if do_break:
-                if self.use_elig_traces:
-                    if done_count >= 1:
-                        break
-                else:
-                    break
+                break
 
         if self.verbose:
             print("Done with filling replay buffer.")
@@ -376,15 +374,14 @@ class Trainer:
 
     def evaluate_model(self):
         reward_sum = 0
-        #   test_env = self.create_env(self.hyperparameters)
         source = "Evaluation"
         for i in range(self.eval_rounds):
-            test_state = self.test_env.reset()
+            current_state = self.test_env.reset()
             for t in itertools.count():
-                action, next_obs, reward, done = self._act(self.test_env, test_state, source, explore=True, store_in_exp_rep=False)
+                action, next_obs, reward, done = self._act(self.test_env, current_state, source, explore=True, store_in_exp_rep=False)
                 reward_sum += reward
+                current_state = next_obs
                 if done:
-                    print(t)
                     break
         reward_mean = reward_sum / self.eval_rounds
         return reward_mean

@@ -85,6 +85,9 @@ def create_parser():
     parser.add_argument("--general_lr", type=float, default=0.00025)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--optimizer", default="RAdam")
+    parser.add_argument("--Adam_epsilon", type=float)  # 0.0001 in Agent57
+    parser.add_argument("--Adam_beta1", type=float)
+    parser.add_argument("--Adam_beta2", type=float)
     parser.add_argument("--max_norm", type=float, default=0)
     parser.add_argument("--updates_per_step", type=float, default=0.25)
     parser.add_argument("--lr_Q", type=float, default=0.0002)
