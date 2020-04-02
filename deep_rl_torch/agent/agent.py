@@ -63,7 +63,7 @@ class Agent:
         if self.optimize_centrally:
             self.optimizer = self.create_optimizer(hyperparameters, params)
 
-    def create_optimizer(hyperparameters, parameters_to_optimize):
+    def create_optimizer(self, hyperparameters, parameters_to_optimize):
         optimizer_type = hyperparameters["optimizer"]
         kwargs = {}
         kwargs["lr"] = hyperparameters["general_lr"]
@@ -73,7 +73,7 @@ class Agent:
             elif hyperparameters["Adam_beta1"] or hyperparameters["Adam_beta2"]:
                 assert hyperparameters["Adam_beta1"] and hyperparameters["Adam_beta2"]
                 kwargs["betas"] = (hyperparameters["Adam_beta1"], hyperparameters["Adam_beta2"])
-        optimizer = optimizer_type(params, lr=general_lr **kwargs)
+        optimizer = optimizer_type(parameters_to_optimize, **kwargs)
         if self.use_half:
             _, optimizer = amp.initialize([], optimizer)
         return optimizer

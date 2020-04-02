@@ -83,10 +83,10 @@ def get_env(parameters):
         env = env_short
     return env
 
-def create_arg_dict(env=None, verbose=False):
+def create_arg_dict(args, env=None, verbose=False):
     # Parse arguments:
     parser = create_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(args)
     arg_dict = vars(args)
 
     # NN architectures:
@@ -268,7 +268,7 @@ def create_comment():
 if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
     
-    parameters, env = create_arg_dict(verbose=True)
+    parameters, env = create_arg_dict(sys.argv[1:], verbose=True)
     
     tensorboard_comment = create_comment()
     print("Tensorboard comment: ", tensorboard_comment)
