@@ -530,7 +530,7 @@ class ActorCritic(BasePolicy):
         if self.split:
             params += list(self.layers_r.parameters())
         return params
-
+    
 
 class Q_Policy(BasePolicy):
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):

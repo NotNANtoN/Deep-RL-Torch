@@ -15,3 +15,5 @@ Azure.txt
 *.ipynb_checkpoints*
 *.ipynb*
 *.ipynb
+.tmp/
+tmp/

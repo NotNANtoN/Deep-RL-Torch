@@ -379,7 +379,7 @@ class Trainer:
             current_state = self.test_env.reset()
             for t in itertools.count():
                 action, next_obs, reward, done = self._act(self.test_env, current_state, source, explore=True, store_in_exp_rep=False)
-                reward_sum += reward
+                reward_sum += reward.item()
                 current_state = next_obs
                 if done:
                     break

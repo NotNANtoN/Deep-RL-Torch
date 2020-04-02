@@ -62,6 +62,15 @@ class Agent:
         # Set up Optimizer:
         if self.optimize_centrally:
             self.optimizer = self.create_optimizer(hyperparameters, params)
+        if self.use_half:
+            self.amp_init()
+
+    def amp_init(self):
+        models = [self.F_s]
+        if self.F_sa is not None:
+            models.append(self.F_sa)
+        
+        amp_models, self.optimizer = amp.initialize(models, self.optimizer)
 
     def create_optimizer(self, hyperparameters, parameters_to_optimize):
         optimizer_type = hyperparameters["optimizer"]
@@ -74,8 +83,6 @@ class Agent:
                 assert hyperparameters["Adam_beta1"] and hyperparameters["Adam_beta2"]
                 kwargs["betas"] = (hyperparameters["Adam_beta1"], hyperparameters["Adam_beta2"])
         optimizer = optimizer_type(parameters_to_optimize, **kwargs)
-        if self.use_half:
-            _, optimizer = amp.initialize([], optimizer)
         return optimizer
         
 
@@ -90,8 +97,8 @@ class Agent:
             print("F_s:")
             print(F_s)
             print("Trainable params: ", count_model_parameters(F_s))
-        if self.use_half:
-            F_s = amp.initialize(F_s, verbosity=0)
+        #if self.use_half:
+        #    F_s = amp.initialize(F_s, verbosity=0)
         F_sa = None
         if self.use_actor_critic:
             state_feature_len = F_s.layers_merge[-1].out_features
@@ -99,8 +106,8 @@ class Agent:
             if self.log and self.verbose:
                 print("F_sa:")
                 print(self.F_sa)
-            if self.use_half:
-                F_sa = amp.initialize(F_sa, verbosity=0)
+            #if self.use_half:
+            #    F_sa = amp.initialize(F_sa, verbosity=0)
         return F_s, F_sa
 
     def create_policy(self):
