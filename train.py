@@ -266,7 +266,7 @@ def create_comment():
 
 
 if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = True
+    #torch.backends.cudnn.benchmark = True
     
     parameters, env = create_arg_dict(sys.argv[1:], verbose=True)
     

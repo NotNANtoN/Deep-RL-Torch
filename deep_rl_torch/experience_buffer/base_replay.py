@@ -222,7 +222,7 @@ class ReplayBuffer:
         
     def construct_loader(self, data, batch_size, collate_fn):
         self.dataloader = torch.utils.data.DataLoader(data, batch_size=batch_size, sampler=None,
-                                                  pin_memory=self.pin_mem,
+                                                  #pin_memory=self.pin_mem,
                                                   num_workers=self.workers,
                                                   collate_fn=collate_fn)
         self.iter = iter(self.dataloader)
@@ -275,9 +275,9 @@ class ReplayBuffer:
         batch_dict = {trans_name: [x[idx] for x in batch] for idx, trans_name in enumerate(self.transition_names)}
         # Next states:
         batch_dict["non_final_mask"] = torch.tensor([val is not None for val in batch_dict["next_states"]]).bool()
-        batch_dict["non_final_next_states"] = [state for state in batch_dict["next_states"] if state is not None]
-        if batch_dict["non_final_next_states"] != []:
-            batch_dict["non_final_next_states"] = self.collate_entry(batch_dict["non_final_next_states"])
+        non_final_next_states = [state for state in batch_dict["next_states"] if state is not None]
+        if non_final_next_states != []:
+            batch_dict["non_final_next_states"] = self.collate_entry(non_final_next_states)
         else:
             batch_dict["non_final_next_states"] = None
         del batch_dict["next_states"]
@@ -286,11 +286,11 @@ class ReplayBuffer:
         # Stack in tensors:
         for key in batch_dict:
             content = batch_dict[key]
-            #print(key)
             # Do not apply for those entries, as they have been processed already
             if key not in ("action_argmax", "non_final_mask", "non_final_next_states"):
                 content = self.collate_entry(content)
                 batch_dict[key] = content
+            
       
         # Bring rewards in correct shape
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
