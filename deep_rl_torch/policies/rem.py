@@ -40,10 +40,10 @@ class REM(BasePolicy):
 
     # TODO: atm we iterate through the list of sampled base_policies - can this be done in a better way? MPI, GPU like?
     def optimize_networks(self, transitions):
-        self.idxes = random.sample(range(self.num_heads), self.num_samples)
+        self.idcs = random.sample(range(self.num_heads), self.num_samples)
         error = 0
         loss = 0
-        for idx in self.idxes:
+        for idx in self.idcs:
             current_policy = self.policy_heads[idx]
             # TODO: here we might bootstrap over our batch to have slightly different training data per policy!
             error_current, loss_current = current_policy.optimize_networks(transitions)
@@ -113,10 +113,9 @@ class REM(BasePolicy):
                 params += new_params
         return params
 
-
     def log_nn_data(self, name=""):
         for idx, policy in enumerate(self.policy_heads):
-            if self.idxs is not None and idx in self.idxes:
+            if self.idxs is not None and idx in self.idcs:
                 policy.log_nn_data(name=name + policy.name)
 
 
