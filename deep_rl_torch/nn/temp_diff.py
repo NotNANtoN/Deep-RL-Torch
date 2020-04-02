@@ -302,6 +302,7 @@ class Q(TempDiffNet):
             #print("forward _R shape: ", self.forward_R(input_features).shape)
             #print("num actions: ", self.num_actions)
             #print("actions: ", actions)
+            #print("actions shape: ", actions.shape)
             value_prediction = self.forward_R(input_features).gather(1, actions)
             return value_prediction, reward_prediction
         else:

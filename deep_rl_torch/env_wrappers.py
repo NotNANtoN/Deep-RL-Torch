@@ -480,7 +480,7 @@ class Convert2TorchWrapper(gym.ObservationWrapper):
                 inv_dict = obs_dict[key]
                 # obs = torch.cat([torch.from_numpy(process_inv(inv_dict)).float() for inv_dict in inv_dict_list])
                 obs = torch.cat(
-                        [torch.from_numpy(np.ascontiguousarray(inv_dict[key])).unsqueeze(0) for key in inv_dict])
+                        [torch.from_numpy(np.ascontiguousarray(inv_dict[key])) for key in inv_dict])
             elif key == "pov":
                 obs = torch.from_numpy(np.ascontiguousarray(obs_dict[key]))
                 if self.rgb2gray:

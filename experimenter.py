@@ -584,7 +584,7 @@ def testSetup(env, device, number_of_tests, length_of_tests, trialParams, path, 
     results = []
     logs = []
     
-    args, _ = create_arg_dict(env)
+    args, _ = create_arg_dict([], env=env)
     args.update(trialParams)
     args["n_steps"] = length_of_tests
     i = 0

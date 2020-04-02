@@ -170,6 +170,7 @@ class Agent:
             
     def optimize_nets(self):
         """ Optimizes the networks by sampling a batch """
+        
         loss = self.policy.optimize()
 
         if self.optimize_centrally:
@@ -216,19 +217,28 @@ class Agent:
             torch.cuda.reset_peak_memory_stats()
             base_use = torch.cuda.max_memory_allocated()
             if self.verbose:
-                print("base: ", base_use / 1024 / 1024)
+                print("base: ", base_use / 1024 ** 2)
+                
+                
+                
+                
+            torch.autograd.set_detect_anomaly(True)
+            
+            
+            
+            
             loss = self.policy.optimize()
             self.backward(loss)
             after_opt = torch.cuda.max_memory_allocated()
             if self.verbose:
-                print("after: ", after_opt / 1024 / 1024)
+                print("after: ", after_opt / 1024 ** 2)
             batch_use = after_opt - base_use
             batch_results.append(batch_use)
         mean_batch = np.mean(batch_results)
         single_transition = mean_batch / self.batch_size
         self.policy.mem_usage = single_transition
         if self.verbose:
-            print("GPU Mem usage per transition in Mb: ", single_transition / 1024 / 1024)
+            print("GPU Mem usage per transition in Mb: ", single_transition / 1024 ** 2)
         return single_transition
 
     def fake_stack(self, state_sample):

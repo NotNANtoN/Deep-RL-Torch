@@ -95,7 +95,8 @@ class RLDataset(torch.utils.data.IterableDataset):
             idx = self.sample_idx()
             yield self[idx]
             if count == self.update_freq:
-                raise StopIteration
+                return
+                #raise StopIteration
             
     def sample_idx(self):
         return random.randint(0, len(self) - 1)
@@ -231,6 +232,8 @@ class ReplayBuffer:
         return self.data.stack_last_frames(state)
                                                   
     def add(self, state, action, reward, done, store_episodes=False):
+        if isinstance(action, torch.Tensor):
+            action = action.cpu()
         self.data.add(state, action, reward, done, store_episodes)
         
     def sample(self):
@@ -283,6 +286,7 @@ class ReplayBuffer:
         # Stack in tensors:
         for key in batch_dict:
             content = batch_dict[key]
+            #print(key)
             # Do not apply for those entries, as they have been processed already
             if key not in ("action_argmax", "non_final_mask", "non_final_next_states"):
                 content = self.collate_entry(content)

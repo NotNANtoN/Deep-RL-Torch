@@ -8,6 +8,9 @@ mountain = "MountainCar-v0"
 pong = "Pong-v0"
 seaquest = "Seaquest-v0"
 
+tree = "MineRLTreechop-v0"
+diamond = "MineRLObtainDiamond-v0"
+
 paramsQ = {"name": "Q"}
 
 Q_s = [{"name": "Q" + str(i + 1)} for i in range(30)]
@@ -20,6 +23,8 @@ paramsQ_target_net_100 = {"name": "Q+Target_100", "TARGET_UPDATE": 100}
 paramsQ_target_net_50 = {"name": "Q+Target_50", "TARGET_UPDATE": 50}
 
 paramsQV = {"name": "QV", "use_QV": True}
+paramsQVMAX = {"name": "QVMAX", "use_QVMAX": True}
+
 
 paramsEps_2 = {"name": "EpsMid 0.2", "EPS_MID": 0.2}
 paramsEps_1 = {"name": "EpsMid 0.1", "EPS_MID": 0.1}
@@ -144,14 +149,16 @@ large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 
 # Test buffer:
-runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
+#runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
 
 # Test PER:
-runExp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_sequest")
+runExp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_seaquest")
 
 
 # Run new Rainbow exps:
-runExp(pong, [paramsQ, paramsQV, paramsSplit, PER], number_of_tests=5, length_of_tests=8000000, path="Pong_Q_PER")
+runExp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Pong_Trials")
+
+runExp(tree, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Treechop_Trials")
 
 
 # Test:

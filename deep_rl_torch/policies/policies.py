@@ -121,6 +121,8 @@ class BasePolicy:
         # action_sample = self.env.action_space.sample()
         action_space = self.env.action_space
         worker = self.hyperparameters["worker"]
+        if not worker:
+            torch.set_num_threads(1)
         pin_mem = self.hyperparameters["pin_mem"]
         size_expert_data = 0
         update_freq = self.hyperparameters["buffer_update_steps"] * self.batch_size * bool(worker)

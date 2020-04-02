@@ -28,7 +28,7 @@ class ProcessState(OptimizableNet):
         # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
         if self.verbose:
-            print("merge in size:; ", merge_input_size)
+            print("merge in size: ", merge_input_size)
             print("merge layers: ", merge_layers)
         self.layers_merge, self.act_functs_merge = create_ff_layers(merge_input_size, merge_layers, None)
 
@@ -111,6 +111,7 @@ class ProcessState(OptimizableNet):
         if isinstance(state_sample, dict):
             for key in state_sample:
                 obs = state_sample[key]
+
                 layer_dict, output_size = self.create_layer_dict(obs, name=key)
                 processing_list.append(layer_dict)
                 merge_input_size += output_size

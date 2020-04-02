@@ -393,7 +393,8 @@ class Trainer:
         # sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Timings/Optimize_Time")
         non_optimize_time = self.log.get_episodic("Timings/Non-Optimize_Time")
-        print("Ep:", i_episode, " Step:", steps_done, round(train_fraction * 100, 1), "%", "Ret:", episode_return[0], )
+        time = round(np.mean(optimize_time) * 1000, 1)
+        print("Ep:", i_episode, " Step:", steps_done, round(train_fraction * 100, 1), "%", "Time: ", time, "ms "  "Ret:", episode_return[0])
 
     def log_usage(self):
         if self.log.is_available("Usage", factor=10):
