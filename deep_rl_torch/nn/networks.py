@@ -115,7 +115,6 @@ class OptimizableNet(torch.nn.Module):
     def log_layer_data(self, layers, name, extra_name=""):
         """Log diagnostic information on the NN."""
         if self.log.is_available("NN_diagnostics", factor=10):
-            print("CALCULATE NN Grad Norm!")
             name = name + " " + extra_name if extra_name else name
             weight_norm = calc_norm(layers)
             grad_norm = calc_gradient_norm(layers)
@@ -123,7 +122,7 @@ class OptimizableNet(torch.nn.Module):
             self.log.add("Grad Norm/" + name, grad_norm)
             name += "_" + extra_name + "_" if extra_name else ""
 
-            if self.log.is_available("NN_distributions", skip_steps=10):
+            if self.log.is_available("NN_distributions", skip_steps=5):
                 weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])\
                     .view(-1)
                 gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])\

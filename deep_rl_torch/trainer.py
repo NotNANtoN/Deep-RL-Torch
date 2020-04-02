@@ -378,12 +378,14 @@ class Trainer:
         for i in range(self.eval_rounds):
             current_state = self.test_env.reset()
             for t in itertools.count():
-                action, next_obs, reward, done = self._act(self.test_env, current_state, source, explore=True, store_in_exp_rep=False)
-                reward_sum += reward.item()
+                action, next_obs, reward, done = self._act(self.test_env, current_state, source, explore=False, store_in_exp_rep=False)
+                reward_sum += reward
                 current_state = next_obs
                 if done:
                     break
         reward_mean = reward_sum / self.eval_rounds
+        if isinstance(reward_mean, torch.Tensor):
+            reward_mean = reward_mean.item()
         return reward_mean
 
     def _display_debug_info(self, i_episode, steps_done, train_fraction):

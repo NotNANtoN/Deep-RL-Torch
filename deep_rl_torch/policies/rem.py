@@ -54,6 +54,7 @@ class REM(BasePolicy):
     def choose_action(self, state, calc_state_features=True):
         # Preprocess:
         if calc_state_features:
+            state = self.state2device(state)
             state_features = self.F_s(state)
         else:
             state_features = state
@@ -71,11 +72,12 @@ class REM(BasePolicy):
         return summed_action / self.num_samples
 
     def update_targets(self, n_steps, train_fraction=None):
-        # TODO: test whether sampling here could also be beneficially (might need to drop target network update steps for it)
-        idxes = range(self.num_heads)
-        # idxes = random.sample(range(self.num_heads), self.num_samples)
-        for idx in idxes:
-            self.policy_heads[idx].update_targets(n_steps, train_fraction=train_fraction)
+        for head in self.policy_heads:
+            head.update_targets(n_steps, train_fraction=train_fraction)
+
+    def update_parameters(self, n_steps, train_fraction):
+        for head in self.policy_heads:
+            head.update_parameters(n_steps, train_fraction)
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         q = 0

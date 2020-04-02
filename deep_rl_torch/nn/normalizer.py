@@ -21,7 +21,8 @@ class Normalizer():
 
     def normalize(self, inputs):
         obs_std = torch.sqrt(self.var)
-        return (inputs.float() - self.mean) / obs_std
+        assert inputs.dtype == torch.float16 or inputs.dtype == torch.float32 or inputs.dtype == torch.float64
+        return (inputs - self.mean) / obs_std
 
     def denormalize(self, inputs):
         obs_std = torch.sqrt(self.var)

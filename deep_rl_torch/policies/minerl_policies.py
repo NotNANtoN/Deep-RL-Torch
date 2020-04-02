@@ -87,6 +87,9 @@ class MineRLPolicy(BasePolicy):
 
         def update_targets(self, steps, train_fraction=None):
             pass
+        
+        def update_parameters(self, steps, train_fraction=None):
+            pass
 
         def save(self, path):
             pass
@@ -176,6 +179,7 @@ class MineRLObtainPolicy(MineRLPolicy):
     def choose_action(self, state, calc_state_features=True):
         # Preprocess:
         if calc_state_features:
+            state = self.state2device(state)
             state_features = self.F_s(state)
         else:
             state_features = state
@@ -275,6 +279,7 @@ class MineRLMovePolicy(MineRLPolicy):
     def choose_action(self, state, calc_state_features=True):
         # Preprocess:
         if calc_state_features:
+            state = self.state2device(state)
             state_features = self.F_s(state)
         else:
             state_features = state
@@ -342,6 +347,10 @@ class MineRLMovePolicy(MineRLPolicy):
     def update_targets(self, n_steps, train_fraction=None):
         for policy in self.policies:
             policy.update_targets(n_steps, train_fraction=train_fraction)
+
+    def update_parameters(self, n_steps, train_fraction):
+        for policy in self.policies:
+            policy.update_parameters(n_steps, train_fraction=train_fraction)
 
     def calculate_TDE(self, state, action, next_state, reward, done):
         q = 0
@@ -425,6 +434,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
 
     def action2high_low_level(self, actions):
+        """Transforms an action idx into two action indices: one higher level action index indicating which subpolicy was used and one lower level action index indicating what actoin the subpolicy took."""
         high_lvl = []
         low_lvl = []
         for action in actions:
@@ -547,6 +557,7 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
 
     def choose_action(self, state):
         # Preprocess:
+        state = self.state2device(state)
         state_features = self.F_s(state)
         # Preprocess:
         action_q_vals = torch.zeros(state_features.shape[0], self.num_actions, device=self.device)
@@ -596,12 +607,18 @@ class MineRLHierarchicalPolicy(MineRLPolicy):
         return q + q_lower, tde + tde_lower
         # TODO: check
 
-
     def update_targets(self, n_steps, train_fraction=None):
         if self.decider is not None:
             self.decider.update_targets(n_steps, train_fraction=train_fraction)
         for policy in self.lower_level_policies:
             policy.update_targets(n_steps, train_fraction=train_fraction)
+            
+
+    def update_parameters(self, n_steps, train_fraction):
+        if self.decider is not None:
+            self.decider.update_parameters(n_steps, train_fraction=train_fraction)
+        for policy in self.lower_level_policies:
+            policy.update_parameters(n_steps, train_fraction=train_fraction)
 
     def calculate_Q_and_TDE(self, state, action, next_state, reward, done):
         # TODO: implement

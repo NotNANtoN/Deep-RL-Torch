@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import gym
 
-from deep_rl_torch.util import apply_rec_to_dict, apply_to_state
+from deep_rl_torch.util import apply_rec_to_dict, apply_to_state, apply_to_state_list
 
                                                   
 class RLDataset(torch.utils.data.IterableDataset):
@@ -77,8 +77,11 @@ class RLDataset(torch.utils.data.IterableDataset):
             next_state = self.stack_last_frames_idx(next_index) if not is_end else None
         else:
             if not isinstance(self.states[index], torch.Tensor):
-                state = self.states[index].make_state().squeeze()
-                next_state = self.states[next_index].make_state().squeeze() if not is_end else None
+                state = apply_to_state(lambda x: x.squeeze(), self.states[index].make_state())
+                if is_end:
+                    next_state = None
+                else:
+                    next_state = apply_to_state(lambda x: x.squeeze(), self.states[next_index].make_state())
             else:
                 state = self.states[index].squeeze(0)
                 next_state = self.states[next_index].squeeze(0) if not is_end else None
@@ -233,7 +236,6 @@ class ReplayBuffer:
     def sample(self):
         if self.iter is None:
             self.construct_loader(self.data, self.batch_size, self.collate_batch)
-
         try:
             out = next(self.iter)
         except StopIteration:
@@ -246,26 +248,21 @@ class ReplayBuffer:
         return out
    
     def __len__(self):
-        size = len(self.data)
-        return size
-            
-    def stack(self, data):
-        if isinstance(data, dict):
-            return apply_rec_to_dict(lambda x: torch.stack(x), data)
-        else:
-            return torch.stack(data)
-    
+        return len(self.data)
+
     def move_batch(self, batch):
         for key in batch:
             content = batch[key]
             if content is None:
                 continue
-            if isinstance(content, dict):
-                new_cont = apply_rec_to_dict(lambda x: x.to(self.device))
-            else:
-                new_cont = content.to(self.device)
-            batch[key] = new_cont
+            batch[key] = apply_to_state(lambda x: x.to(self.device), content)
         return batch
+    
+    def collate_entry(self, x):
+        if self.pin_mem:
+            return apply_to_state_list(lambda x: torch.stack(x).float().pin_memory(), x)
+        else:
+            return apply_to_state_list(lambda x: torch.stack(x).float(), x)
         
     def collate_batch(self, batch):
         #for b in batch:
@@ -277,20 +274,20 @@ class ReplayBuffer:
         batch_dict["non_final_mask"] = torch.tensor([val is not None for val in batch_dict["next_states"]]).bool()
         batch_dict["non_final_next_states"] = [state for state in batch_dict["next_states"] if state is not None]
         if batch_dict["non_final_next_states"] != []:
-            batch_dict["non_final_next_states"] = self.stack(batch_dict["non_final_next_states"])
+            batch_dict["non_final_next_states"] = self.collate_entry(batch_dict["non_final_next_states"])
         else:
             batch_dict["non_final_next_states"] = None
         del batch_dict["next_states"]
         # Action argmax:
-        batch_dict["action_argmax"] = torch.argmax(self.stack(batch_dict["actions"]), 1).unsqueeze(1)
+        batch_dict["action_argmax"] = torch.argmax(torch.stack(batch_dict["actions"]), 1).unsqueeze(1)
         # Stack in tensors:
         for key in batch_dict:
-
+            content = batch_dict[key]
+            # Do not apply for those entries, as they have been processed already
             if key not in ("action_argmax", "non_final_mask", "non_final_next_states"):
-                content = self.stack(batch_dict[key])
+                content = self.collate_entry(content)
                 batch_dict[key] = content
-            if key not in ("action_argmax", "non_final_mask"):
-                batch_dict[key] = batch_dict[key].float()
+      
         # Bring rewards in correct shape
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
 

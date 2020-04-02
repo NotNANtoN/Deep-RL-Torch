@@ -446,6 +446,12 @@ class ItObsDict(minerl.env.spaces.Dict):
     def __iter__(self):
         for key in self.spaces:
             yield key
+            
+    def keys(self):
+        return self.spaces.keys()
+    
+    def values(self):
+        return self.spaces.values()
 
 
 class Convert2TorchWrapper(gym.ObservationWrapper):

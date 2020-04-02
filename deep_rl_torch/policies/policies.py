@@ -20,7 +20,7 @@ except ImportError:
 from deep_rl_torch.experience_buffer import ReplayBuffer, CERWrapper, PERBuffer, RLDataset, PERDataset
 from deep_rl_torch.nn import Q, V, Actor, ProcessState, ProcessStateAction
 from deep_rl_torch.util import *
-
+from deep_rl_torch.util import apply_to_state
 
 class BasePolicy:
     def __init__(self, ground_policy, F_s, F_sa, env, device, log, hyperparameters):
@@ -204,12 +204,8 @@ class BasePolicy:
         return self.explore(state)
 
     def state2device(self, state):
-        if isinstance(state, dict):
-            state = apply_rec_to_dict(lambda x: x.to(self.device).float(), state)
-        else:
-            state = state.to(self.device).float()
-        return state
-
+        return apply_to_state(lambda x: x.to(self.device).float(), state)
+    
     def exploit(self, state):
         raw_action = self.choose_action(state)
         if self.discrete_env:
@@ -308,7 +304,6 @@ class BasePolicy:
             self.log.add("Params/Epsilon", self.epsilon)
         if self.use_PER and self.PER_anneal_beta:
             self.PER_beta = self.PER_start_beta + train_fraction * (1 - self.PER_start_beta)
-        # TODO: decay temperature for Boltzmann if that exploration is used (first implement it in general)
 
     def get_transitions(self):
         """Gets transitions from dataloader, which is a batch of transitions.
@@ -360,17 +355,13 @@ class BasePolicy:
     def update_targets(self, n_steps, train_fraction=None):
         if self.use_efficient_traces:
             self.update_traces(n_steps, train_fraction=train_fraction)
-
-        if self.Q is not None:
-            self.Q.update_targets(n_steps)
-        if self.V is not None:
-            self.V.update_targets(n_steps)
-        if self.actor is not None and self.use_actor_critic:
-            self.actor.update_targets(n_steps)
-
+        
+        for net in self.nets:
+            net.update_targets(n_steps)
+        
     def calc_max_batch_size(self):
         if not torch.cuda.is_available():
-            return 1000
+            return 1024
         # Calculate remaining gpu mem:
         current_gpu_bytes = nvmlDeviceGetMemoryInfo(self.nvml_handle).used  # torch.cuda.memory_allocated(self.device)
 

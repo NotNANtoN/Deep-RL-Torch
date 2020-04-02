@@ -24,13 +24,12 @@ def apply_to_state_list(func, state_list):
     Recursively apply this function to nested dicts."""
     if isinstance(state_list[0], dict):
         return {
-                apply_to_state_list(func, [state[key] for state in state_list])
+                key: apply_to_state_list(func, [state[key] for state in state_list])
                 for key in state_list[0]
         }
     else:
         return func(state_list)
         
-
 def apply_to_state(func, state):
     if isinstance(state, dict):
         return apply_rec_to_dict(func, state)
@@ -40,7 +39,7 @@ def apply_to_state(func, state):
 def apply_rec_to_dict(func, tensor_dict):
     zipped = zip(tensor_dict.keys(), tensor_dict.values())
     return {
-        apply_rec_to_dict(func, content) if isinstance(content, dict)
+            key: apply_rec_to_dict(func, content) if isinstance(content, dict)
             else func(content) 
             for key, content in zipped
     }

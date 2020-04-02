@@ -91,7 +91,7 @@ class Agent:
         if not self.use_list:
             state_sample = self.fake_stack(state_sample)
 
-        print("State sample shape: ", state_sample.shape)
+        #print("State sample shape: ", state_sample.shape)
         F_s = ProcessState(state_sample, self.env, self.log, self.device, self.hyperparameters)
         if self.log and self.verbose:
             print("F_s:")
@@ -155,8 +155,8 @@ class Agent:
         for _ in range(num_updates):
             # Optimize the agent (on the target network)      
             self.optimize_nets()
-        # Update the target networks
-        self.update_targets(steps_done, train_fraction=train_fraction)
+            # Update the target networks
+            self.update_targets(steps_done, train_fraction=train_fraction)
         # Reduce epsilon and other exploratory values:
         self.decay_exploration(steps_done, train_fraction)
         self.save(train_fraction)
