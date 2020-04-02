@@ -41,7 +41,7 @@ def create_parser():
     parser.add_argument("--buffer_update_steps", type=int, default=10)
     parser.add_argument("--use_exp_rep", type=int, default=1)
     parser.add_argument("--worker", type=int, default=0)
-    parser.add_argument("--replay_buffer_size", type=int, default=1000000)
+    parser.add_argument("--replay_buffer_size", type=int, default=100000)
     parser.add_argument("--use_PER", type=int, default=0)
     parser.add_argument("--PER_alpha", type=float, default=0.6)
     parser.add_argument("--PER_beta", type=float, default=0.4)
@@ -84,8 +84,8 @@ def create_parser():
     parser.add_argument("--use_half", type=int, default=0)
     parser.add_argument("--general_lr", type=float, default=0.00025)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--optimizer", default="RAdam")
-    parser.add_argument("--Adam_epsilon", type=float)  # 0.0001 in Agent57
+    parser.add_argument("--optimizer", default="Adam")
+    parser.add_argument("--Adam_epsilon", type=float, default=0.0001)  # 0.0001 in Agent57
     parser.add_argument("--Adam_beta1", type=float)
     parser.add_argument("--Adam_beta2", type=float)
     parser.add_argument("--max_norm", type=float, default=0)
