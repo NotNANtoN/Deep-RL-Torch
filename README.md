@@ -11,7 +11,7 @@ Currently all the following can be used and combined:
 * Training for either a fixed number of steps, episodes or hours. No default.
 * [Uniform Experience Replay](http://www.incompleteideas.net/lin-92.pdf) and [Prioritied Experience Replay](https://arxiv.org/abs/1511.05952). Defaults to uniform exp replay.
 * Corrected Experience Replay, [CER](https://arxiv.org/abs/1712.01275). Can be combined either with uniform ode rprioritized experience replay.
-* Frame Stacking as in DQN. The stacking dimension can be chosen, although dimensions 0 probably performs best. Defaults to 6 frames and dim 0.
+* Frame Stacking as in DQN. The stacking dimension can be chosen, although dimension 0 performs bestaccording to some rudimentary experiments. Defaults to 4 frames and dim 0.
 * Frame Skipping as in DQN. Defaults to 4.
 * Optimizations per step - how many batches to sample on for optimization per step in the environment. 0.25 (1 optimization every 4 steps) is the default atm, as in the DQN paper.
 * Use of a target net that is updated every N steps or of a Polyak-averaged target network, as seen in [DDPG](https://arxiv.org/abs/1509.02971). Defaults to Polyak-averaging.
