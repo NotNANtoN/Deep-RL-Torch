@@ -1,4 +1,4 @@
-from experimenter import runExp
+from experimenter import run_exp
 
 
 lunar = "LunarLander-v2"
@@ -123,12 +123,12 @@ QV_list = [paramsQ, paramsQV]
 
 TDEC_offset_list = [TDEC_pure, TDEC_pure_offset_01, TDEC_pure_offset_1, TDEC_pure_offset_10]
 
-paramsTracesLambda0_8 = {"name": "EligTraces0.8", "use_efficient_traces": 1, "elig_traces_lambda":0.8}
-paramsTracesLambda0_5 = {"name": "EligTraces0.5", "use_efficient_traces": 1, "elig_traces_lambda":0.5}
-paramsTracesAnneal = {"name": "EligTracesAnneal", "use_efficient_traces": 1, "elig_traces_anneal_lambda":1}
-paramsQuick = {"name": "Q", "n_initial_random_actions":1}
+paramsTracesLambda0_8 = {"name": "EligTraces0.8", "use_efficient_traces": 1, "elig_traces_lambda": 0.8}
+paramsTracesLambda0_5 = {"name": "EligTraces0.5", "use_efficient_traces": 1, "elig_traces_lambda": 0.5}
+paramsTracesAnneal = {"name": "EligTracesAnneal", "use_efficient_traces": 1, "elig_traces_anneal_lambda": 1}
 
-QV_quick = {"name": "QV", "n_initial_random_actions":1, "use_QV": 1}
+paramsQuick = {"name": "Q_uick", "initial_steps": 100, "eval_rounds": 2, "eval_percentage:": 0.4}
+QV_quick = {"name": "QV", "initial_steps": 100, "use_QV": 1, "eval_rounds": 2, "eval_percentage:": 0.4}
 
 
 traces = [paramsQ, paramsTracesAnneal, paramsTracesLambda0_8, paramsTracesLambda0_5]
@@ -142,23 +142,20 @@ PER8w = {"name": "Q+PER-8worker", "use_PER": 1, "worker": 8}
 large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 
-
-
 # test:
-#runExp(pong, [paramsQuick, QV_quick], number_of_tests=5, length_of_tests=111, path="test")
-
+#run_exp(cart, [paramsQuick, QV_quick], number_of_tests=2, length_of_tests=4, path="test")
 
 # Test buffer:
 #runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
 
 # Test PER:
-runExp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_seaquest")
+run_exp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_seaquest")
 
 
 # Run new Rainbow exps:
-runExp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Pong_Trials")
+run_exp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Pong_Trials")
 
-runExp(tree, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Treechop_Trials")
+run_exp(tree, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Treechop_Trials")
 
 
 # Test:

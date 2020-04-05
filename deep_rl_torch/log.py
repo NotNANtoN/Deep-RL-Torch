@@ -3,24 +3,40 @@ import os
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-
+import numpy as np
 
 class Log(object):
-    def __init__(self, path, log, comment, env_name=""):
+    def __init__(self, path, log, comment):
         self.do_logging = log
 
         self.comment = comment
         if log:
             wd = os.getcwd()
-            print("WORKING DIRECTORY: ", wd)
             self.writer = SummaryWriter(comment=comment)#, log_dir=os.path.join(wd, "runs/"))#, log_dir="runs/" + env_name)
         self.episodic_storage = {}
-        self.storage = {}
-        self.short_term_storage = defaultdict(int)
-        self.short_term_count = defaultdict(int)
-        self.distr_count = defaultdict(int)
+        self.storage = {}  # Stores all infos for later plotting
+        self.short_term_storage = defaultdict(int)  # Calculates running mean
+        self.short_term_count = defaultdict(int)  # Counts for calculating running mean
+        self.distr_count = defaultdict(int)  # Count for make_distribution to check when enough sample are gathered
+        self.step_dict = defaultdict(list)  # Saves for each variable when the values where logged
         self.global_step = 0
-        self.tb_path = 'runs'
+        self.log_steps = None
+        # Keep track of ep lens:
+        self.mean_ep_len = 100
+        self.total_eps = 1
+        self.ep_len_count = defaultdict(int)
+
+    def reset(self):
+        if self.do_logging:
+            wd = os.getcwd()
+            self.writer = SummaryWriter(comment=self.comment)#, log_dir=os.path.join(wd, "runs/"))#, log_dir="runs/" + env_name)
+        self.episodic_storage = {}
+        self.storage = {}  # Stores all infos for later plotting
+        self.short_term_storage = defaultdict(int)  # Calculates running mean
+        self.short_term_count = defaultdict(int)  # Counts for calculating running mean
+        self.distr_count = defaultdict(int)  # Count for make_distribution to check when enough sample are gathered
+        self.step_dict = defaultdict(list)  # Saves for each variable when the values where logged
+        self.global_step = 0
         self.log_steps = None
         # Keep track of ep lens:
         self.mean_ep_len = 100
@@ -29,7 +45,11 @@ class Log(object):
         
     def __getitem__(self, key):
         key = self.transform_name(key)
-        return self.storage[key]
+        return np.array(self.storage[key])
+    
+    def __setitem__(self, key, val):
+        key = self.transform_name(key)
+        self.storage[key] = val
     
     def __iter__(self):
         for key in self.storage:
@@ -60,7 +80,7 @@ class Log(object):
     def _add_to_storage(self, storage, name, value):
         name = self.transform_name(name)
         if isinstance(value, torch.Tensor):
-            value = value.cpu().detach().item()
+            value = value.cpu().detach().numpy()
         try:
             storage[name].append(value)
         except KeyError:
@@ -94,8 +114,7 @@ class Log(object):
 
     def add(self, name, value, distribution=False, make_distr=False, distr_steps=0, steps=None, use_skip=False, skip_steps=0,
             store_episodic=False):
-        if not distribution and not make_distr:
-            self._add_to_storage(self.storage, name, value)
+        # Add to episodic storage (flushed after every episode):
         if store_episodic:
             self._add_to_storage(self.episodic_storage, name, value)
 
@@ -114,7 +133,7 @@ class Log(object):
 
             if self.do_save_log(name, use_skip, skip_steps=skip_steps, make_distr=make_distr,
                                 distr_steps=distr_steps):
-                # Save in Tensorboard:
+                # Get value to store long term:
                 tb_value = self.short_term_storage[name]
                 if not isinstance(tb_value, torch.Tensor):
                     tb_value = torch.tensor(tb_value)
@@ -123,9 +142,15 @@ class Log(object):
                 del self.short_term_count[name]
                 if make_distr:
                     del self.distr_count[name]
-
+                # Set steps if not specified:
                 if steps is None:
                     steps = self.global_step
+                # Save to RAM:
+                self._add_to_storage(self.storage, name, tb_value)
+                # Also save time point of logging
+                self._add_to_storage(self.step_dict, name, steps)
+
+                # Save in Tensorboard:
                 if distribution or make_distr:
                     add_func = self.writer.add_histogram
                 else:
@@ -141,3 +166,12 @@ class Log(object):
     def flush(self):
         if self.do_logging:
             self.writer.flush()
+
+    def cleanse(self):
+        """This method deletes everything from this object that is not essential for plotting."""
+        del self.writer
+        del self.episodic_storage
+        del self.short_term_storage
+        del self.short_term_count
+        del self.distr_count
+        del self.ep_len_count

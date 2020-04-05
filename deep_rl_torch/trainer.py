@@ -35,7 +35,9 @@ class Trainer:
     def __init__(self, env_name, hyperparameters, log=True, tb_comment="", verbose=False):
         # Init logging:
         self.path = os.getcwd()
-        self.log = Log(self.path + '/tb_log', log, tb_comment, env_name)
+        self.do_log = log
+        self.tb_comment = tb_comment
+        self.log = Log(self.path + '/tb_log', self.do_log, self.tb_comment)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.rgb2gray = hyperparameters["rgb_to_gray"]
         hyperparameters["verbose"] = verbose
@@ -81,7 +83,6 @@ class Trainer:
         self.freeze_normalizer = hyperparameters["freeze_normalize_after_initial"]
         self.log_freq = hyperparameters["log_freq"]
 
-
         # Show proper tqdm progress if possible:
         self.disable_tqdm = hyperparameters["tqdm"] == 0
         if self.max_steps_per_episode:
@@ -115,6 +116,13 @@ class Trainer:
         if self.use_expert_data:
             self.move_expert_data_into_buffer(expert_data)
 
+    def reset(self):
+        # Init fresh agent. Would be better to reset all parameters and network weights:
+        self.agent = Agent(self.env, self.device, self.log, self.hyperparameters)
+        # Init new log:
+        #self.log = Log(self.path + '/tb_log', self.do_log, self.tb_comment)
+        self.log.reset()
+
     def create_env(self, hyperparameters):
         # Init env:
         env = gym.make(self.env_name)
@@ -134,11 +142,6 @@ class Trainer:
 
             env = action_wrapper(env, always_keys=always_keys, exclude_keys=exclude_keys, env_name=self.env_name)
         return env
-
-    def reset(self):
-        raise NotImplementedError
-        # self.episode_durations = []
-        # self.agent.reset()
 
     def optimize(self):
         self.agent.optimize()
@@ -425,8 +428,8 @@ class Trainer:
             #        total_steps = self.n_initial_random_actions / time * n_hours
         # Based on how long it took to gather data, determine how often metrics are logged:
         # TODO: only works for total_steps, not for n_episodes nor for n_hours
-        self.log_steps = total_steps // self.log_freq
-        self.log.set_log_steps(self.log_steps)
+        log_steps = total_steps // self.log_freq
+        self.log.set_log_steps(log_steps)
         # Freeze input feature normalizer after collecting a set of experiences:
         if self.freeze_normalizer:
             if verbose:
