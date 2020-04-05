@@ -147,35 +147,44 @@ def store_logs(list_of_log_dicts, path, base_idx=None):
         torch.save(log_of_run, log_path)
 
 def read_logs(path, name_list):
-    # get to shape of form {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]}, "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
-    # First recover logs for every alg.
+    """Recovers the logs for every alg from disc."""
     alg_logs = {}
+    #print("Reading logs: ")
     for alg_name in name_list:
+        #print(alg_name)
         alg_path = path + alg_name + "/logs/"
         logs = []
         for log_file_name in os.listdir(alg_path):
             if log_file_name[-3:] != ".pt" or log_file_name[0] == "0":
                 continue
             log = torch.load(alg_path + "/" + log_file_name)
+            #print("added a log")
             logs.append(log)
         alg_logs[alg_name] = logs
-    print(logs[0].step_dict)
-    # Now we have the form: {"Q": [log1, log2], "Q+TDEC": [log1, log2]} where log1,log2 both contain dicts
-    # Bring it into the form i.e. {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]},
-    #                               "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
+    return alg_logs
+
+
+def reshape_logs(alg_logs, attribute):
+    """Extracts attribute from the logs in alg_logs and brings them into a plottable shape.
+    Now we have the form: {"Q": [log1, log2], "Q+TDEC": [log1, log2]} where log1,log2 both contain dicts
+    Bring it into the form i.e. {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]},
+                                   "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
+    """
     dict_of_logs = {}
     for alg_name in alg_logs:
         logs = alg_logs[alg_name]
         for log in logs:
-            log_storage = log.get()
-
+            log_storage = getattr(log, attribute)
             for key in log_storage:
                 values = log_storage[key]
-                if key in dict_of_logs and alg_name in dict_of_logs[key]:
-                    dict_of_logs[key][alg_name].append(values)
+                # Add values to dict in correct form:
+                if key in dict_of_logs:
+                    if alg_name in dict_of_logs[key]:
+                        dict_of_logs[key][alg_name].append(values)
+                    else:
+                        dict_of_logs[key][alg_name] = [values]
                 else:
                     dict_of_logs[key] = {alg_name: [values]}
-    print(dict_of_logs)
     return dict_of_logs
 
 def store_logs_old(list_of_log_dicts, path, base_idx=None):
@@ -220,8 +229,7 @@ def read_logs_old(path, name_list):
 
 
 def storeHyperparameters(hyperparam_list, path):
-    if not os.path.exists(path):
-        os.makedirs(path)
+    os.makedirs(path, exist_ok=True)
 
     for idx, hyperparam_dict in hyperparam_list:
         name = path + str(idx)
@@ -237,7 +245,11 @@ def create_masked_array(list_of_lists):
     #print(list_of_lists[0].shape)
     #print(len(list_of_lists[0]))
     max_len = max([len(x) for x in list_of_lists])
-    masked_array = np.ma.masked_array(np.zeros((len(list_of_lists), max_len)), mask=True)
+    if isinstance(list_of_lists[0][0], np.ndarray) and len(list_of_lists[0][0].shape) > 0:
+        shape = [len(list_of_lists), max_len] +  list(list_of_lists[0][0].shape)
+    else:
+        shape = [len(list_of_lists), max_len]
+    masked_array = np.ma.masked_array(np.zeros(shape), mask=True)
     for idx, item_list in enumerate(list_of_lists):
         list_len = len(item_list)
         masked_array[idx, :list_len] = item_list
@@ -247,7 +259,11 @@ def create_masked_array(list_of_lists):
 def apply_to_log_list(func, log_list):
     """Applies __func__ to the ensemble of logs stored in log_list"""
     max_len = len(max(log_list, key=lambda x: len(x)))
-    masked_array = np.ma.masked_array(np.zeros((len(log_list), max_len)), mask=True)
+    if isinstance(log_list[0][0], list) or isinstance(log_list[0][0], np.ndarray):
+        pass
+    else:
+        shape = (len(log_list), max_len)
+    masked_array = np.ma.masked_array(np.zeros(shape), mask=True)
     for idx, item_list in enumerate(log_list):
         list_len = len(item_list)
         masked_array[idx, :list_len] = item_list
@@ -272,26 +288,32 @@ def take_mean_over_steps(timeseries_list, max_timesteps=None):
     return masked_series.mean(axis=0), masked_series.std(axis=0)
 
 
-def plotDict(dict_of_alg_runs, name, plot_best_idxs=None, path="", max_points=0, length_of_tests=100000,
+def plotDict(dict_of_alg_runs, step_dict, name, plot_best_idxs=None, path="", max_points=0, length_of_tests=100000,
              totalName=""):
-    plt.xlabel("Step")
-    plt.ylabel(name)
-
-    dict_of_lines_to_plot = dict_of_alg_runs
-
     prop_cycle = (cycler('linestyle', ['-', '--', ':', '-.']) * cycler('color', ['r', 'g', 'b', 'y', 'm', 'c', 'k']))
-    for alg_name, props, count in zip(sorted(dict_of_lines_to_plot), prop_cycle, range(len(dict_of_lines_to_plot))):
+    for alg_name, props, count in zip(sorted(dict_of_alg_runs), prop_cycle, range(len(dict_of_alg_runs))):
         color = props["color"]
         linestyle = props["linestyle"]
 
-        values = dict_of_lines_to_plot[alg_name]
 
-        if plot_best_idxs is not None:
-            values = [values[idx] for idx in plot_best_idxs[count]]
+        values = np.array(dict_of_alg_runs[alg_name])
 
-        if len(values) == 0:
+        if  len(values) == 0 or (isinstance(values[0][0], np.ndarray) and len(values[0][0].shape) > 0):
+#        if len(values) == 0 or np.array(values[0]).ndim > 1:
+            # TODO: plot heatmap instead of lineplot if ndim > 1
             continue
         masked_vals = create_masked_array(values)
+
+        
+        steps = np.array(step_dict[alg_name])
+        steps = create_masked_array(steps).mean(axis=0).astype(int)
+
+
+        #if plot_best_idxs is not None:
+        #    values = [values[idx] for idx in plot_best_idxs[count]]
+
+     
+        
 
         means = np.mean(masked_vals, axis=0)
         stdEs = np.std(masked_vals, axis=0)
@@ -303,33 +325,33 @@ def plotDict(dict_of_alg_runs, name, plot_best_idxs=None, path="", max_points=0,
         stdEs = meanSmoothing(stdEs, window_size)
 
         # idxs = calculate_reduced_idxs(length_of_tests, len(means))
-        idxs = range(len(means))
+        #idxs = range(len(means))
 
-        plt.plot(idxs, means, label=alg_name, color=color, linestyle=linestyle)
-        plt.fill_between(idxs, means - stdEs, means + stdEs, alpha=.25, color=color)
-
+        p = plt.plot(steps, means, label=alg_name, color=color, linestyle=linestyle)
+        plt.fill_between(steps, means - stdEs, means + stdEs, alpha=.25, color=p[0].get_color())
     fileName = name if plot_best_idxs is None else name + "_bestRuns_"
     if name == "Total Reward":
         title = "Rewards per Episode during Training without Exploration"
     else:
         title = name + " Values during Training" if plot_best_idxs is None else name + " Values for best Runs during Training"
     plt.title(title)
+    plt.xlabel("Step")
+    plt.ylabel(name)
     filePath = path + totalName + fileName
     plt.legend()
     plt.savefig(filePath + ".pdf")
     plt.clf()
 
 
-def generate_log_plots_new(dict_of_logs, path="", max_points=2000, length_of_tests=100000, totalName=""):
+def generate_log_plots_new(dict_of_logs, dict_of_steps, path="", max_points=2000, length_of_tests=100000, totalName=""):
     # shape in form of {"Epsilon":{"Q":[[1,2,3], [1,1,1]], "Q+TDEC":[[1,2,3], [1,2,1]}, "Loss_TDEC":{"Q+TDEC":[1,2,3]}}
 
     path += "/logs/"
-    if not os.path.exists(path):
-        os.makedirs(path)
-
+    os.makedirs(path, exist_ok=True)
     for log_name in dict_of_logs:
         alg_dict = dict_of_logs[log_name]
-        plotDict(alg_dict, log_name, path=path, max_points=max_points, length_of_tests=length_of_tests,
+        step_dict = dict_of_steps[log_name]
+        plotDict(alg_dict, step_dict, log_name, path=path, max_points=max_points, length_of_tests=length_of_tests,
                  totalName=totalName)
 
 
@@ -372,7 +394,7 @@ def generatePlot(dict_of_results, drawIQR=False, smoothing="yes", plot_best=10, 
         medians = np.median(results, axis=0)
         IQRs = np.quantile(results, [0.25, 0.75], axis=0)
         # idxs = calculate_reduced_idxs(length_of_tests, len(result_list[0]))
-        idxs = range(len(results[0]))
+        idxs = np.arange(len(means)).astype(int) * (length_of_tests // len(means))
 
         if drawIQR:
             data = medians
@@ -604,7 +626,10 @@ class MockTrialFile:
         open(self.file_path, 'a').close()
 
     def __exit__(self, _type, value, traceback):
-        os.remove(self.file_path)
+        try:
+            os.remove(self.file_path)
+        except:
+            os.remove(self.file_path)
 
 
 def run_trial(env, number_of_tests, length_of_tests, hyperparameters, path, randomizeList=[],
@@ -645,6 +670,8 @@ def run_trial(env, number_of_tests, length_of_tests, hyperparameters, path, rand
         # Extract returns
         # Store finished test log:
         store_logs([log], path + "logs/", trial_idx)
+        # Store steps:
+        #store_steps([log], path + "steps/", trial_idx)
         # Store returns in main folder (is used to keep track of trial progress):
         storeResults([returns], path, trial_idx)
         # Save log in list:
@@ -719,7 +746,9 @@ def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, w
     name_list = sorted(name_list)
     loading_name_list = [name for name in name_list]
     dict_of_results = readResults(exp_path, loading_name_list)
-    dict_of_logs = read_logs(exp_path, loading_name_list)
+    logs = read_logs(exp_path, loading_name_list)
+    dict_of_logs = reshape_logs(logs, "storage")
+    dict_of_steps = reshape_logs(logs, "step_dict")
     # list_of_hyperparameter_dicts = readHyperparameters(folderName, name_list)
 
     # Plot data:
@@ -746,7 +775,7 @@ def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, w
                                          length_of_tests=length_of_tests)
 
     # Plot log plots:
-    generate_log_plots_new(dict_of_logs, path=path, max_points=max_points, length_of_tests=length_of_tests,
+    generate_log_plots_new(dict_of_logs, dict_of_steps, path=path, max_points=max_points, length_of_tests=length_of_tests,
                            totalName=totalName)
 
     exp_end_time = time.time() - experiment_start_time

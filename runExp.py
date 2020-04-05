@@ -143,7 +143,8 @@ large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 
 # test:
-#run_exp(cart, [paramsQuick, QV_quick], number_of_tests=2, length_of_tests=4, path="test")
+run_exp(cart, [paramsQuick, QV_quick], number_of_tests=3, length_of_tests=30000, path="test")
+quit(0)
 
 # Test buffer:
 #runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
