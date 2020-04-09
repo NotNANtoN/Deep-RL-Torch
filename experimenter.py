@@ -632,13 +632,16 @@ class MockTrialFile:
             os.remove(self.file_path)
 
 
-def run_trial(env, number_of_tests, length_of_tests, hyperparameters, path, randomizeList=[],
+def run_trial(env, name, number_of_tests, length_of_tests, hyperparameters, path, randomizeList=[],
               max_points=2000, hyperparamDict={}, verbose=True):
     logs = []
 
-    args, _ = create_arg_dict([], env=env)
-    args.update(hyperparameters)
-    args["steps"] = length_of_tests
+    #args, _ = create_arg_dict([], env=env)
+    #args.update(hyperparameters)
+    hyperparameters["steps"] = length_of_tests
+    
+    print(hyperparameters)
+    
     i = 0
     trainer = None
     print("Still need to run ", number_of_tests - count_files(path, ".pt"), "experiments...")
@@ -656,7 +659,7 @@ def run_trial(env, number_of_tests, length_of_tests, hyperparameters, path, rand
         with MockTrialFile(path, trial_idx):
             # Train a model:
             if trainer is None:
-                trainer = Trainer(env, args)
+                trainer = Trainer(env, tb_comment=name, verbose=False, **hyperparameters)
             else:
                 trainer.reset()
             n_eps, log = trainer.run(verbose=False, total_steps=length_of_tests, disable_tqdm=False)
@@ -731,7 +734,7 @@ def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, w
         enough_trials = has_enough_runs(trial_path, number_of_tests)
         if not enough_trials:
             print("Running  trials for ", name)
-            logs = run_trial(env, number_of_tests, length_of_tests, hyperparam_dict,
+            logs = run_trial(env, name, number_of_tests, length_of_tests, hyperparam_dict,
                              path=trial_path,
                              randomizeList=rand_hyperparams,
                              max_points=max_points)
@@ -739,7 +742,7 @@ def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, w
                               trial_start_time)
         else:
             print("There are already enough trials stored for trial ", name)
-
+        hyperparam_dict["name"] = name
     #self.visualize_logs(sorted(name_list))
 
     # Read data:

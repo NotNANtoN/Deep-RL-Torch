@@ -5,8 +5,10 @@ lunar = "LunarLander-v2"
 cart = "CartPole-v1"
 acro = "Acrobot-v1"
 mountain = "MountainCar-v0"
+
 pong = "Pong-v0"
 seaquest = "Seaquest-v0"
+battlezone = "BattleZone-v0"
 
 tree = "MineRLTreechop-v0"
 diamond = "MineRLObtainDiamond-v0"
@@ -143,14 +145,14 @@ large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 
 # test:
-run_exp(cart, [paramsQuick, QV_quick], number_of_tests=3, length_of_tests=30000, path="test")
-quit(0)
+#run_exp(cart, [paramsQuick, QV_quick], number_of_tests=3, length_of_tests=30000, path="test")
+
 
 # Test buffer:
 #runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
 
 # Test PER:
-run_exp(seaquest, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="PER_seaquest")
+run_exp(battlezone, [paramsQ, PER], number_of_tests=3, length_of_tests=20000000, path="PER_battlezone")
 
 
 # Run new Rainbow exps:

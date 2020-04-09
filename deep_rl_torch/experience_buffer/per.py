@@ -57,6 +57,7 @@ class PERDataset(RLDataset):
         for idx, priority in zip(idcs, priorities):
             assert priority > 0
             assert 0 <= idx < len(self)
+            idx = int(idx)
             old_priority = self._it_sum[idx] * self.running_avg
             new_priority = old_priority + (priority ** self.alpha) * (1 - self.running_avg) 
             self._it_sum[idx] = new_priority

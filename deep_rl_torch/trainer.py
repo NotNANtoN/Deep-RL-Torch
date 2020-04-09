@@ -2,6 +2,7 @@ import collections
 import time
 import itertools
 import os
+import sys
 import psutil
 
 import numpy as np
@@ -14,6 +15,10 @@ import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
 
+from .parser import create_parser
+from .optimizers.RAdam import RAdam
+from deep_rl_torch.env_wrappers import SerialDiscreteActionWrapper, Convert2TorchWrapper, HierarchicalActionWrapper,\
+    AtariObsWrapper, DefaultWrapper
 from .agent import Agent
 from .env_wrappers import FrameSkip, FrameStack
 from .util import display_top_memory_users, apply_rec_to_dict
@@ -30,35 +35,233 @@ def calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours,
         fraction = time_diff / n_hours
     return fraction
 
+def get_default_hyperparameters():
+    # Get default hyperparamters from argparser:
+    parser = create_parser()
+    parameters = vars(parser.parse_args([]))
+    
+    # Fill in some specific values and experimental ones:
+    parameters.update({
+        # Env specific:
+        "convert_2_torch_wrapper": None,
+        "action_wrapper": None,
+        "always_keys": ["sprint"], "exclude_keys": ["sneak"],
+        "use_MineRL_policy": False,
+        "forward_when_jump": True,
+
+        # TODO: The following still need to be implemented:
+        "PER_anneal_beta": False,
+        "normalize_reward_magnitude": False,
+
+        "use_dueling_network": False, # could be used in QV especially
+        "use_hrl": False,  # important
+        "use_backwards_sampling": False, # new idea: sample batch of idxs, train on these, then get every idx-1 of idxs and train on these too for faster value propagation (kind of similar to eligibility traces, so maybe unnecessary)
+        "use_double_Q": False,  # also implement for REM: sample a random other Q net that serves as target
+        "use_clipped_double_Q": False, # also implement for REM. Either as above, or take overall min Q val over all networks that are sampled
+        "epsilon_mid": 0.1, "boltzmann_temp": 0,
+        "epsilon_decay": 0,
+
+        "QV_NO_TARGET_Q": False,  # does it even make sense to do??
+        "target_policy_smoothing_noise": 0.1,  # only for ac. can be delayed. can decay, make uniform or clip
+        "delayed_policy_update_steps": 0,  # only for actor critic, can be delayed to implement
+
+
+        "use_world_model": False,
+        "TDEC_episodic": True,
+        "TDEC_ENABLED": False, "TDEC_TRAIN_FUNC": "normal",
+        "TDEC_ACT_FUNC": "abs",
+        "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
+    })
+    return parameters
+
+def create_comment(initial_comment, env_name, kwargs):   
+    tensorboard_comment = initial_comment + "_" + env_name
+    # TODO: fix that kwargs is converted ot list or change the alg below
+    # TODO: change that env is read in train.py and name passed to trainer
+    unfiltered_arguments = iter(sys.argv[1:])
+    arguments = []
+    filter_single = ["debug", "render"]
+    filter_double = ("log", "save", "load", "verbose", "tqdm", "env")
+    for arg in unfiltered_arguments:
+        next_word = False
+        for word in filter_single:
+            if word in arg:
+                next_word = True
+                break
+        for word in filter_double:
+            if word in arg:
+                next(unfiltered_arguments)
+                next_word = True
+                break
+        if next_word:
+            continue
+        value = next(unfiltered_arguments)
+        word = arg + str(value)
+        arguments.append(word)
+
+    arguments.sort()
+
+    for arg in arguments:
+        if arg[:2] == "--":
+            arg = arg[2:]
+        modified_arg = ""
+        for char in arg:
+            if char == ".":
+                modified_arg += "_"
+            else:
+                modified_arg += char
+        tensorboard_comment += modified_arg
+    #parameters["tb_comment"] = tensorboard_comment
+    return tensorboard_comment
+
+
+def apply_parameter_changes(parameters, env, verbose):
+     # NN architectures:
+    hidden_size = parameters["hidden_size"]
+    # Save in the sense of enough non-linearities per block:
+    save_feature_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+                              {"name": "linear", "neurons": hidden_size}]
+    save_hidden_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"},
+                             {"name": "linear", "neurons": hidden_size, "act_func": "relu"}]
+    
+    thin_block = [{"name": "linear", "neurons": hidden_size, "act_func": "relu"}]
+
+    test_block = [{"name": "linear", "neurons": 64, "act_func": "relu"}]
+
+    standard_hidden_block = thin_block
+    standard_feature_block = thin_block
+
+    layers_feature_vector = standard_hidden_block
+    layers_feature_merge = standard_feature_block
+    layers_action = standard_feature_block
+    layers_state_action_merge = standard_feature_block
+    layers_r = standard_hidden_block
+    layers_Q = standard_hidden_block
+    layers_V = standard_hidden_block
+    layers_actor = standard_hidden_block
+
+    mnhi_early = [{"name": "conv", "filters": 32, "kernel_size": 8, "stride": 4, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 4, "stride": 2, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 2, "stride": 1, "act_func": "relu"}
+                       ]
+    mnhi_later = [{"name": "conv", "filters": 32, "kernel_size": 8, "stride": 4, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 4, "stride": 2, "act_func": "relu"},
+                       {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                       ]
+
+    vizdoom_winner = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                        {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                        {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                        {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 1, "act_func": "relu"},
+                        {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                      ]
+    own_arch = [{"name": "conv", "filters": 16, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 32, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 64, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 128, "kernel_size": 3, "stride": 2, "act_func": "relu"},
+                {"name": "conv", "filters": 256, "kernel_size": 3, "stride": 1, "act_func": "relu"}
+                ]
+    # TODO: define R2D2 conv architecture! (IMPALA uses the same)
+    layers_conv = standard_hidden_block
+
+    parameters.update({
+        # NN architecture setup:
+        "layers_feature_vector": layers_feature_vector, "layers_state_action_merge": layers_state_action_merge,
+        "layers_action": layers_action,
+        "layers_feature_merge": layers_feature_merge, "layers_r": layers_r, "layers_Q": layers_Q,
+        "layers_V": layers_V,
+        "layers_actor": layers_actor
+    })
+        
+    #Convert strings in hyperparams to objects:
+    # optimizer:
+    if parameters["optimizer"] == "RAdam":
+        parameters["optimizer"] = RAdam
+    elif parameters["optimizer"] == "Adam":
+        parameters["optimizer"] = torch.optim.Adam
+    # Conv layers:
+    if parameters["layers_conv"] == "mnhi_early":
+        parameters["layers_conv"] = mnhi_early
+    elif parameters["layers_conv"] == "mnhi_later":
+        parameters["layers_conv"] = mnhi_later
+    elif parameters["layers_conv"] == "vizdoom_winner":
+        parameters["layers_conv"] = vizdoom_winner
+    elif parameters["layers_conv"] == "own":
+        parameters["layers_conv"] = own_arch
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    atari_envs = ['adventure', 'airraid', 'alien', 'amidar', 'assault', 'asterix', 'asteroids', 'atlantis',
+                    'bank_heist', 'battlezone', 'beam_rider', 'berzerk', 'bowling', 'boxing', 'breakout', 'carnival',
+                    'centipede', 'choppercommand', 'crazyclimber', 'defender', 'demonattack', 'doubledunk',
+                    'elevatoraction', 'enduro', 'fishingderby', 'freeway', 'frostbite', 'gopher', 'gravitar',
+                    'hero', 'icehockey', 'jamesbond', 'journey_escape', 'kangaroo', 'krull', 'kungfumaster',
+                    'montezuma_revenge', 'ms_pacman', 'namethisgame', 'phoenix', 'pitfall', 'pong', 'pooyan',
+                    'private_eye', 'qbert', 'riverraid', 'road_runner', 'robotank', 'seaquest', 'skiing',
+                    'solaris', 'spaceinvaders', 'stargunner', 'tennis', 'timepilot', 'tutankham', 'upndown',
+                    'venture', 'videopinball', 'wizardofwor', 'yars_revenge', 'zaxxon']
+    if "MineRL" in env:
+        if verbose:
+            print("MineRL env!")
+        use_hierarchical_action_wrapper = True
+        parameters["convert_2_torch_wrapper"] = Convert2TorchWrapper
+        if use_hierarchical_action_wrapper:
+            parameters["action_wrapper"] = HierarchicalActionWrapper
+        else:
+            parameters["action_wrapper"] = SerialDiscreteActionWrapper
+
+        parameters["use_MineRL_policy"] = True
+        #if "Pickaxe" in env or "Diamond" in env:
+        #    parameters["use_MineRL_policy"] = True
+    elif any([atari_env in env.lower() for atari_env in atari_envs]):
+        parameters["convert_2_torch_wrapper"] = AtariObsWrapper
+        if verbose:
+            print("Atari env!")
+    else:
+        parameters["convert_2_torch_wrapper"] = DefaultWrapper
+    return parameters
+
 
 class Trainer:
-    def __init__(self, env_name, hyperparameters, log=True, tb_comment="", verbose=False):
+    def __init__(self, env_name, **kwargs):
+        # Set up hyperparameters:
+        hyperparameters = get_default_hyperparameters()
+        hyperparameters.update(kwargs)
+        verbose = hyperparameters["verbose"]
+        hyperparameters = apply_parameter_changes(hyperparameters, env_name, verbose)
+        self.hyperparameters = hyperparameters
+        
+         # Create tensorboard experiment comment:
+        self.tb_comment = create_comment(hyperparameters["tb_comment"], env_name, kwargs)
+        if verbose:
+            print("Tensorboard comment: ", self.tb_comment)
+        
         # Init logging:
         self.path = os.getcwd()
-        self.do_log = log
-        self.tb_comment = tb_comment
+        self.do_log = hyperparameters["log"]
         self.log = Log(self.path + '/tb_log', self.do_log, self.tb_comment)
+        
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.rgb2gray = hyperparameters["rgb_to_gray"]
-        hyperparameters["verbose"] = verbose
-        self.hyperparameters = hyperparameters
+        self.rgb2gray = self.hyperparameters["rgb_to_gray"]
+    
         self.verbose = verbose
-        # Logging:
+        # Logging of cpu usage:
         self.psutil_process = psutil.Process()
 
         # Cuda there?
         self.cuda = torch.cuda.is_available()
 
         # Evaluation params:
-        self.eval_rounds = hyperparameters["eval_rounds"]
-        self.eval_percentage = hyperparameters["eval_percentage"]
+        self.eval_rounds = self.hyperparameters["eval_rounds"]
+        self.eval_percentage = self.hyperparameters["eval_percentage"]
         self.stored_percentage = 0
 
         # Init env:
         self.env_name = env_name
-        self.env = self.create_env(hyperparameters)
+        self.env = self.create_env(self.hyperparameters)
         if self.eval_rounds > 0:
-            self.test_env = self.create_env(hyperparameters)
+            self.test_env = self.create_env(self.hyperparameters)
 
         if hyperparameters["max_episode_steps"] > 0:
             self.max_steps_per_episode = hyperparameters["max_episode_steps"]

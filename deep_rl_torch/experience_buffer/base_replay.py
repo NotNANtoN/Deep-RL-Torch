@@ -294,6 +294,8 @@ class ReplayBuffer:
       
         # Bring rewards in correct shape
         batch_dict["rewards"] = batch_dict["rewards"].unsqueeze(1)
+        # Convert idxs to ints:
+        batch_dict["idxs"] = batch_dict["idxs"].int()
 
         return batch_dict
     
