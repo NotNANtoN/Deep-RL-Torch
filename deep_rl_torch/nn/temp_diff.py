@@ -34,15 +34,15 @@ class TempDiffNet(OptimizableNet):
     def recreate_self(self):
         new_self = self.__class__(self.input_size, self.env, None, None, self.device, self.log,
                                   self.hyperparameters, is_target_net=True)
-        if self.split:
-            new_self.layers_r = self.layers_r
+        #if self.split:
+        #    new_self.layers_r = self.layers_r
         return new_self
 
     def forward(self, x):
         predicted_reward = 0
         if self.split:
-            predicted_reward = apply_layers(x, self.layers_r, self.act_functs_r)
-        predicted_state_value = apply_layers(x, self.layers_TD, self.act_functs_TD)
+            predicted_reward = self.forward_r(x)  # apply_layers(x, self.layers_r, self.act_functs_r)
+        predicted_state_value = self.forward_R(x)  # apply_layers(x, self.layers_TD, self.act_functs_TD)
         return predicted_state_value + predicted_reward
 
     def forward_r(self, x):
@@ -129,8 +129,6 @@ class TempDiffNet(OptimizableNet):
 
         # Train reward net if it exists:
         if self.split:
-            #print("r:")
-            #print(self.optimizer_r.state_dict()["states"].keys())
             TDE_r, loss_r = self.optimize_net(reward_prediction, reward_batch, self.optimizer_r, "r", retain_graph=True)
             #self.log_nn_data(policy_name + "_r-net_", r_net=True)
         else:

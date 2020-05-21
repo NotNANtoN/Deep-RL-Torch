@@ -125,7 +125,8 @@ class OptimizableNet(torch.nn.Module):
             if self.log.is_available("NN_distributions", skip_steps=5):
                 weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])\
                     .view(-1)
-                gradients = torch.cat([torch.flatten(layer.grad.data).detach() for layer in layers.parameters()])\
+                gradients = torch.cat([torch.flatten(layer.grad.data).detach() 
+                                       for layer in layers.parameters() if layer.grad is not None])\
                     .view(-1)
                 self.log.add("Weights/" + name, weights, distribution=True)
                 self.log.add("Gradients/" + name, gradients, distribution=True)

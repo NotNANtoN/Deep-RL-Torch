@@ -713,6 +713,7 @@ class Trainer:
                 time_done = (n_hours and (time.time() - start_time) / 360 >= n_hours)
                 if done or episodes_done or time_done:
                     episode_return = np.sum(self.log.get_episodic("Metrics/Reward"))
+                    self.log.add("Metrics/AvgdReturn", episode_return, steps=i_episode, skip_steps=100)
                     self.log.add("Metrics/Return", episode_return, store_episodic=True, steps=i_episode)
                     self.log.add("Metrics/Episode Len", t, steps=i_episode)
                     self.log.add("Metrics/Mean Ep Len", self.log.mean_ep_len, steps=i_episode)

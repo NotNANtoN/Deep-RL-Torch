@@ -6,9 +6,9 @@ cart = "CartPole-v1"
 acro = "Acrobot-v1"
 mountain = "MountainCar-v0"
 
-pong = "Pong-v0"
-seaquest = "Seaquest-v0"
-battlezone = "BattleZone-v0"
+pong = "PongNoFrameskip-v0"
+seaquest = "SeaquestNoFrameskip-v0"
+battlezone = "BattleZoneNoFrameskip-v0"
 
 tree = "MineRLTreechop-v0"
 diamond = "MineRLObtainDiamond-v0"
@@ -24,6 +24,7 @@ paramsQ_target_net_250 = {"name": "Q+Target_250", "TARGET_UPDATE": 250}
 paramsQ_target_net_100 = {"name": "Q+Target_100", "TARGET_UPDATE": 100}
 paramsQ_target_net_50 = {"name": "Q+Target_50", "TARGET_UPDATE": 50}
 
+paramsPolyak = {"name": "Polyak", "use_polyak_averaging": True}
 paramsQV = {"name": "QV", "use_QV": True}
 paramsQVMAX = {"name": "QVMAX", "use_QVMAX": True}
 
@@ -146,19 +147,22 @@ large_batch = {"name": "Q+BS256", "batch_size": 256}
 
 # test:
 #run_exp(cart, [paramsQuick, QV_quick], number_of_tests=3, length_of_tests=30000, path="test")
+#run_exp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX, paramsPolyak], 
+#        extra_hyperparams={"initial_steps":100, "eval_percentage": 0.5},
+#        number_of_tests=2, length_of_tests=100, path="Pong_test")
 
 
 # Test buffer:
 #runExp(pong, [paramsQ, PER], number_of_tests=5, length_of_tests=8000000, path="base")
 
 # Test PER:
-run_exp(battlezone, [paramsQ, PER], number_of_tests=3, length_of_tests=20000000, path="PER_battlezone")
+#run_exp(battlezone, [paramsQ, PER], number_of_tests=2, length_of_tests=20000000, path="PER_battlezone")
 
 
 # Run new Rainbow exps:
-run_exp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Pong_Trials")
+run_exp(pong, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX, paramsPolyak], number_of_tests=5, length_of_tests=8000000, path="Pong_Trials")
 
-run_exp(tree, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX], number_of_tests=5, length_of_tests=8000000, path="Treechop_Trials")
+run_exp(tree, [paramsQ, paramsQV, paramsSplit, PER, paramsQVMAX, paramsPolyak], number_of_tests=5, length_of_tests=8000000, path="Treechop_Trials")
 
 
 # Test:

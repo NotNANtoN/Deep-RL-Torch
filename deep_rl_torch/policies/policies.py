@@ -303,7 +303,7 @@ class BasePolicy:
     def update_parameters(self, n_steps, train_fraction):
         if self.epsilon_mid:
             self.epsilon *= self.eps_factor
-            self.log.add("Params/Epsilon", self.epsilon)
+            self.log.add("Params/Epsilon", self.epsilon, use_skip=True)
         if self.use_PER and self.PER_anneal_beta:
             self.PER_beta = self.PER_start_beta + train_fraction * (1 - self.PER_start_beta)
 

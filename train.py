@@ -110,7 +110,7 @@ if __name__ == "__main__":
     trainer = Trainer(env, **parameters)
     try:
         trainer.run(total_steps=parameters["steps"], n_episodes=parameters["episodes"], n_hours=parameters["hours"],
-                render=parameters["render"], verbose=parameters["verbose"])
+                render=parameters["render"], verbose=parameters["verbose"], disable_tqdm=False)
     except KeyboardInterrupt:
         print("KeyboardInterrupt - Goodbye!")
         trainer.close()

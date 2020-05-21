@@ -244,6 +244,8 @@ def create_masked_array(list_of_lists):
     #print(len(list_of_lists))
     #print(list_of_lists[0].shape)
     #print(len(list_of_lists[0]))
+    if len(list_of_lists) == 0:
+        return np.array([])
     max_len = max([len(x) for x in list_of_lists])
     if isinstance(list_of_lists[0][0], np.ndarray) and len(list_of_lists[0][0].shape) > 0:
         shape = [len(list_of_lists), max_len] +  list(list_of_lists[0][0].shape)
@@ -589,7 +591,7 @@ def count_files(path, name):
 
 def has_enough_runs(path, n_runs):
     count = count_files(path, ".pt")
-    return n_runs == count
+    return count >= n_runs
 
 
 def print_trial_stats(logs, run_metric_percentage, run_metric_final_percentage_weight, trial_start_time):
@@ -683,7 +685,7 @@ def run_trial(env, name, number_of_tests, length_of_tests, hyperparameters, path
     return logs
 
 
-def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, window_size=None, randomizeParams=False,
+def run_exp(env, alg_hyperparam_list, extra_hyperparams={}, number_of_tests=20, length_of_tests=600, window_size=None, randomizeParams=False,
             path="", max_points=2000, optimize="no", number_of_best_runs_to_check=5,
             number_of_checks_best_runs=5, final_evaluation_runs=20, number_of_hyperparam_optimizations=2,
             evals_per_optimization_step=2, optimize_only_lr=False, optimize_only_Q_params=False,
@@ -720,6 +722,7 @@ def run_exp(env, alg_hyperparam_list, number_of_tests=20, length_of_tests=600, w
 
     name_list = []
     for hyperparam_dict in alg_hyperparam_list:
+        hyperparam_dict.update(extra_hyperparams)
         trial_start_time = time.time()
 
         name = hyperparam_dict.pop("name")

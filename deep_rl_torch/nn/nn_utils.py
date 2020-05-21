@@ -95,7 +95,7 @@ def one_hot_encode(x, num_actions):
 
 
 def calc_gradient_norm(layers):
-    grads = [p.grad.data for p in layers.parameters()]
+    grads = [p.grad.data for p in layers.parameters() if p.grad is not None]
     return calc_list_norm(grads)
     # total_norm = 0
     # for p in layers.parameters():
