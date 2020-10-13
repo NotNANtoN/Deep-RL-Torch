@@ -19,7 +19,7 @@ Currently all the following can be used and combined:
 * Bellman split - adds an additional head to a Q net that takes care of predicting only the immediate reward, whereas the other head is optimized to predict the value of the next state without the immediate reward. I could not yet show that this improves performance.
 * [QV](https://www.researchgate.net/publication/224446250_The_QV_family_compared_to_other_reinforcement_learning_algorithms) and [QVMax](https://arxiv.org/abs/1909.01779v1) learning
 * [Efficient Eligibility traces](https://arxiv.org/abs/1810.09967) - as described in v1 of the arXiv paper.
-* Observation normalization. Turned on by default.
+* Observation standardization. Turned on by default.
 * Use of the [RAdam](https://arxiv.org/abs/1908.03265) optimizer.
 
 ## Upcoming features:
@@ -30,24 +30,20 @@ Currently all the following can be used and combined:
 4. Noisy Nets
 5. Dueling Networks for Q function. Also an addition for it if it is combined with QV learning - the estimated state value in the Q network should be the output of the V network.
 
-## Requirements:
+## Installation:
 The following packages are necessary to run the code:
 
+First we need swig and g++ compilers for box2d environments:
 ```
-atari-py==0.1.7
-Box2D-kengz==2.3.3
-bsuite==0.0.0
-captum==0.1.0
-numpy==1.16.4
-ray==0.7.6
-matplotlib==3.0.3
-seaborn==0.9.0
-tensorboard==1.13.1
-torch==1.2.0
-torchvision==0.4.0
-tqdm==4.33.0
-gym==0.15.4
+sudo apt-get update
+sudo apt-get install swig gcc g++
 ```
+
+Then, install all python dependencies via the requirements.txt file:
+```
+python3 -m pip install -r requirements.txt
+```
+
 ## Usage:
 
 ```

@@ -1,0 +1,6 @@
+docker run -it -e DISPLAY=$DISPLAY -v /temp/.X11-unix:/tmp/.X11-unix -v ~/Deep-RL-Torch:/DRL toddhen/minerl
+
+
+# TODO: look for docker images that use the GPU and test them on abakus. First of course test if current minerl docker image works with GPU
+
+# TODO: look for ways of passing X11 properly to the container such that I can visually debug minerl
