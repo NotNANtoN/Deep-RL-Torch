@@ -79,6 +79,7 @@ def get_env(env_short):
         env = env_short
     return env
 
+
 def create_arg_dict():
     # Parse arguments:
     parser = create_parser()
@@ -104,19 +105,17 @@ if __name__ == "__main__":
     log_setup = parameters["debug"]
     if log_setup:
         logging.basicConfig(level=logging.DEBUG)
-        
     parameters["verbose"] = True
     print("Env: ", env)
+    # Set up trainer
     trainer = Trainer(env, **parameters)
+    # Train
     try:
         trainer.run(total_steps=parameters["steps"], n_episodes=parameters["episodes"], n_hours=parameters["hours"],
-                render=parameters["render"], verbose=parameters["verbose"], disable_tqdm=False)
+                    render=parameters["render"], verbose=parameters["verbose"], disable_tqdm=False)
     except KeyboardInterrupt:
         print("KeyboardInterrupt - Goodbye!")
+    finally:
+        # Clean up the trainer in any case
         trainer.close()
         del trainer
-    except:
-        print("Error while training, trying to close gracefully...")
-        trainer.close()
-        del trainer
-        raise

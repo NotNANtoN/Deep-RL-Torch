@@ -10,7 +10,6 @@ import minerl
 import aigar
 import gym
 
-gym.logger.set_level(40)
 import torch
 from tqdm import tqdm
 from pytorch_memlab import profile
@@ -24,6 +23,8 @@ from .env_wrappers import FrameSkip, FrameStack
 from .util import display_top_memory_users, apply_rec_to_dict
 from .log import Log
 
+gym.logger.set_level(40)
+
 
 def calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours, start_time):
     if total_steps:
@@ -34,6 +35,7 @@ def calc_train_fraction(total_steps, steps_done, n_episodes, i_episode, n_hours,
         time_diff = (time.time() - start_time) / 360
         fraction = time_diff / n_hours
     return fraction
+
 
 def get_default_hyperparameters():
     # Get default hyperparamters from argparser:
@@ -73,6 +75,7 @@ def get_default_hyperparameters():
         "TDEC_SCALE": 0.5, "TDEC_MID": 0, "TDEC_USE_TARGET_NET": True, "TDEC_GAMMA": 0.99,
     })
     return parameters
+
 
 def create_comment(initial_comment, env_name, kwargs):   
     tensorboard_comment = initial_comment + "_" + env_name
@@ -189,8 +192,6 @@ def apply_parameter_changes(parameters, env, verbose):
     elif parameters["layers_conv"] == "own":
         parameters["layers_conv"] = own_arch
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     atari_envs = ['adventure', 'airraid', 'alien', 'amidar', 'assault', 'asterix', 'asteroids', 'atlantis',
                     'bank_heist', 'battlezone', 'beam_rider', 'berzerk', 'bowling', 'boxing', 'breakout', 'carnival',
                     'centipede', 'choppercommand', 'crazyclimber', 'defender', 'demonattack', 'doubledunk',
@@ -231,7 +232,7 @@ class Trainer:
         hyperparameters = apply_parameter_changes(hyperparameters, env_name, verbose)
         self.hyperparameters = hyperparameters
         
-         # Create tensorboard experiment comment:
+        # Create tensorboard experiment comment:
         self.tb_comment = create_comment(hyperparameters["tb_comment"], env_name, kwargs)
         if verbose:
             print("Tensorboard comment: ", self.tb_comment)
@@ -240,12 +241,12 @@ class Trainer:
         self.path = os.getcwd()
         self.do_log = hyperparameters["log"]
         self.log = Log(self.path + '/tb_log', self.do_log, self.tb_comment)
+        self.verbose = verbose
         
-        
+        # Set device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.rgb2gray = self.hyperparameters["rgb_to_gray"]
     
-        self.verbose = verbose
         # Logging of cpu usage:
         self.psutil_process = psutil.Process()
 
@@ -598,7 +599,7 @@ class Trainer:
         episode_return = self.log.get_episodic("Metrics/Return")
         # sampling_time = self.log.get_episodic("Sampling_Time")
         optimize_time = self.log.get_episodic("Timings/Optimize_Time")
-        non_optimize_time = self.log.get_episodic("Timings/Non-Optimize_Time")
+        #non_optimize_time = self.log.get_episodic("Timings/Non-Optimize_Time")
         time = round(np.mean(optimize_time) * 1000, 1)
         print("Ep:", i_episode, " Step:", steps_done, round(train_fraction * 100, 1), "%", "Time: ", time, "ms "  "Ret:", episode_return[0])
 

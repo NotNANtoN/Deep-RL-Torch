@@ -11,7 +11,6 @@ import torch
 matplotlib.use('Pdf')
 import matplotlib.pyplot as plt
 
-from tensorboard import program
 from collections import namedtuple
 import torch.nn as nn
 import torch.nn.functional as F
