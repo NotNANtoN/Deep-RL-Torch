@@ -52,13 +52,13 @@ class Agent:
         self.F_s, self.F_sa = self.init_feature_extractors()
         self.policy = self.create_policy()
 
-        # Collect all parameters:
+        # Collect all params:
         params = self.policy.get_updateable_params()
         params += self.F_s.get_updateable_params()
         if self.F_sa is not None:
             params += self.F_sa.get_updateable_params()
         if self.verbose:
-            print("Total trainable parameters: ", count_parameters(params))
+            print("Total trainable params: ", count_parameters(params))
         # Set up Optimizer:
         if self.optimize_centrally:
             self.optimizer = self.create_optimizer(hyperparameters, params)

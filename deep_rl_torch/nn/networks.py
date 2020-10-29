@@ -64,7 +64,7 @@ class OptimizableNet(torch.nn.Module):
         return loss, reduced_loss
 
     def optimize_net(self, output, target, optimizer, name="", sample_weights=None, retain_graph=False):
-        """Start loss calculation and optimize parameters if they are not optimized centrally"""
+        """Start loss calculation and optimize params if they are not optimized centrally"""
         loss, reduced_loss = self.compute_loss(output, target, sample_weights)
 
         if not self.optimize_centrally:
@@ -106,7 +106,7 @@ class OptimizableNet(torch.nn.Module):
         target_net = None
         if self.use_target_net:
             target_net = self.recreate_self()
-            for param in target_net.parameters():
+            for param in target_net.params():
                 param.requires_grad = False
             target_net.use_target_net = False
             target_net.eval()
@@ -123,10 +123,10 @@ class OptimizableNet(torch.nn.Module):
             name += "_" + extra_name + "_" if extra_name else ""
 
             if self.log.is_available("NN_distributions", skip_steps=5):
-                weights = torch.cat([torch.flatten(layer).detach() for layer in layers.parameters()])\
+                weights = torch.cat([torch.flatten(layer).detach() for layer in layers.params()])\
                     .view(-1)
-                gradients = torch.cat([torch.flatten(layer.grad.data).detach() 
-                                       for layer in layers.parameters() if layer.grad is not None])\
+                gradients = torch.cat([torch.flatten(layer.grad.data).detach()
+                                       for layer in layers.params() if layer.grad is not None])\
                     .view(-1)
                 self.log.add("Weights/" + name, weights, distribution=True)
                 self.log.add("Gradients/" + name, gradients, distribution=True)

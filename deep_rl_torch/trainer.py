@@ -83,7 +83,7 @@ def create_comment(initial_comment, env_name, kwargs):
     # TODO: change that env is read in train.py and name passed to trainer
     unfiltered_arguments = iter(sys.argv[1:])
     arguments = []
-    filter_single = ["debug", "render"]
+    filter_single = ["debug", "render", "smoke"]
     filter_double = ("log", "save", "load", "verbose", "tqdm", "env")
     for arg in unfiltered_arguments:
         next_word = False
@@ -114,7 +114,7 @@ def create_comment(initial_comment, env_name, kwargs):
             else:
                 modified_arg += char
         tensorboard_comment += modified_arg
-    #parameters["tb_comment"] = tensorboard_comment
+    #params["tb_comment"] = tensorboard_comment
     return tensorboard_comment
 
 
@@ -213,7 +213,7 @@ def apply_parameter_changes(parameters, env, verbose):
 
         parameters["use_MineRL_policy"] = True
         #if "Pickaxe" in env or "Diamond" in env:
-        #    parameters["use_MineRL_policy"] = True
+        #    params["use_MineRL_policy"] = True
     elif any([atari_env in env.lower() for atari_env in atari_envs]):
         parameters["convert_2_torch_wrapper"] = AtariObsWrapper
         if verbose:
@@ -321,7 +321,7 @@ class Trainer:
             self.move_expert_data_into_buffer(expert_data)
 
     def reset(self):
-        # Init fresh agent. Would be better to reset all parameters and network weights:
+        # Init fresh agent. Would be better to reset all params and network weights:
         self.agent = Agent(self.env, self.device, self.log, self.hyperparameters)
         # Init new log:
         #self.log = Log(self.path + '/tb_log', self.do_log, self.tb_comment)

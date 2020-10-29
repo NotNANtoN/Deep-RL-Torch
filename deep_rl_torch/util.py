@@ -112,13 +112,13 @@ class SizeEstimator(object):
         self.bits = bits
 
     def get_parameter_sizes(self):
-        '''Get sizes of all parameters in `model`'''
+        '''Get sizes of all params in `model`'''
         mods = list(self.model.modules())
         sizes = []
 
         for i in range(1, len(mods)):
             m = mods[i]
-            p = list(m.parameters())
+            p = list(m.params())
             for j in range(len(p)):
                 sizes.append(np.array(p[j].size()))
 
@@ -137,7 +137,7 @@ class SizeEstimator(object):
         self.out_sizes = out_sizes
 
     def calc_param_bits(self):
-        '''Calculate total number of bits to store `model` parameters'''
+        '''Calculate total number of bits to store `model` params'''
         total_bits = 0
         for i in range(len(self.param_sizes)):
             s = self.param_sizes[i]

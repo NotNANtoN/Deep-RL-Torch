@@ -303,7 +303,7 @@ class Actor(OptimizableNet):
         return self.__class__(self.F_s, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
 
     def get_updateable_params(self):
-        return self.layers.parameters()
+        return self.layers.params()
 
     def save(self, path):
         if not os.path.exists(path):

@@ -27,7 +27,7 @@ class TempDiffNet(OptimizableNet):
         reward_layers = hyperparameters["layers_r"]
         layers_r, act_functs_r = create_ff_layers(input_size, reward_layers, self.output_neurons)
         layers_r.to(device)
-        optimizer_r = self.optimizer(list(layers_r.parameters()) + updateable_parameters, lr=lr_r)
+        optimizer_r = self.optimizer(list(layers_r.params()) + updateable_parameters, lr=lr_r)
         return layers_r, act_functs_r, optimizer_r
 
 
@@ -191,9 +191,9 @@ class TempDiffNet(OptimizableNet):
         #    self.F_sa.log_nn_data(self.name + name)
 
     def get_updateable_params(self):
-        params = list(self.layers_TD.parameters())
+        params = list(self.layers_TD.params())
         if self.split:
-            params += list(self.layers_r.parameters())
+            params += list(self.layers_r.params())
         return params
 
     def weights_init(self, m):
@@ -245,7 +245,7 @@ class Q(TempDiffNet):
                                                                                        device, hyperparameters)
             #print("RRRRRR:")
             #print(list(self.layers_r.state_dict().keys()) + list(F_s.get_updateable_params()))
-            #print(type(next(self.layers_r.parameters())))
+            #print(type(next(self.layers_r.params())))
         else:
             self.layers_r, self.act_functs_r, self.optimizer_r = None, None, None
 
@@ -269,7 +269,7 @@ class Q(TempDiffNet):
         #    print("TD::::")
         #    print(list(self.layers_TD.state_dict().keys()) + list(F_s.state_dict().keys()))
 
-        self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(list(self.layers_TD.params()) + updateable_parameters, lr=self.lr_TD)
         # Create target net
         self.target_net = self.create_target_net()
         if self.target_net and self.split:
@@ -367,7 +367,7 @@ class V(TempDiffNet):
         # Define optimizer and previous networks
         self.lr_TD = hyperparameters["lr_V"]
         self.F_s = F_s
-        self.optimizer_TD = self.optimizer(list(self.layers_TD.parameters()) + updateable_parameters, lr=self.lr_TD)
+        self.optimizer_TD = self.optimizer(list(self.layers_TD.params()) + updateable_parameters, lr=self.lr_TD)
 
         # Create target net
         self.target_net = self.create_target_net()

@@ -1,13 +1,15 @@
 import argparse
 
+
 def create_parser():
     parser = argparse.ArgumentParser()
     # General:
+    parser.add_argument("--smoke", action="store_true", help="Do a smoke test")
     train_time_group = parser.add_mutually_exclusive_group()
-    train_time_group.add_argument("--steps", type=int, default=0)
+    train_time_group.add_argument("-s", "--steps", type=int, default=0)
     train_time_group.add_argument("--episodes", type=int, default=0)
     train_time_group.add_argument("--hours", type=float, default=0.0)
-    parser.add_argument("--env", help="Env name", default="cart")
+    parser.add_argument("-e", "--env", help="Env name", default="cart")
     # User experience:
     parser.add_argument("--tb_comment", help="Comment that is added to tensorboard", default="")
     parser.add_argument("--save_path", default="saved_models/")
@@ -58,7 +60,7 @@ def create_parser():
     parser.add_argument("--epsilon_mid", type=float, default=0.00)
     parser.add_argument("--explore_until_reward", type=int, default=0)
     parser.add_argument("--action_sigma", type=float, default=0.0)
-    parser.add_argument("--initial_steps", type=int, default=50000)
+    parser.add_argument("-i", "--initial_steps", type=int, default=50000)
     # Split reward:
     parser.add_argument("--split_Bellman", type=int, default=0)
     # QV:
@@ -112,6 +114,18 @@ def create_parser():
     parser.add_argument("--eval_rounds", help="Number of rounds that the model should be evaluated in "
                                               "to calculate an average return  in model evaluation. "
                                               "Set to 0 to disable model evaluation.", type=int, default=5)
-    parser.add_argument("--eval_percentage", help="Percentage of training time after which the model will be evaluated "
+    parser.add_argument("--eval_percentage", help="Fraction of training time after which the model will be evaluated "
                                                   "in.", type=float, default=0.03)
     return parser
+
+
+def create_arg_dict():
+    parser = create_parser()
+    args = parser.parse_args()
+    if args.smoke:
+        args.steps = 1000
+        args.initial_steps = 1000
+        args.eval_rounds = 1
+        args.eval_percentage = 0.5
+    parameters = vars(args)
+    return parameters

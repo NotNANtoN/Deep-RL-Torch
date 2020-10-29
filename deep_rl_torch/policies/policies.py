@@ -48,7 +48,7 @@ class BasePolicy:
                 print("Env action low: ", self.action_low)
                 print("Env action high: ", self.action_high)
 
-        # Set up parameters:
+        # Set up params:
         # Actor-Critic:
         self.use_actor_critic = hyperparameters["use_actor_critic"]
         self.use_CACLA_V = hyperparameters["use_CACLA_V"]
@@ -519,9 +519,9 @@ class ActorCritic(BasePolicy):
                 params += new_params
         return params
 
-        params = list(self.layers_TD.parameters())
+        params = list(self.layers_TD.params())
         if self.split:
-            params += list(self.layers_r.parameters())
+            params += list(self.layers_r.params())
         return params
     
 

@@ -813,7 +813,7 @@ def optimize_comet(env, device, max_evals, length_of_tests, trial, max_points, o
                    evals_per_optimization_step=1, optimize_only_lr=False, optimize_only_Q_params=False,
                    run_metric_percentage=0.1, run_metric_final_percentage_weight=1):
     optimizer = Optimizer("M03EcOc9o9kiG95hws4mq1uqI")
-    # Declare your hyper-parameters:
+    # Declare your hyper-params:
     if optimize_only_lr:
         params = """
         lr_Q real [0.00001, 0.005] [0.0005] log

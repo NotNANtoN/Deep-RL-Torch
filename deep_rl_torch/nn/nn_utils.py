@@ -95,21 +95,21 @@ def one_hot_encode(x, num_actions):
 
 
 def calc_gradient_norm(layers):
-    grads = [p.grad.data for p in layers.parameters() if p.grad is not None]
+    grads = [p.grad.data for p in layers.params() if p.grad is not None]
     return calc_list_norm(grads)
     # total_norm = 0
-    # for p in layers.parameters():
+    # for p in layers.params():
     #    param_norm = p.grad.data.norm(2)
     #    total_norm += param_norm.item() ** 2
     # return total_norm ** (1. / 2)
 
 
 def calc_norm(layers):
-    params = layers.parameters()
+    params = layers.params()
     return calc_list_norm(params)
 
     # total_norm = torch.tensor(0.)
-    # for param in layers.parameters():
+    # for param in layers.params():
     #     total_norm += torch.norm(param)
     # return total_norm
 
@@ -148,4 +148,4 @@ def count_parameters(param_list):
     return sum(p.numel() for p in param_list if p.requires_grad)
 
 def count_model_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return sum(p.numel() for p in model.params() if p.requires_grad)

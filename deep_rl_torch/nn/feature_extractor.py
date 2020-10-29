@@ -25,7 +25,7 @@ class ProcessState(OptimizableNet):
 
         self.processing_list, merge_input_size = self.create_input_layers(state_sample)
 
-        # format for parameters: ["linear": (input, output neurons), "lstm": (input, output neurons)]
+        # format for params: ["linear": (input, output neurons), "lstm": (input, output neurons)]
         merge_layers = hyperparameters["layers_feature_merge"]
         if self.verbose:
             print("merge in size: ", merge_input_size)
@@ -168,9 +168,9 @@ class ProcessState(OptimizableNet):
         return self.__class__(self.state_sample, self.env, self.log, self.device, self.hyperparameters, is_target_net=True)
 
     def get_updateable_params(self):
-        params = list(self.layers_merge.parameters())
+        params = list(self.layers_merge.params())
         for layer in self.processing_list:
-            params += list(layer["Layers"].parameters())
+            params += list(layer["Layers"].params())
         return params
 
     def save(self, path):
@@ -235,8 +235,8 @@ class ProcessStateAction(OptimizableNet):
                               is_target_net=True)
 
     def get_updateable_params(self):
-        params = list(self.layers_merge.parameters())
-        params += list(self.layers_action.parameters())
+        params = list(self.layers_merge.params())
+        params += list(self.layers_action.params())
         return params
 
     def freeze_normalizers(self):
